@@ -13,7 +13,7 @@
   "dependencies": {
     "@ant-design/icons": "^5.5.0",
     "@reduxjs/toolkit": "^2.3.0",
-    "antd": "^5.22.0",
+    "antd": "^6.2.3",
     "axios": "^1.7.0",
     "dayjs": "^1.11.0",
     "i18next": "^23.16.0",
