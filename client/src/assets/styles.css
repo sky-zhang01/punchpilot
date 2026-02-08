@@ -1,0 +1,212 @@
+/* === PunchPilot CSS Custom Properties (Theme Variables) === */
+:root {
+  /* Backgrounds */
+  --pp-bg-sidebar: #f6f8fc;
+  --pp-bg-main: #f0f2f5;
+  --pp-bg-card: #ffffff;
+  --pp-bg-header: #ffffff;
+  --pp-bg-body: #ffffff;
+  --pp-bg-input: #ffffff;
+
+  /* Text */
+  --pp-text-primary: #333333;
+  --pp-text-secondary: #666666;
+  --pp-text-muted: #999999;
+  --pp-text-sidebar: #444746;
+  --pp-text-sidebar-active: #1a73e8;
+
+  /* Borders & Dividers */
+  --pp-border-color: #e8e8e8;
+  --pp-divider-color: #f0f0f0;
+
+  /* Shadows */
+  --pp-shadow-header: 0 1px 4px rgba(0, 0, 0, 0.08);
+  --pp-shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
+
+  /* Brand */
+  --pp-color-primary: #1677ff;
+
+  /* Calendar specific */
+  --pp-cal-grid-bg: #e8e8e8;
+  --pp-cal-header-bg: #fafafa;
+  --pp-cal-cell-bg: #ffffff;
+  --pp-cal-cell-hover: #f5f5f5;
+  --pp-cal-weekend-bg: #f0f0f0;
+  --pp-cal-holiday-jp-bg: #fff0f5;
+  --pp-cal-holiday-cn-bg: #fff1f0;
+  --pp-cal-holiday-text: #f5222d;
+  --pp-cal-today-bg: #fffbe6;
+  --pp-cal-today-border: #fadb14;
+  --pp-cal-selected-bg: #e6f4ff;
+  --pp-cal-selected-border: #1677ff;
+
+  /* Schedule card */
+  --pp-schedule-resolved-bg: #f0f9ff;
+  --pp-schedule-resolved-text: #1677ff;
+
+  /* Status colors */
+  --pp-status-error: #ff4d4f;
+  --pp-status-success: #52c41a;
+  --pp-status-muted: #d9d9d9;
+
+  /* Scrollbar */
+  --pp-scrollbar-thumb: #cccccc;
+  --pp-scrollbar-track: transparent;
+
+  /* Login page */
+  --pp-login-bg: #f0f2f5;
+}
+
+/* === Dark Mode Overrides === */
+html.dark {
+  --pp-bg-sidebar: #1f1f1f;
+  --pp-bg-main: #141414;
+  --pp-bg-card: #1f1f1f;
+  --pp-bg-header: #1f1f1f;
+  --pp-bg-body: #141414;
+  --pp-bg-input: #2a2a2a;
+
+  --pp-text-primary: #e0e0e0;
+  --pp-text-secondary: #a0a0a0;
+  --pp-text-muted: #707070;
+  --pp-text-sidebar: #c4c7c5;
+  --pp-text-sidebar-active: #8ab4f8;
+
+  --pp-border-color: #333333;
+  --pp-divider-color: #2a2a2a;
+
+  --pp-shadow-header: 0 1px 4px rgba(0, 0, 0, 0.3);
+  --pp-shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3);
+
+  --pp-color-primary: #409eff;
+
+  --pp-cal-grid-bg: #333333;
+  --pp-cal-header-bg: #1f1f1f;
+  --pp-cal-cell-bg: #1a1a1a;
+  --pp-cal-cell-hover: #2a2a2a;
+  --pp-cal-weekend-bg: #2a2a2a;
+  --pp-cal-holiday-jp-bg: #2d1a22;
+  --pp-cal-holiday-cn-bg: #2d1a1a;
+  --pp-cal-holiday-text: #ff6b6b;
+  --pp-cal-today-bg: #2d2b1a;
+  --pp-cal-today-border: #d4b106;
+  --pp-cal-selected-bg: #111d2c;
+  --pp-cal-selected-border: #409eff;
+
+  --pp-schedule-resolved-bg: #0d2438;
+  --pp-schedule-resolved-text: #409eff;
+
+  --pp-status-error: #ff6b6b;
+  --pp-status-success: #73d13d;
+  --pp-status-muted: #555555;
+
+  --pp-scrollbar-thumb: #555555;
+  --pp-scrollbar-track: transparent;
+
+  --pp-login-bg: #141414;
+}
+
+/* === Global Resets === */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', 'Noto Sans JP', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--pp-bg-body);
+  color: var(--pp-text-primary);
+  transition: background 0.3s, color 0.3s;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--pp-scrollbar-thumb);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--pp-scrollbar-track);
+}
+
+/* Ant Design dark mode overrides */
+html.dark .ant-layout-header {
+  background: var(--pp-bg-header) !important;
+}
+
+html.dark .ant-card {
+  background: var(--pp-bg-card);
+}
+
+/* Override antd Calendar selected-date styling to prevent
+   every same day-of-month from being highlighted blue.
+   Our custom cellRender handles all highlighting. */
+.ant-picker-cell-selected .ant-picker-cell-inner,
+.ant-picker-cell-selected:hover .ant-picker-cell-inner {
+  background: transparent !important;
+}
+
+.ant-picker-calendar .ant-picker-cell-selected .ant-picker-cell-inner {
+  color: inherit !important;
+}
+
+/* === Mobile responsive: Calendar cells === */
+
+/* On narrow screens (< 576px), reduce calendar cell padding and font sizes */
+@media (max-width: 576px) {
+  /* Reduce content padding on mobile */
+  .ant-layout-content {
+    padding: 12px !important;
+  }
+
+  /* Calendar cells: tighter spacing */
+  .ant-picker-calendar .ant-picker-cell {
+    padding: 1px 2px !important;
+  }
+
+  .ant-picker-calendar .ant-picker-cell-inner {
+    min-height: 50px !important;
+  }
+
+  /* Smaller tags in calendar cells on mobile */
+  .ant-picker-calendar .ant-tag {
+    font-size: 9px !important;
+    padding: 0 2px !important;
+    line-height: 14px !important;
+  }
+
+  /* Hide holiday text in tags on very narrow screens, show only flag */
+  .ant-picker-calendar .ant-tag span {
+    display: none;
+  }
+
+  /* Reduce header/toolbar padding */
+  .ant-layout-header {
+    padding: 0 12px !important;
+  }
+}
+
+/* Very narrow screens (< 480px) — show only essential info in calendar cells */
+@media (max-width: 480px) {
+  /* Calendar cell: minimal height */
+  .ant-picker-calendar .ant-picker-cell-inner {
+    min-height: 40px !important;
+  }
+
+  /* Hide break records on very narrow screens */
+  .ant-picker-calendar .ant-picker-cell-inner div[style*="font-size: 9"] {
+    display: none;
+  }
+}

@@ -1,0 +1,26 @@
+services:
+  punchpilot:
+    build: .
+    container_name: punchpilot
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Tokyo
+      - NODE_ENV=production
+    env_file:
+      - .env
+    ports:
+      - "8681:8681"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./screenshots:/app/screenshots
+      - keystore:/app/keystore
+    networks:
+      - punchpilot-network
+
+networks:
+  punchpilot-network:
+    driver: bridge
+
+volumes:
+  keystore:

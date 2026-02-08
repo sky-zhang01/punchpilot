@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+client/node_modules/
+
+# Build output
+client/dist/
+
+# Environment & secrets
+.env
+keystore/
+data/.app-secret
+
+# User data
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/logs/
+
+# Runtime artifacts
+screenshots/
+logs/
+*.log
+
+# Test output
+test-results/
+playwright-report/
+coverage/
+
+# IDE & OS
+.DS_Store
+.vscode/
+.idea/
+
+# Tool caches
+.claude/
+.scannerwork/
+
+# Legacy config (not used by GUI mode)
+config.json
