@@ -17,7 +17,7 @@ Smart attendance automation for [freee HR](https://www.freee.co.jp/hr/). Runs as
 
 ```bash
 # Clone the repo
-git clone https://github.com/sky-zhang/punchpilot.git
+git clone https://github.com/sky-zhang01/punchpilot.git
 cd punchpilot
 
 # Configure

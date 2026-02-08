@@ -32,10 +32,10 @@
     "scheduler",
     "docker"
   ],
-  "author": "sky-zhang",
+  "author": "sky-zhang01",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sky-zhang/punchpilot.git"
+    "url": "https://github.com/sky-zhang01/punchpilot.git"
   },
   "license": "MIT",
   "devDependencies": {

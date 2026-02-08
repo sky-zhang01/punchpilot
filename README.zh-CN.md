@@ -17,7 +17,7 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/sky-zhang/punchpilot.git
+git clone https://github.com/sky-zhang01/punchpilot.git
 cd punchpilot
 
 # 配置

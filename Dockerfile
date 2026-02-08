@@ -4,7 +4,7 @@ LABEL org.opencontainers.image.title="PunchPilot" \
       org.opencontainers.image.description="Smart attendance automation for freee HR" \
       org.opencontainers.image.version="0.3.0" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.source="https://github.com/sky-zhang/punchpilot"
+      org.opencontainers.image.source="https://github.com/sky-zhang01/punchpilot"
 
 WORKDIR /app
 
