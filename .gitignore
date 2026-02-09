@@ -18,7 +18,7 @@ data/logs/
 
 # Runtime artifacts
 screenshots/
-logs/
+/logs/
 *.log
 
 # Test output

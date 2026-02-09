@@ -16,8 +16,8 @@ spec:
         app: punchpilot
     spec:
       containers:
-        - name: ap
-          image: ghcr.io/sky-zhang01/punchpilot:lates
+        - name: app
+          image: ghcr.io/sky-zhang01/punchpilot:latest
           # Use IfNotPresent to avoid downloading the large image on every restart
           imagePullPolicy: IfNotPresent
           ports:
