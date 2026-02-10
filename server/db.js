@@ -392,6 +392,6 @@ export function setStrategyCache(month, data) {
 
 export function cleanOldSchedules(daysToKeep = 7) {
   return getDb().prepare(
-    `DELETE FROM daily_schedule WHERE date < date('now','localtime','-${daysToKeep} days')`
-  ).run();
+    `DELETE FROM daily_schedule WHERE date < date('now','localtime','-' || ? || ' days')`
+  ).run(String(daysToKeep));
 }

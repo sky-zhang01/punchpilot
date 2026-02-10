@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright:v1.54.2-jammy
+FROM mcr.microsoft.com/playwright:v1.58.2-jammy
 
 LABEL org.opencontainers.image.title="PunchPilot" \
       org.opencontainers.image.description="Smart attendance automation for freee HR" \
@@ -11,8 +11,12 @@ WORKDIR /app
 ENV TZ=Asia/Tokyo
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# Install tzdata
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y tzdata && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Install tzdata and build tools (required for better-sqlite3 native compilation)
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    tzdata \
+    build-essential \
+    python3 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy server package files and install
 COPY package*.json ./

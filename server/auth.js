@@ -211,10 +211,12 @@ export function changePasswordHandler(req, res) {
 
   createSession(newToken, user.id, expiresAt);
 
+  const isProduction = process.env.NODE_ENV === 'production';
   res.cookie('session_token', newToken, {
     httpOnly: true,
     maxAge: SESSION_DURATION_HOURS * 3600 * 1000,
     sameSite: 'lax',
+    secure: isProduction,
   });
 
   res.json({
