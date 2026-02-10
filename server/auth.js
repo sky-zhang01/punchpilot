@@ -116,8 +116,6 @@ export function loginHandler(req, res) {
   });
 
   res.json({
-    token,
-    expires_at: expiresAt,
     username: user.username,
     must_change_password: !!user.must_change_password,
   });
@@ -223,7 +221,6 @@ export function changePasswordHandler(req, res) {
     success: true,
     username: finalUsername,
     must_change_password: false,
-    token: newToken,
   });
 }
 

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import crypto from 'crypto';
 import { getAllConfig, getConfigByAction, updateConfig, getSetting, setSetting } from '../db.js';
 import { scheduler } from '../scheduler.js';
 import { encrypt, decrypt } from '../crypto.js';
@@ -354,11 +355,16 @@ router.get('/oauth-authorize-url', (req, res) => {
   const redirectUri = process.env.OAUTH_REDIRECT_URI ||
     `${req.protocol}://${req.get('host')}/api/config/oauth-callback`;
 
+  // Generate CSRF state token (RFC 6749 §10.12)
+  const state = crypto.randomBytes(32).toString('hex');
+  setSetting('oauth_state', state);
+
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
     prompt: 'consent',
+    state,
   });
 
   res.json({ url: `${AUTHORIZE_URL}?${params.toString()}`, redirect_uri: redirectUri });
@@ -370,7 +376,7 @@ router.get('/oauth-authorize-url', (req, res) => {
  * Returns HTML that notifies the opener window and auto-closes.
  */
 router.get('/oauth-callback', async (req, res) => {
-  const { code, error: oauthError } = req.query;
+  const { code, error: oauthError, state } = req.query;
 
   if (oauthError) {
     return res.send(callbackHtml(`Authorization denied: ${oauthError}`, false));
@@ -378,6 +384,14 @@ router.get('/oauth-callback', async (req, res) => {
   if (!code) {
     return res.send(callbackHtml('No authorization code received', false));
   }
+
+  // Validate CSRF state token (RFC 6749 §10.12)
+  const expectedState = getSetting('oauth_state');
+  if (!state || !expectedState || state !== expectedState) {
+    return res.send(callbackHtml('Invalid state parameter — possible CSRF attack', false));
+  }
+  // Clear state after validation (single-use)
+  setSetting('oauth_state', '');
 
   const clientId = getSetting('oauth_client_id');
   const clientSecret = decrypt(getSetting('oauth_client_secret_encrypted'));
@@ -650,7 +664,7 @@ function escapeHtml(str) {
 
 function callbackHtml(message, success) {
   const safeMessage = escapeHtml(message);
-  const safeMessageJs = safeMessage.replace(/'/g, "\\'");
+  const safeMessageJs = safeMessage.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   return `<!DOCTYPE html>
 <html><head><title>PunchPilot OAuth</title>
 <style>
