@@ -39,21 +39,21 @@ On first login, use the password from `.env`. Then configure:
 ## Architecture
 
 ```
-┌──────────────┐     ┌──────────────────────────────────┐
-│   Browser    │────▶│         PunchPilot (Docker)       │
+┌──────────────┐     ┌────────────────────────────────────┐
+│   Browser    │────▶│         PunchPilot (Docker)        │
 │  Dashboard   │     │                                    │
 └──────────────┘     │  Express API ─── React (Ant Design)│
                      │       │                            │
-                     │  ┌────┴────┐    ┌───────────────┐ │
+                     │  ┌────┴────┐    ┌────────────────┐ │
                      │  │ SQLite  │    │  Playwright    │ │
                      │  │  (data) │    │  (web fallback)│ │
-                     │  └─────────┘    └───────────────┘ │
+                     │  └─────────┘    └────────────────┘ │
                      │       │                            │
-                     │  ┌────┴────┐    ┌───────────────┐ │
+                     │  ┌────┴────┐    ┌────────────────┐ │
                      │  │Scheduler│    │ freee HR API   │ │
                      │  │ (cron)  │    │  (OAuth2)      │ │
-                     │  └─────────┘    └───────────────┘ │
-                     └──────────────────────────────────┘
+                     │  └─────────┘    └────────────────┘ │
+                     └────────────────────────────────────┘
 ```
 
 **Tech stack**: Node.js, Express, React, Ant Design, Playwright, SQLite, Docker
