@@ -20,7 +20,7 @@
     "chalk": "^5.6.2",
     "cookie-parser": "^1.4.7",
     "dotenv": "^16.3.1",
-    "express": "^4.21.0",
+    "express": "^5.2.1",
     "node-cron": "^3.0.3",
     "playwright": "^1.58.2"
   },
