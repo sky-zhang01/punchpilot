@@ -29,6 +29,16 @@ const DEFAULT_PASS = 'admin';
 // Suite-level session token (login once, reuse everywhere)
 let SESSION_TOKEN;
 
+/** Extract session_token from set-cookie header */
+function extractTokenFromCookies(res) {
+  const cookies = res.headers['set-cookie'];
+  const raw = Array.isArray(cookies)
+    ? cookies.find(c => c.startsWith('session_token='))
+    : (cookies && cookies.startsWith('session_token=') ? cookies : undefined);
+  if (!raw) return undefined;
+  return raw.split(';')[0].replace('session_token=', '');
+}
+
 beforeAll(async () => {
   // Reset admin user to known state (previous test runs may have changed password)
   const db = getDb();
@@ -45,7 +55,7 @@ beforeAll(async () => {
   const res = await request(app)
     .post('/api/auth/login')
     .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
-  SESSION_TOKEN = res.body.token;
+  SESSION_TOKEN = extractTokenFromCookies(res);
 });
 
 describe('Security Headers', () => {
@@ -59,9 +69,10 @@ describe('Security Headers', () => {
     expect(res.headers['x-frame-options']).toBe('DENY');
   });
 
-  it('returns X-XSS-Protection', async () => {
+  it('returns Content-Security-Policy', async () => {
     const res = await request(app).get('/api/auth/status');
-    expect(res.headers['x-xss-protection']).toBe('1; mode=block');
+    expect(res.headers['content-security-policy']).toBeDefined();
+    expect(res.headers['content-security-policy']).toContain("default-src 'self'");
   });
 
   it('returns Referrer-Policy', async () => {
@@ -71,15 +82,15 @@ describe('Security Headers', () => {
 });
 
 describe('Auth: Login', () => {
-  it('POST /api/auth/login with valid credentials → 200 + token', async () => {
+  it('POST /api/auth/login with valid credentials → 200 + cookie', async () => {
     const res = await request(app)
       .post('/api/auth/login')
       .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
     expect(res.status).toBe(200);
-    expect(res.body.token).toBeDefined();
+    expect(res.body.token).toBeUndefined(); // token must NOT leak in response body
+    expect(extractTokenFromCookies(res)).toBeDefined(); // token is in httpOnly cookie
     expect(res.body.username).toBe(DEFAULT_USER);
     expect(res.body.must_change_password).toBe(true); // first-boot flag
-    expect(res.body.expires_at).toBeDefined();
   });
 
   it('POST /api/auth/login with wrong password → 401 + failed flag', async () => {
@@ -150,7 +161,7 @@ describe('Auth: Logout', () => {
     const loginRes = await request(app)
       .post('/api/auth/login')
       .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
-    const tempToken = loginRes.body.token;
+    const tempToken = extractTokenFromCookies(loginRes);
 
     // Logout
     const logoutRes = await request(app)

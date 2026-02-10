@@ -21,6 +21,16 @@ const DEFAULT_USER = 'admin';
 const DEFAULT_PASS = 'admin';
 let TOKEN;
 
+/** Extract session_token from set-cookie header */
+function extractTokenFromCookies(res) {
+  const cookies = res.headers['set-cookie'];
+  const raw = Array.isArray(cookies)
+    ? cookies.find(c => c.startsWith('session_token='))
+    : (cookies && cookies.startsWith('session_token=') ? cookies : undefined);
+  if (!raw) return undefined;
+  return raw.split(';')[0].replace('session_token=', '');
+}
+
 beforeAll(async () => {
   const db = getDb();
   // Reset admin user
@@ -35,7 +45,7 @@ beforeAll(async () => {
   const res = await request(app)
     .post('/api/auth/login')
     .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
-  TOKEN = res.body.token;
+  TOKEN = extractTokenFromCookies(res);
 
   // Enable debug/mock mode
   await request(app)
