@@ -1391,13 +1391,13 @@ router.post('/leave-request', async (req, res) => {
     return res.status(400).json({ error: `Invalid holiday_type. Valid: ${validHolidayTypes.join(', ')}` });
   }
 
-  // Validate time format when provided
-  const TIME_REGEX = /^\d{2}:\d{2}$/;
+  // Validate time format when provided (HH:MM, 00-23:00-59)
+  const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
   if (start_time && !TIME_REGEX.test(start_time)) {
-    return res.status(400).json({ error: 'start_time must be in HH:MM format' });
+    return res.status(400).json({ error: 'start_time must be in HH:MM format (00:00-23:59)' });
   }
   if (end_time && !TIME_REGEX.test(end_time)) {
-    return res.status(400).json({ error: 'end_time must be in HH:MM format' });
+    return res.status(400).json({ error: 'end_time must be in HH:MM format (00:00-23:59)' });
   }
 
   // half/hour type requires start/end times (freee API requires start_at/end_at for both)
