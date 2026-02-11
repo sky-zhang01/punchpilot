@@ -15,20 +15,6 @@ export function notifySuccess(msg: string) {
 }
 
 /**
- * Info toast - blue background
- */
-export function notifyInfo(msg: string) {
-  notification.info({
-    message: msg,
-    duration: 3,
-    style: {
-      background: '#e6f4ff',
-      border: '1px solid #91caff',
-    },
-  });
-}
-
-/**
  * Warning notification - yellow/orange background
  */
 export function notifyWarning(msg: string) {

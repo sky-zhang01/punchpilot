@@ -60,7 +60,7 @@ const BatchPunchModal: React.FC<BatchPunchModalProps> = ({ open, onClose }) => {
   const { t } = useTranslation();
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
-  const { selectedDates, batchPunchLoading, records, capabilities, batchPunchResults, batchStrategyInfo } = useAppSelector(
+  const { selectedDates, batchPunchLoading, records, capabilities, batchPunchResults } = useAppSelector(
     (state) => state.attendance
   );
   const { schedules } = useAppSelector((state) => state.config);
