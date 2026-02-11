@@ -169,7 +169,69 @@ class FreeeBot {
     }
 
     console.log(chalk.green('[Bot] Login completed'));
+
+    // Ensure we're on the correct company
+    await this.ensureCompany();
+
     return true;
+  }
+
+  /**
+   * Ensure the browser is on the configured company.
+   * freee may default to a different company after login.
+   * Reads oauth_company_name from DB and switches if needed.
+   */
+  async ensureCompany() {
+    const targetCompany = getSetting('oauth_company_name');
+    if (!targetCompany) return; // no target configured
+
+    // Check current company by reading the sidebar text
+    const bodyText = await this.page.evaluate(() => document.body.innerText.substring(0, 2000)).catch(() => '');
+
+    if (bodyText.includes(targetCompany)) {
+      console.log(chalk.green(`[Bot] Already on company: ${targetCompany}`));
+      return;
+    }
+
+    console.log(chalk.yellow(`[Bot] Not on ${targetCompany}, attempting company switch...`));
+
+    // Try to find and click the company name in the sidebar to open the dropdown
+    // freee shows the current company name as a clickable element
+    const companiesData = getSetting('oauth_companies');
+    let otherCompanyNames = [];
+    try {
+      const companies = JSON.parse(companiesData || '[]');
+      otherCompanyNames = companies.filter(c => c.name !== targetCompany).map(c => c.name);
+    } catch { /* ignore */ }
+
+    // Click the current company name (could be any of the other companies)
+    let clicked = false;
+    for (const name of otherCompanyNames) {
+      const companyBtn = this.page.locator(`text=${name}`).first();
+      if ((await companyBtn.count()) > 0) {
+        console.log(chalk.blue(`[Bot] Clicking "${name}" to open company switcher...`));
+        await companyBtn.click();
+        await this.page.waitForTimeout(2000);
+        clicked = true;
+        break;
+      }
+    }
+
+    if (!clicked) {
+      console.log(chalk.yellow('[Bot] Could not find company switcher button'));
+      return;
+    }
+
+    // Now click the target company in the dropdown
+    const targetBtn = this.page.locator(`text=${targetCompany}`).first();
+    if ((await targetBtn.count()) > 0) {
+      console.log(chalk.blue(`[Bot] Switching to "${targetCompany}"...`));
+      await targetBtn.click();
+      await this.page.waitForTimeout(5000);
+      console.log(chalk.green(`[Bot] Switched to ${targetCompany}`));
+    } else {
+      console.log(chalk.red(`[Bot] "${targetCompany}" not found in company dropdown`));
+    }
   }
 
   /** Detect current state by checking which buttons are visible/enabled */
@@ -241,7 +303,8 @@ class FreeeBot {
     await this.page.waitForTimeout(3000);
 
     // Wait for the form to render (SPA React rendering) — retry with exponential backoff
-    const dateInput = this.page.locator('#approval-request-date-input');
+    // Note: freee updated their selector from #approval-request-date-input to #approval-request-fields-date
+    const dateInput = this.page.locator('#approval-request-fields-date');
     let formLoaded = false;
     for (let attempt = 0; attempt < 5; attempt++) {
       if ((await dateInput.count()) > 0) {
@@ -568,18 +631,66 @@ class FreeeBot {
       SpecialHoliday: 'ApprovalRequest::SpecialHoliday',
       Absence: 'ApprovalRequest::Absence',
       HolidayWork: 'ApprovalRequest::HolidayWork',
+      OvertimeWork: 'ApprovalRequest::OvertimeWork',
     };
 
     const freeeType = typeMap[type] || `ApprovalRequest::${type}`;
     const formUrl = `https://p.secure.freee.co.jp/approval_requests#/requests/new?type=${freeeType}&target_date=${date}`;
     console.log(chalk.blue(`[Bot] Navigating to leave request form: ${formUrl}`));
-    await this.page.goto(formUrl);
+
+    // freee uses SPA hash routing — navigate to the base path first, then handle hash
+    const currentUrl = this.page.url();
+    const baseUrl = 'https://p.secure.freee.co.jp/approval_requests';
+    if (!currentUrl.startsWith(baseUrl)) {
+      await this.page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await this.page.waitForTimeout(3000);
+    }
+    await this.page.goto(formUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
     await this.page.waitForTimeout(4000);
 
-    // Verify the form loaded
-    const dateInput = this.page.locator('#approval-request-date-input');
-    if ((await dateInput.count()) === 0) {
-      throw new Error('Leave request form did not load — date input not found');
+    // Verify the form loaded (freee updated selector from #approval-request-date-input)
+    const dateInput = this.page.locator('#approval-request-fields-date');
+    let formLoaded = false;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if ((await dateInput.count()) > 0) {
+        formLoaded = true;
+        break;
+      }
+      const waitMs = 2000 + attempt * 1500;
+      console.log(chalk.yellow(`[Bot] Leave form not loaded yet, waiting ${waitMs}ms (attempt ${attempt + 1}/5)...`));
+      await this.page.waitForTimeout(waitMs);
+      if (attempt === 2) {
+        await this.page.evaluate((url) => { window.location.hash = url.split('#')[1]; }, formUrl);
+        await this.page.waitForTimeout(2000);
+      }
+    }
+    if (!formLoaded) {
+      const debugPath = path.join(SCREENSHOTS_DIR, `leave-debug-${type}-${date}-${Date.now()}.png`);
+      await this.page.screenshot({ path: debugPath }).catch(() => {});
+      const bodySnippet = await this.page.evaluate(() => document.body.innerText.substring(0, 500)).catch(() => '');
+      throw new Error(`Leave form did not load — date input not found after 5 attempts. Page content: ${bodySnippet.substring(0, 200)}`);
+    }
+
+    // Fill time fields if provided (for OvertimeWork, PaidHoliday half/hour)
+    if (options.startTime) {
+      const startInput = this.page.locator('#approval-request-fields-started-at');
+      if ((await startInput.count()) > 0) {
+        await startInput.click();
+        await this.page.waitForTimeout(200);
+        await startInput.fill(options.startTime);
+        await this.page.keyboard.press('Tab');
+        await this.page.waitForTimeout(200);
+      }
+    }
+    if (options.endTime) {
+      const endInput = this.page.locator('#approval-request-fields-end-at');
+      if ((await endInput.count()) > 0) {
+        await endInput.click();
+        await this.page.waitForTimeout(200);
+        await endInput.fill(options.endTime);
+        await this.page.keyboard.press('Tab');
+        await this.page.waitForTimeout(200);
+      }
     }
 
     // Fill reason if provided
@@ -590,6 +701,33 @@ class FreeeBot {
         await this.page.waitForTimeout(200);
         await reasonInput.fill(options.reason);
         await this.page.waitForTimeout(200);
+      }
+    }
+
+    // Select approval route if available
+    const routeSelect = this.page.locator('#approval-request-fields-route-id');
+    if ((await routeSelect.count()) > 0 && options.routeId) {
+      await routeSelect.selectOption(String(options.routeId));
+      await this.page.waitForTimeout(300);
+    }
+
+    // Select approver if needed
+    if (options.approverId) {
+      const approverInput = this.page.locator('#approval-request-fields-approver_id');
+      if ((await approverInput.count()) > 0) {
+        await approverInput.click();
+        await this.page.waitForTimeout(500);
+        await approverInput.fill('');
+        await this.page.waitForTimeout(500);
+        // Select first option from the dropdown
+        const listboxId = await approverInput.getAttribute('aria-controls');
+        if (listboxId) {
+          const firstOption = this.page.locator(`#${listboxId} [role="option"]`).first();
+          if ((await firstOption.count()) > 0) {
+            await firstOption.click();
+            await this.page.waitForTimeout(300);
+          }
+        }
       }
     }
 
@@ -620,6 +758,117 @@ class FreeeBot {
 
     console.log(chalk.green(`[Bot] Leave request submitted: ${type} for ${date}`));
     return { success: true };
+  }
+
+  /**
+   * Withdraw (取下げ) an approval request via freee Web.
+   * Navigates to the request detail page and clicks the withdraw button.
+   *
+   * @param {string} type — freee type e.g. 'PaidHoliday', 'WorkTime', 'OvertimeWork'
+   * @param {string|number} requestId — freee approval request ID
+   * @returns {{ success: boolean, error?: string }}
+   */
+  async withdrawApprovalRequest(type, requestId) {
+    // Map type to freee URL type format
+    const typeMap = {
+      PaidHoliday: 'ApprovalRequest::PaidHoliday',
+      SpecialHoliday: 'ApprovalRequest::SpecialHoliday',
+      Absence: 'ApprovalRequest::Absence',
+      HolidayWork: 'ApprovalRequest::HolidayWork',
+      OvertimeWork: 'ApprovalRequest::OvertimeWork',
+      WorkTime: 'ApprovalRequest::WorkTime',
+      MonthlyAttendance: 'ApprovalRequest::MonthlyAttendance',
+    };
+
+    const freeeType = typeMap[type] || `ApprovalRequest::${type}`;
+    // freee SPA URL format: #requests/{id}?type=ApprovalRequest::Type
+    const detailUrl = `https://p.secure.freee.co.jp/approval_requests#requests/${requestId}?type=${encodeURIComponent(freeeType)}`;
+    console.log(chalk.blue(`[Bot] Navigating to approval request detail: ${detailUrl}`));
+
+    // Navigate to the approval requests base first (SPA needs to load)
+    const currentUrl = this.page.url();
+    const baseUrl = 'https://p.secure.freee.co.jp/approval_requests';
+    if (!currentUrl.startsWith(baseUrl)) {
+      await this.page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await this.page.waitForTimeout(3000);
+    }
+    // Navigate to detail via hash change
+    await this.page.evaluate((url) => { window.location.href = url; }, detailUrl);
+    await this.page.waitForTimeout(4000);
+
+    // Wait for the detail page to load — look for the withdraw button or request info
+    let pageLoaded = false;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const bodyText = await this.page.evaluate(() => document.body.innerText.substring(0, 3000)).catch(() => '');
+      // Check if the request detail is shown
+      if (bodyText.includes('取り下げ') || bodyText.includes('取下げ') || bodyText.includes('申請中') || bodyText.includes('承認待ち')) {
+        pageLoaded = true;
+        break;
+      }
+      const waitMs = 2000 + attempt * 1500;
+      console.log(chalk.yellow(`[Bot] Request detail not loaded yet, waiting ${waitMs}ms (attempt ${attempt + 1}/5)...`));
+      await this.page.waitForTimeout(waitMs);
+      if (attempt === 2) {
+        await this.page.evaluate((url) => { window.location.hash = url.split('#')[1]; }, detailUrl);
+        await this.page.waitForTimeout(2000);
+      }
+    }
+
+    if (!pageLoaded) {
+      const debugPath = path.join(SCREENSHOTS_DIR, `withdraw-debug-${type}-${requestId}-${Date.now()}.png`);
+      await this.page.screenshot({ path: debugPath }).catch(() => {});
+      const bodySnippet = await this.page.evaluate(() => document.body.innerText.substring(0, 500)).catch(() => '');
+      throw new Error(`Request detail page did not load. Page: ${bodySnippet.substring(0, 200)}`);
+    }
+
+    // Screenshot before withdraw
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const beforePath = path.join(SCREENSHOTS_DIR, `withdraw-${type}-${requestId}-before-${ts}.png`);
+    await this.page.screenshot({ path: beforePath });
+
+    // Find and click the 取下げ button
+    // freee may render it as "取り下げ" or "取下げ" depending on the page version
+    let withdrawBtn = this.page.locator('button').filter({ hasText: '取り下げ' });
+    if ((await withdrawBtn.count()) === 0) {
+      withdrawBtn = this.page.locator('button').filter({ hasText: '取下げ' });
+    }
+    if ((await withdrawBtn.count()) === 0) {
+      // Try broader search — might be a link or anchor
+      withdrawBtn = this.page.locator('a, button').filter({ hasText: /取り?下げ/ });
+    }
+
+    if ((await withdrawBtn.count()) === 0) {
+      const bodyText = await this.page.evaluate(() => document.body.innerText.substring(0, 2000)).catch(() => '');
+      console.log(chalk.red(`[Bot] Withdraw button not found. Page text: ${bodyText.substring(0, 300)}`));
+      return { success: false, error: 'Withdraw button (取下げ) not found on page', screenshotBefore: beforePath };
+    }
+
+    console.log(chalk.blue(`[Bot] Clicking withdraw button...`));
+    await withdrawBtn.first().click();
+    await this.page.waitForTimeout(2000);
+
+    // Handle confirmation dialog (freee shows a confirmation modal/dialog)
+    const confirmBtn = this.page.locator('button').filter({ hasText: /^(OK|はい|確認|取り下げ(する|る)?|取下げ)$/ });
+    if ((await confirmBtn.count()) > 0) {
+      console.log(chalk.blue(`[Bot] Clicking confirm button in dialog...`));
+      await confirmBtn.first().click();
+      await this.page.waitForTimeout(3000);
+    }
+
+    // Screenshot after withdraw
+    const afterPath = path.join(SCREENSHOTS_DIR, `withdraw-${type}-${requestId}-after-${ts}.png`);
+    await this.page.screenshot({ path: afterPath });
+
+    // Check for success
+    const postText = await this.page.evaluate(() => document.body.innerText.substring(0, 2000)).catch(() => '');
+    if (postText.includes('エラー') || postText.includes('取り下げできません') || postText.includes('削除できない')) {
+      const errorDetail = postText.match(/(エラー.{0,100}|取り下げできません.{0,80}|削除できない.{0,80})/)?.[0] || 'Unknown withdrawal error';
+      console.log(chalk.red(`[Bot] Withdrawal failed: ${errorDetail}`));
+      return { success: false, error: errorDetail, screenshotBefore: beforePath, screenshotAfter: afterPath };
+    }
+
+    console.log(chalk.green(`[Bot] Approval request ${type}-${requestId} withdrawn successfully`));
+    return { success: true, screenshotBefore: beforePath, screenshotAfter: afterPath };
   }
 }
 
@@ -973,6 +1222,45 @@ export async function submitLeaveRequest(type, date, options = {}) {
     await bot.init();
     await bot.login();
     return await bot.submitLeaveRequest(type, date, options);
+  } finally {
+    await bot.cleanup();
+    releaseLock();
+  }
+}
+
+/**
+ * Withdraw an approval request via freee Web (Playwright).
+ * Used as fallback when API withdrawal fails (e.g., companies with
+ * dept/position-based approval routing that the API cannot handle).
+ *
+ * @param {string} type — 'PaidHoliday' | 'WorkTime' | 'OvertimeWork' etc.
+ * @param {string|number} requestId — freee approval request ID
+ * @returns {{ success: boolean, error?: string }}
+ */
+export async function withdrawApprovalRequestWeb(type, requestId) {
+  const creds = getCredentials();
+  if (!creds.username || !creds.password) {
+    return { success: false, error: 'web_credentials_required' };
+  }
+
+  await acquireLock();
+  const bot = new FreeeBot();
+  try {
+    await bot.init();
+
+    try {
+      await bot.login();
+    } catch (loginErr) {
+      if (loginErr.code === 'WEB_LOGIN_FAILED' || loginErr.code === 'WEB_CREDENTIALS_NOT_CONFIGURED') {
+        return { success: false, error: 'web_credentials_invalid' };
+      }
+      throw loginErr;
+    }
+
+    return await bot.withdrawApprovalRequest(type, requestId);
+  } catch (err) {
+    console.error(chalk.red(`[Bot] Web withdrawal failed for ${type}-${requestId}: ${err.message}`));
+    return { success: false, error: err.message };
   } finally {
     await bot.cleanup();
     releaseLock();

@@ -73,10 +73,10 @@ const ja = {
     skipped: 'スキップ項目',
     credentialWarning: '勤怠サービスの認証情報が未設定です。設定画面で設定するか、テスト用にモックモードを有効にしてください。',
     nextAction: '次のアクション：{{action}}（{{time}}）',
-    allDone: '本日のスケジュール済みアクションはすべて実行またはスキップされました',
-    autoOff: '自動スケジューリングがOFFです。ヘッダーのトグルから有効にするか、下のボタンで手動実行してください。',
-    todayLog: '本日の実行ログ',
-    noActions: '本日のアクション実行なし',
+    allDone: '本日の打刻はすべて完了しました',
+    autoOff: '自動打刻がOFFです。設定画面でONにするか、下のボタンで手動実行してください。',
+    todayLog: '本日のログ',
+    noActions: '本日の実行履歴はありません',
   },
 
   // Startup Analysis (user-friendly messages)
@@ -119,6 +119,9 @@ const ja = {
     name: '名前',
     description: '説明',
     actions: '操作',
+    company: '事業所',
+    type: '種別',
+    applicant: '申請者',
   },
 
   // Status
@@ -222,6 +225,7 @@ const ja = {
     oauthUserId: 'ユーザーID',
     oauthClear: 'OAuthデータをクリア',
     oauthCleared: 'OAuthデータをクリアしました',
+    oauthClearedKeepWeb: 'OAuth認証がクリアされました。freeeのWebログイン情報は影響を受けません。',
     oauthVerifyFailed: 'OAuth検証に失敗しました',
     oauthUserName: 'ユーザー',
     oauthDepartment: '部門',
@@ -246,8 +250,8 @@ const ja = {
     holidaySkipTitle: '自動打刻の祝日スキップ',
     holidaySkipHint: '自動打刻時にスキップする国の祝日を選択してください。カレンダーにはすべての国の祝日を独立して表示できます。',
     holidaySkipPlaceholder: '国を選択',
-    lunchBreak: '昼休み制約',
-    lunchBreakNote: '休憩時間（休憩終了 - 休憩開始）は実行時に最大60分に制限されます',
+    lunchBreak: '休憩時間ルール',
+    lunchBreakNote: '休憩時間は60分以上に設定してください',
   },
 
   // Schedule Card
@@ -264,6 +268,8 @@ const ja = {
     resolvedTime: '本日の予定時刻',
     saved: '設定を保存しました',
     saveFailed: '保存に失敗しました',
+    breakMinDuration: '休憩時間は60分以上に設定してください',
+    windowStartBeforeEnd: '開始時間は終了時間より前に設定してください',
     checkin: '出勤',
     checkout: '退勤',
     breakStart: '休憩開始',
@@ -311,13 +317,13 @@ const ja = {
     summaryPaidHoliday: '有休取得数',
     summaryRemainingPaidHoliday: '有休残数',
     summaryLatenessEarlyLeaving: '遅刻早退時間',
-    // 一括打刻
-    batchPunchMode: '一括打刻',
+    // 打刻補正
+    batchPunchMode: '打刻補正',
     selectAllMissing: '漏れを全選択',
     selectedCount: '{{count}}件選択中',
     batchSubmit: '送信',
     batchCancel: 'キャンセル',
-    batchPunchTitle: '一括打刻',
+    batchPunchTitle: '打刻補正',
     batchTimeMode: '時刻モード',
     batchFixed: '固定',
     batchRandom: 'ランダム',
@@ -350,9 +356,29 @@ const ja = {
     approvalPending: '申請中',
     approvalApproved: '承認済',
     approvalRejected: '却下',
-    withdrawApproval: '取り消し',
-    withdrawConfirm: '{{date}}の申請を取り消しますか？',
-    withdrawSuccess: '申請を取り消しました',
+    withdrawApproval: '取下げ',
+    withdrawConfirm: 'この申請を取下げますか？',
+    withdrawSuccess: '申請を取下げました',
+    withdrawFailed: '申請の取下げに失敗しました',
+    viewRequests: '申請一覧',
+    approvalRequests: '申請一覧',
+    noRequests: '今月の申請はありません',
+    // 一括操作
+    myRequests: '自分の申請',
+    incomingRequests: '承認待ち',
+    noIncomingRequests: '承認待ちの申請はありません',
+    selectedCount: '{{count}}件選択中',
+    batchWithdraw: '一括取下げ',
+    batchWithdrawConfirm: '選択した申請を一括取下げしますか？',
+    noWithdrawable: '取下げ可能な申請が選択されていません',
+    batchApprove: '一括承認',
+    batchReject: '一括却下',
+    approve: '承認',
+    reject: '却下',
+    approved: '承認しました',
+    rejected: '却下しました',
+    approveConfirm: 'この申請を承認しますか？',
+    rejectConfirm: 'この申請を却下しますか？',
     // 休暇申請
     leaveRequest: '休暇申請',
     leaveType: '休暇種別',
@@ -360,7 +386,20 @@ const ja = {
     specialHoliday: '特別休暇',
     absence: '欠勤',
     holidayWork: '休日出勤',
+    overtimeWork: '残業申請',
     leaveSubmitted: '休暇申請を送信しました',
+    clickToAddDates: 'クリックして日付を追加（複数選択可）',
+    selectDate: '日付を選択',
+    batchLeaveHint: '一括モード：{{count}}件の日付を個別に申請します',
+    // 有給サブタイプ
+    holidaySubtype: '取得単位',
+    holidayTypeFull: '全休',
+    holidayTypeMorningOff: '午前休',
+    holidayTypeAfternoonOff: '午後休',
+    holidayTypeHalf: '半休',
+    holidayTypeHour: '時間休',
+    startTime: '開始時刻',
+    endTime: '終了時刻',
     workRequest: '出勤申請',
     workRequestType: '申請種別',
     workTimeCorrection: '勤怠修正',
@@ -388,6 +427,7 @@ const ja = {
     loadFailed: '祝日データの読み込みに失敗しました',
     countryJp: '日本',
     countryCn: '中国',
+    cnWorkday: '振替出勤',
   },
 
   // Password Strength
@@ -425,6 +465,22 @@ const ja = {
     },
   },
 
+  // 申請ステータス
+  approvalStatus: {
+    in_progress: '申請中',
+    approved: '承認済',
+    feedback: '差戻し',
+    draft: '下書き',
+  },
+
+  // 休暇種別ラベル（申請一覧で使用）
+  leaveTypes: {
+    paidHoliday: '有給休暇',
+    specialHoliday: '特別休暇',
+    overtimeWork: '残業',
+    absence: '欠勤',
+  },
+
   // Common
   common: {
     on: 'ON',
@@ -435,6 +491,7 @@ const ja = {
     confirm: '確認',
     error: 'エラー',
     backToTop: 'トップに戻る',
+    failed: '失敗',
   },
 };
 export default ja;

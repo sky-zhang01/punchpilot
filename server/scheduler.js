@@ -7,6 +7,7 @@ import {
   setDailySchedule,
   markDailyScheduleExecuted,
   cleanOldSchedules,
+  cleanExpiredLeaveStrategyCache,
 } from './db.js';
 import { executeAction, detectCurrentState, determineActionsForToday, FREEE_STATE } from './automation.js';
 import { isHolidayOrWeekend, getTodayString } from './holiday.js';
@@ -45,6 +46,7 @@ class Scheduler {
     this.dailyCronJob = cron.schedule('1 0 * * *', async () => {
       console.log('[Scheduler] Daily resolution triggered');
       cleanOldSchedules(30);
+      cleanExpiredLeaveStrategyCache();
       this.skippedActions.clear();
       this.startupAnalysis = null;
       await this.resolveAndScheduleToday();

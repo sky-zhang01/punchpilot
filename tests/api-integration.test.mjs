@@ -22,9 +22,9 @@ initDatabase();
 
 const { default: app } = await import('../server/app.js');
 
-// Default credentials
-const DEFAULT_USER = 'admin';
-const DEFAULT_PASS = 'admin';
+// Test credentials (not 'admin' to avoid the admin-username-block when must_change_password=0)
+const DEFAULT_USER = 'testadmin';
+const DEFAULT_PASS = 'TestPass123';
 
 // Suite-level session token (login once, reuse everywhere)
 let SESSION_TOKEN;
@@ -40,16 +40,16 @@ function extractTokenFromCookies(res) {
 }
 
 beforeAll(async () => {
-  // Reset admin user to known state (previous test runs may have changed password)
+  // Reset test user to known state
   const db = getDb();
-  const adminHash = bcrypt.hashSync(DEFAULT_PASS, 10);
+  const hash = bcrypt.hashSync(DEFAULT_PASS, 10);
   const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(DEFAULT_USER);
   if (existing) {
-    db.prepare('UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?')
-      .run(adminHash, existing.id);
+    db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?')
+      .run(hash, existing.id);
   } else {
-    db.prepare('INSERT INTO users (username, password_hash, must_change_password) VALUES (?, ?, 1)')
-      .run(DEFAULT_USER, adminHash);
+    db.prepare('INSERT INTO users (username, password_hash, must_change_password) VALUES (?, ?, 0)')
+      .run(DEFAULT_USER, hash);
   }
 
   const res = await request(app)
@@ -90,7 +90,7 @@ describe('Auth: Login', () => {
     expect(res.body.token).toBeUndefined(); // token must NOT leak in response body
     expect(extractTokenFromCookies(res)).toBeDefined(); // token is in httpOnly cookie
     expect(res.body.username).toBe(DEFAULT_USER);
-    expect(res.body.must_change_password).toBe(true); // first-boot flag
+    expect(res.body.must_change_password).toBe(false); // test user has already changed password
   });
 
   it('POST /api/auth/login with wrong password → 401 + failed flag', async () => {
@@ -190,7 +190,7 @@ describe('Auth: Password Change', () => {
     const res = await request(app)
       .put('/api/auth/password')
       .set('x-session-token', SESSION_TOKEN)
-      .send({ new_password: 'short' });
+      .send({ old_password: DEFAULT_PASS, new_password: 'short' });
     expect(res.status).toBe(400);
     expect(res.body.error).toBeDefined();
   });
@@ -199,7 +199,7 @@ describe('Auth: Password Change', () => {
     const res = await request(app)
       .put('/api/auth/password')
       .set('x-session-token', SESSION_TOKEN)
-      .send({ new_password: 'lowercase123' });
+      .send({ old_password: DEFAULT_PASS, new_password: 'lowercase123' });
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('uppercase');
   });
@@ -208,7 +208,7 @@ describe('Auth: Password Change', () => {
     const res = await request(app)
       .put('/api/auth/password')
       .set('x-session-token', SESSION_TOKEN)
-      .send({ new_password: 'NoNumberHere' });
+      .send({ old_password: DEFAULT_PASS, new_password: 'NoNumberHere' });
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('number');
   });
@@ -217,7 +217,7 @@ describe('Auth: Password Change', () => {
     const res = await request(app)
       .put('/api/auth/password')
       .set('x-session-token', SESSION_TOKEN)
-      .send({ new_username: 'admin', new_password: 'ValidPass123' });
+      .send({ old_password: DEFAULT_PASS, new_username: 'admin', new_password: 'ValidPass123' });
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('admin');
   });

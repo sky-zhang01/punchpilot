@@ -80,20 +80,13 @@ let _cachedKey = null;
 function getEncryptionKey() {
   if (!_cachedKey) {
     const secret = getAppSecret();
-    _cachedKey = crypto.scryptSync(secret, 'punchpilot-salt-v2', 32);
+    // Static salt is acceptable: the secret is already 256-bit random per-installation.
+    // Explicit scrypt params: N=16384, r=8, p=1 (OWASP recommended minimum).
+    _cachedKey = crypto.scryptSync(secret, 'punchpilot-salt-v2', 32, { N: 16384, r: 8, p: 1 });
   }
   return _cachedKey;
 }
 
-/**
- * Try to get an encryption key from the OLD GUI_PASSWORD-based derivation.
- * Used for one-time migration of existing encrypted data.
- */
-function getLegacyEncryptionKey() {
-  const secret = process.env.GUI_PASSWORD || process.env.APP_SECRET;
-  if (!secret) return null;
-  return crypto.scryptSync(secret, 'punchpilot-salt', 32);
-}
 
 /**
  * Encrypt a string using AES-256-GCM
@@ -129,27 +122,6 @@ export function decrypt(encryptedText) {
   }
 }
 
-/**
- * Try to decrypt with the legacy key.
- */
-function decryptWithLegacyKey(encryptedText) {
-  if (!encryptedText || !encryptedText.includes(':')) return null;
-  const legacyKey = getLegacyEncryptionKey();
-  if (!legacyKey) return null;
-
-  try {
-    const [ivHex, tagHex, encrypted] = encryptedText.split(':');
-    const iv = Buffer.from(ivHex, 'hex');
-    const tag = Buffer.from(tagHex, 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-gcm', legacyKey, iv);
-    decipher.setAuthTag(tag);
-    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
-    return decrypted;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Migrate encrypted data from legacy key to new key.
@@ -170,21 +142,5 @@ export function migrateEncryptionIfNeeded(getSetting, setSetting) {
       setSetting('freee_username', '');
       console.log('[Crypto] Migrated freee_username to encrypted storage');
     }
-  }
-
-  // Step 3: Migrate encryption key (legacy GUI_PASSWORD → APP_SECRET)
-  const encPassword = getSetting('freee_password_encrypted');
-  if (!encPassword) return;
-
-  const currentResult = decrypt(encPassword);
-  if (currentResult) return; // already works with current key
-
-  const legacyResult = decryptWithLegacyKey(encPassword);
-  if (legacyResult) {
-    const newEncrypted = encrypt(legacyResult);
-    setSetting('freee_password_encrypted', newEncrypted);
-    console.log('[Crypto] Migrated freee credentials to new encryption key');
-  } else {
-    console.warn('[Crypto] Warning: could not decrypt stored freee credentials with any known key');
   }
 }

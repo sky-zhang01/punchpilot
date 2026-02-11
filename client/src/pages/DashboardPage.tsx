@@ -10,7 +10,6 @@ import {
   Spin,
   Row,
   Col,
-  Statistic,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -61,6 +60,8 @@ interface LogEntry {
   status?: string;
   trigger?: string;
   duration?: number | string;
+  company_name?: string;
+  company_id?: string;
 }
 
 const DashboardPage: React.FC = () => {
@@ -208,11 +209,14 @@ const DashboardPage: React.FC = () => {
             {statusData.today_logs && (
               <Row gutter={16}>
                 <Col span={8}>
-                  <Statistic
-                    title={t('table.action')}
-                    value={statusData.today_logs.length}
-                    suffix={t('dashboard.todayLog')}
-                  />
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 14 }}>
+                      {t('dashboard.todayLog')}
+                    </Text>
+                    <div style={{ fontSize: 24, fontWeight: 600 }}>
+                      {statusData.today_logs.length}
+                    </div>
+                  </div>
                 </Col>
               </Row>
             )}
@@ -224,7 +228,15 @@ const DashboardPage: React.FC = () => {
       <ManualTrigger onActionComplete={loadStatus} />
 
       {/* Today's log table */}
-      <Card title={<Title level={5} style={{ margin: 0 }}>{t('dashboard.todayLog')}</Title>}>
+      <Card title={
+        <Space>
+          <Title level={5} style={{ margin: 0 }}>{t('dashboard.todayLog')}</Title>
+          {(() => {
+            const companyName = statusData?.today_logs?.find((l: LogEntry) => l.company_name)?.company_name;
+            return companyName ? <Tag color="blue" style={{ fontSize: 11 }}>{companyName}</Tag> : null;
+          })()}
+        </Space>
+      }>
         <Table<LogEntry>
           columns={columns}
           dataSource={statusData?.today_logs || []}

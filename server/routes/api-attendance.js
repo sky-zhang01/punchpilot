@@ -1,11 +1,29 @@
 import { Router } from 'express';
 import { getSetting, setSetting, getStrategyCache, setStrategyCache, insertLog } from '../db.js';
 import { FreeeApiClient } from '../freee-api.js';
-import { submitWebCorrections, hasWebCredentials, scrapeEmployeeProfile, submitLeaveRequest } from '../automation.js';
+import { submitWebCorrections, hasWebCredentials, scrapeEmployeeProfile, submitLeaveRequest, withdrawApprovalRequestWeb } from '../automation.js';
 import logger from '../logger.js';
 
 const router = Router();
 const log = logger.child('Attendance');
+
+/**
+ * Sanitize error messages for client response.
+ * Keeps freee API error messages (actionable for user) but strips internal details.
+ */
+function sanitizeError(err, context = 'Operation failed') {
+  const msg = err?.message || String(err);
+  // Keep freee API errors (they contain actionable info like permission errors)
+  if (msg.includes('freee') || msg.includes('権限') || msg.includes('認証')
+    || msg.includes('token') || msg.includes('OAuth') || msg.includes('expired')
+    || msg.includes('configured') || msg.includes('balance') || msg.includes('already')) {
+    // Strip file paths and stack traces
+    return msg.replace(/\s*at\s+.*$/gm, '').replace(/\/[^\s:]+\.(js|ts|mjs)/g, '').trim();
+  }
+  // For unknown errors, return generic message
+  log.error(`${context}: ${msg}`);
+  return context;
+}
 
 /**
  * Convert ISO 8601 or any datetime string to freee API format: "YYYY-MM-DD HH:MM:SS"
@@ -190,7 +208,7 @@ router.get('/capabilities', async (req, res) => {
     });
   } catch (err) {
     log.error(`Failed to detect capabilities: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err) });
   }
 });
 
@@ -304,7 +322,7 @@ router.get('/records', async (req, res) => {
     res.json({ records, summary, year: y, month: m });
   } catch (err) {
     log.error(`Failed to fetch records: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err) });
   }
 });
 
@@ -354,7 +372,7 @@ router.put('/records/:date', async (req, res) => {
     res.json({ success: true, date, result });
   } catch (err) {
     log.error(`Failed to update record for ${date}: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err) });
   }
 });
 
@@ -384,6 +402,9 @@ router.post('/batch', async (req, res) => {
 
   if (!entries || !Array.isArray(entries) || entries.length === 0) {
     return res.status(400).json({ error: 'entries array is required and must not be empty' });
+  }
+  if (entries.length > 50) {
+    return res.status(400).json({ error: 'Maximum 50 entries per batch request' });
   }
 
   const oauth = requireOAuth(res);
@@ -656,7 +677,7 @@ router.post('/batch', async (req, res) => {
     res.json({ success: failedCount === 0, results, succeeded: succeededCount, failed: failedCount, strategy_info: strategyInfo });
   } catch (err) {
     log.error(`Batch failed: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err) });
   }
 });
 
@@ -693,7 +714,7 @@ router.get('/approval-routes', async (req, res) => {
     });
   } catch (err) {
     log.error(`Failed to fetch approval routes: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err) });
   }
 });
 
@@ -797,7 +818,7 @@ router.get('/employee-info', async (req, res) => {
     res.json(result);
   } catch (err) {
     log.error(`Failed to fetch employee info: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err) });
   }
 });
 
@@ -862,7 +883,7 @@ router.post('/approval/monthly', async (req, res) => {
     } catch (logErr) { /* ignore */ }
 
     const status = err.message.includes('403') || err.message.includes('402') ? 403 : 500;
-    res.status(status).json({ error: err.message });
+    res.status(status).json({ error: sanitizeError(err) });
   }
 });
 
@@ -957,7 +978,7 @@ router.post('/approval/work-time', async (req, res) => {
     } catch (logErr) { /* ignore log failures */ }
 
     const status = err.message.includes('403') || err.message.includes('402') ? 403 : 500;
-    res.status(status).json({ error: err.message });
+    res.status(status).json({ error: sanitizeError(err) });
   }
 });
 
@@ -966,12 +987,13 @@ router.post('/approval/work-time', async (req, res) => {
 // ===================================================================
 
 /**
- * GET /api/attendance/approval-requests - Fetch work time approval requests
+ * GET /api/attendance/approval-requests - Fetch approval requests across all 5 types
  * Query: year, month (calendar month)
- * Returns: { requests: [{ id, status, target_date, work_records, break_records, comment, created_at }] }
+ * Returns: { requests: [{ id, type, status, target_date, ..., comment, created_at }] }
  *
- * Queries freee API for work_time approval requests across statuses:
- * in_progress (pending), approved, feedback (rejected)
+ * Queries freee API across 5 approval request types:
+ *   work_times, paid_holidays, overtime_works, special_holidays, monthly_attendances
+ * For each type, queries across statuses: in_progress (pending), approved, feedback (rejected)
  */
 router.get('/approval-requests', async (req, res) => {
   const { year, month } = req.query;
@@ -994,37 +1016,68 @@ router.get('/approval-requests', async (req, res) => {
     const allRequests = [];
     const statuses = ['in_progress', 'approved', 'feedback'];
 
-    for (const status of statuses) {
-      try {
-        const data = await client.apiRequest(
-          'GET',
-          `/approval_requests/work_times?company_id=${companyId}&status=${status}`
-        );
-        // freee API returns work_times array (not approval_requests)
-        const requests = data.work_times || data.approval_requests || [];
-        for (const req of requests) {
-          // Filter to target month
-          if (req.target_date && req.target_date.startsWith(monthPrefix)) {
-            allRequests.push({
-              id: req.id,
-              status: req.status || status,
-              target_date: req.target_date,
-              work_records: (req.work_records || []).map(wr => ({
-                clock_in_at: wr.clock_in_at || null,
-                clock_out_at: wr.clock_out_at || null,
-              })),
-              break_records: (req.break_records || []).map(br => ({
-                clock_in_at: br.clock_in_at || null,
-                clock_out_at: br.clock_out_at || null,
-              })),
-              comment: req.comment || '',
-              request_number: req.application_number ? String(req.application_number) : null,
-              created_at: req.issue_date || null,
-            });
+    // All 5 approval request types to query
+    const approvalTypes = [
+      { endpoint: 'work_times', type: 'WorkTime', responseKey: 'work_times' },
+      { endpoint: 'paid_holidays', type: 'PaidHoliday', responseKey: 'paid_holidays' },
+      { endpoint: 'overtime_works', type: 'OvertimeWork', responseKey: 'overtime_works' },
+      { endpoint: 'special_holidays', type: 'SpecialHoliday', responseKey: 'special_holidays' },
+      { endpoint: 'monthly_attendances', type: 'MonthlyAttendance', responseKey: 'monthly_attendances' },
+    ];
+
+    for (const approvalType of approvalTypes) {
+      for (const status of statuses) {
+        try {
+          const data = await client.apiRequest(
+            'GET',
+            `/approval_requests/${approvalType.endpoint}?company_id=${companyId}&status=${status}`
+          );
+          // freee API returns the type-specific array (e.g., work_times, paid_holidays)
+          const requests = data[approvalType.responseKey] || data.approval_requests || [];
+          for (const req of requests) {
+            // Filter to target month
+            if (req.target_date && req.target_date.startsWith(monthPrefix)) {
+              const entry = {
+                id: req.id,
+                type: approvalType.type,
+                status: req.status || status,
+                target_date: req.target_date,
+                comment: req.comment || '',
+                request_number: req.application_number ? String(req.application_number) : null,
+                created_at: req.issue_date || null,
+              };
+
+              // Type-specific fields
+              if (approvalType.type === 'WorkTime') {
+                entry.work_records = (req.work_records || []).map(wr => ({
+                  clock_in_at: wr.clock_in_at || null,
+                  clock_out_at: wr.clock_out_at || null,
+                }));
+                entry.break_records = (req.break_records || []).map(br => ({
+                  clock_in_at: br.clock_in_at || null,
+                  clock_out_at: br.clock_out_at || null,
+                }));
+              } else if (approvalType.type === 'PaidHoliday') {
+                entry.holiday_type = req.holiday_type || 'full';
+                entry.start_time = req.start_time || null;
+                entry.end_time = req.end_time || null;
+              } else if (approvalType.type === 'OvertimeWork') {
+                entry.start_time = req.start_time || null;
+                entry.end_time = req.end_time || null;
+              }
+
+              allRequests.push(entry);
+            }
+          }
+        } catch (err) {
+          // 403/402 means plan restriction — silently skip
+          const errMsg = err.message || '';
+          if (errMsg.includes('403') || errMsg.includes('402')) {
+            log.debug(`${approvalType.endpoint}/${status}: plan restricted, skipping`);
+          } else {
+            log.warn(`Failed to fetch ${approvalType.endpoint} with status=${status}: ${errMsg.substring(0, 100)}`);
           }
         }
-      } catch (err) {
-        log.warn(`Failed to fetch approval requests with status=${status}: ${err.message.substring(0, 100)}`);
       }
     }
 
@@ -1032,12 +1085,14 @@ router.get('/approval-requests', async (req, res) => {
     res.json({ requests: allRequests });
   } catch (err) {
     log.error(`Failed to fetch approval requests: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err) });
   }
 });
 
 /**
  * DELETE /api/attendance/approval-requests/:id - Withdraw/cancel an approval request
+ * Query: type (optional) — 'WorkTime' | 'PaidHoliday' | 'OvertimeWork' | 'SpecialHoliday' | 'MonthlyAttendance'
+ *        Defaults to 'WorkTime' for backward compatibility.
  *
  * freee API behavior:
  *   - DELETE only works for draft/pending requests, NOT in_progress ones
@@ -1046,6 +1101,33 @@ router.get('/approval-requests', async (req, res) => {
  */
 router.delete('/approval-requests/:id', async (req, res) => {
   const { id } = req.params;
+  if (!/^\d+$/.test(id)) {
+    return res.status(400).json({ error: 'Invalid request ID' });
+  }
+  const requestType = req.query.type || 'WorkTime';
+
+  // Map type names to API endpoints
+  const typeToEndpoint = {
+    WorkTime: 'work_times',
+    PaidHoliday: 'paid_holidays',
+    OvertimeWork: 'overtime_works',
+    SpecialHoliday: 'special_holidays',
+    MonthlyAttendance: 'monthly_attendances',
+  };
+
+  const endpoint = typeToEndpoint[requestType];
+  if (!endpoint) {
+    return res.status(400).json({ error: `Invalid type. Valid: ${Object.keys(typeToEndpoint).join(', ')}` });
+  }
+
+  // Map type to singular response key (freee returns e.g., { work_time: {...} })
+  const typeToResponseKey = {
+    WorkTime: 'work_time',
+    PaidHoliday: 'paid_holiday',
+    OvertimeWork: 'overtime_work',
+    SpecialHoliday: 'special_holiday',
+    MonthlyAttendance: 'monthly_attendance',
+  };
 
   const oauth = requireOAuth(res);
   if (!oauth) return;
@@ -1055,17 +1137,20 @@ router.delete('/approval-requests/:id', async (req, res) => {
     const client = new FreeeApiClient();
     await client.ensureValidToken();
 
+    const responseKey = typeToResponseKey[requestType];
+
     // First, try to get the request details to know its current state
     let requestData;
     try {
       requestData = await client.apiRequest(
         'GET',
-        `/approval_requests/work_times/${id}?company_id=${companyId}`
+        `/approval_requests/${endpoint}/${id}?company_id=${companyId}`
       );
     } catch { /* ignore, proceed with cancel attempt */ }
 
-    const currentStep = requestData?.work_time?.current_step_id;
-    const currentRound = requestData?.work_time?.current_round || 1;
+    const detail = requestData?.[responseKey] || requestData;
+    const currentStep = detail?.current_step_id;
+    const currentRound = detail?.current_round || 1;
 
     // Try cancel action first (works for in_progress requests)
     try {
@@ -1076,26 +1161,50 @@ router.delete('/approval-requests/:id', async (req, res) => {
       };
       await client.apiRequest(
         'POST',
-        `/approval_requests/work_times/${id}/actions?company_id=${companyId}`,
+        `/approval_requests/${endpoint}/${id}/actions?company_id=${companyId}`,
         cancelBody
       );
-      log.info(`Approval request ${id} cancelled via action`);
-      return res.json({ success: true, id: parseInt(id, 10), method: 'cancel' });
+      log.info(`Approval request ${id} (${requestType}) cancelled via action`);
+      return res.json({ success: true, id: parseInt(id, 10), type: requestType, method: 'cancel' });
     } catch (cancelErr) {
-      log.info(`Cancel action failed for ${id}: ${cancelErr.message}, trying DELETE...`);
+      log.info(`Cancel action failed for ${id} (${requestType}): ${cancelErr.message}, trying DELETE...`);
     }
 
-    // Fallback: try DELETE (works for draft/pending requests)
-    await client.apiRequest(
-      'DELETE',
-      `/approval_requests/work_times/${id}?company_id=${companyId}`
-    );
+    // Fallback 2: try DELETE (works for draft/pending requests)
+    try {
+      await client.apiRequest(
+        'DELETE',
+        `/approval_requests/${endpoint}/${id}?company_id=${companyId}`
+      );
+      log.info(`Approval request ${id} (${requestType}) withdrawn via DELETE`);
+      return res.json({ success: true, id: parseInt(id, 10), type: requestType, method: 'delete' });
+    } catch (deleteErr) {
+      log.info(`DELETE also failed for ${id} (${requestType}): ${deleteErr.message}, trying Playwright web fallback...`);
+    }
 
-    log.info(`Approval request ${id} withdrawn via DELETE`);
-    res.json({ success: true, id: parseInt(id, 10), method: 'delete' });
+    // Fallback 3: Playwright web automation (取下げ button on freee web)
+    // This handles cases where API fails due to dept/position routing restrictions
+    if (hasWebCredentials()) {
+      try {
+        const webResult = await withdrawApprovalRequestWeb(requestType, id);
+        if (webResult.success) {
+          log.info(`Approval request ${id} (${requestType}) withdrawn via Playwright web`);
+          return res.json({ success: true, id: parseInt(id, 10), type: requestType, method: 'web_withdraw' });
+        }
+        log.warn(`Playwright withdrawal failed for ${id}: ${webResult.error}`);
+      } catch (webErr) {
+        log.error(`Playwright withdrawal error for ${id}: ${webErr.message}`);
+      }
+    } else {
+      log.warn(`Cannot fallback to Playwright — web credentials not configured`);
+    }
+
+    // All methods exhausted
+    log.error(`All withdrawal methods failed for ${id} (${requestType})`);
+    res.status(500).json({ error: 'Failed to withdraw approval request via API and web automation. Please withdraw manually on freee.' });
   } catch (err) {
-    log.error(`Failed to withdraw approval request ${id}: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    log.error(`Failed to withdraw approval request ${id} (${requestType}): ${err.message}`);
+    res.status(500).json({ error: 'Failed to withdraw approval request. Please try again.' });
   }
 });
 
@@ -1219,7 +1328,7 @@ router.post('/detect-strategy', async (req, res) => {
     });
   } catch (err) {
     log.error(`Strategy detection failed: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err) });
   }
 });
 
@@ -1245,44 +1354,318 @@ router.get('/strategy-cache', (req, res) => {
 });
 
 // ===================================================================
-//  Leave Requests — via Web automation (Playwright)
+//  Leave Requests — 3-stage fallback (S1→S2→S4)
+//  Similar to batch punch, but per leave/overtime type.
+//  S3 (time_clocks) is not applicable for leave/overtime — only for punch.
+//
+//  Per-type strategy availability:
+//    PaidHoliday(full):                S1(PUT work_records, paid_holiday=1) → S2 → S4
+//    PaidHoliday(half/morning/afternoon): S2(POST approval_requests/paid_holidays) → S4
+//    PaidHoliday(hour):                   S2(POST approval_requests/paid_holidays) → S4
+//    SpecialHoliday: S1(PUT work_records) → S2(POST approval_requests/special_holidays) → S4
+//    OvertimeWork:                          S2(POST approval_requests/overtime_works)  → S4
+//    Absence:        S1(PUT work_records with is_absence=true)                         → S4
+//    HolidayWork:                                                                        S4(Playwright only)
+//
+//  Strategy cache: per month+type, first success is cached as best_strategy.
+//    Same month re-requests skip straight to cached best. Next month re-probes from S1/S2.
 // ===================================================================
 
+// Map leave type → approval_requests API endpoint (S2)
+const LEAVE_APPROVAL_ENDPOINTS = {
+  PaidHoliday: 'paid_holidays',
+  SpecialHoliday: 'special_holidays',
+  OvertimeWork: 'overtime_works',
+};
+
+// Which types support S1 (direct write via PUT /work_records)
+// Note: PaidHoliday S1 only supports 'full' — half/morning/afternoon/hour must use S2
+//       (freee API breaking change 2024-02: paid_holiday field only accepts 1, not 0.5)
+const LEAVE_DIRECT_WRITE_TYPES = ['PaidHoliday', 'SpecialHoliday', 'Absence'];
+
+// Check if a leave type+subtype can use S1 direct write
+function canUseS1Direct(type, holidayType) {
+  if (type === 'PaidHoliday') {
+    // Only full-day paid holiday is supported via S1 (paid_holiday=1)
+    // half/morning_off/afternoon_off/hour must go through S2 approval API
+    return (holidayType || 'full') === 'full';
+  }
+  return LEAVE_DIRECT_WRITE_TYPES.includes(type);
+}
+
+// Get leave strategy cache key for a given month + type
+function getLeaveStrategyCacheKey(month, type) {
+  return `leave_strategy_${month}_${type}`;
+}
+
 /**
- * POST /api/attendance/leave-request - Submit a leave request via freee Web
- * Body: { type, date, reason? }
- * type: 'PaidHoliday' | 'SpecialHoliday' | 'Absence' | 'HolidayWork'
+ * POST /api/attendance/leave-request - Submit a leave/overtime request
+ *
+ * Body: {
+ *   type: 'PaidHoliday' | 'SpecialHoliday' | 'Absence' | 'HolidayWork' | 'OvertimeWork',
+ *   date: 'YYYY-MM-DD',
+ *   reason?: string,
+ *   holiday_type?: 'full' | 'morning_off' | 'afternoon_off' | 'half' | 'hour',
+ *   start_time?: 'HH:MM',   // required when holiday_type='half'/'hour' or type='OvertimeWork'
+ *   end_time?: 'HH:MM',     // required when holiday_type='half'/'hour' or type='OvertimeWork'
+ *   special_holiday_setting_id?: number, // required for SpecialHoliday (freee company setting ID)
+ * }
+ *
+ * 3-stage fallback: S1(direct write) → S2(approval API) → S4(Playwright web)
+ * Strategy is cached per month+type: first success becomes the fast path for that month.
  */
 router.post('/leave-request', async (req, res) => {
-  const { type, date, reason } = req.body;
+  const { type, date, reason, holiday_type, start_time, end_time } = req.body;
 
   if (!type || !date) {
     return res.status(400).json({ error: 'type and date are required' });
   }
 
-  const validTypes = ['PaidHoliday', 'SpecialHoliday', 'Absence', 'HolidayWork'];
+  const validTypes = ['PaidHoliday', 'SpecialHoliday', 'Absence', 'HolidayWork', 'OvertimeWork'];
   if (!validTypes.includes(type)) {
     return res.status(400).json({ error: `Invalid leave type. Valid: ${validTypes.join(', ')}` });
   }
 
-  if (!hasWebCredentials()) {
-    return res.status(400).json({ error: 'freee Web credentials not configured. Go to Settings to save your freee login.' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
   }
 
-  try {
-    log.info(`Submitting leave request: type=${type}, date=${date}`);
-    const result = await submitLeaveRequest(type, date, { reason });
+  // Validate PaidHoliday subtypes
+  const validHolidayTypes = ['full', 'morning_off', 'afternoon_off', 'half', 'hour'];
+  if (type === 'PaidHoliday' && holiday_type && !validHolidayTypes.includes(holiday_type)) {
+    return res.status(400).json({ error: `Invalid holiday_type. Valid: ${validHolidayTypes.join(', ')}` });
+  }
 
-    if (result.success) {
-      log.info(`Leave request submitted: ${type} for ${date}`);
-      res.json({ success: true, type, date });
-    } else {
-      log.error(`Leave request failed: ${result.error}`);
-      res.status(500).json({ error: result.error });
+  // Validate time format when provided (HH:MM, 00-23:00-59)
+  const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
+  if (start_time && !TIME_REGEX.test(start_time)) {
+    return res.status(400).json({ error: 'start_time must be in HH:MM format (00:00-23:59)' });
+  }
+  if (end_time && !TIME_REGEX.test(end_time)) {
+    return res.status(400).json({ error: 'end_time must be in HH:MM format (00:00-23:59)' });
+  }
+
+  // half/hour type requires start/end times (freee API requires start_at/end_at for both)
+  if (type === 'PaidHoliday' && (holiday_type === 'half' || holiday_type === 'hour') && (!start_time || !end_time)) {
+    return res.status(400).json({ error: 'start_time and end_time are required for half/hourly leave' });
+  }
+
+  // OvertimeWork requires start/end times
+  if (type === 'OvertimeWork' && (!start_time || !end_time)) {
+    return res.status(400).json({ error: 'start_time and end_time are required for overtime requests' });
+  }
+
+  // Validate special_holiday_setting_id
+  if (type === 'SpecialHoliday') {
+    const settingId = parseInt(req.body.special_holiday_setting_id, 10);
+    if (isNaN(settingId) || settingId <= 0) {
+      return res.status(400).json({ error: 'special_holiday_setting_id must be a positive integer for SpecialHoliday' });
     }
-  } catch (err) {
-    log.error(`Leave request error: ${err.message}`);
-    res.status(500).json({ error: err.message });
+  }
+
+  log.info(`Leave request: type=${type}, date=${date}, holiday_type=${holiday_type || 'full'}`);
+
+  const stages = [];
+  let succeeded = false;
+  let result = null;
+
+  // Check OAuth availability for S1/S2
+  const oauth = (() => {
+    if (getSetting('oauth_configured') !== '1') return null;
+    const companyId = getSetting('oauth_company_id');
+    const employeeId = getSetting('oauth_employee_id');
+    if (!companyId || !employeeId) return null;
+    return { companyId, employeeId };
+  })();
+
+  // --- Strategy cache: per month + type ---
+  const month = date.substring(0, 7); // "YYYY-MM"
+  const cacheKey = getLeaveStrategyCacheKey(month, type);
+  const cachedBest = getSetting(cacheKey);  // 'direct' | 'approval' | 'web' | null
+
+  if (cachedBest) {
+    log.info(`[${date}] Leave strategy cache hit: ${type} → ${cachedBest} for ${month}`);
+  }
+
+  // FAST PATH: if cached best is 'web', skip S1/S2 entirely
+  const skipApiStrategies = cachedBest === 'web';
+
+  // === Stage 1: Direct write via PUT /work_records ===
+  if (!skipApiStrategies && (!cachedBest || cachedBest === 'direct') && oauth && canUseS1Direct(type, holiday_type)) {
+    try {
+      const client = new FreeeApiClient();
+      await client.ensureValidToken();
+      const { companyId, employeeId } = oauth;
+
+      const body = { company_id: parseInt(companyId, 10) };
+
+      if (type === 'Absence') {
+        body.is_absence = true;
+      } else if (type === 'PaidHoliday') {
+        // After freee API 2024-02 breaking change: paid_holiday only accepts 1 (full day)
+        // Half/morning/afternoon/hour are handled via S2 approval API (canUseS1Direct filters these out)
+        body.paid_holiday = 1;
+      } else if (type === 'SpecialHoliday') {
+        body.special_holiday = true;
+        if (req.body.special_holiday_setting_id) {
+          body.special_holiday_setting_id = parseInt(req.body.special_holiday_setting_id, 10);
+        }
+      }
+
+      await client.apiRequest(
+        'PUT',
+        `/employees/${employeeId}/work_records/${date}?company_id=${companyId}`,
+        body
+      );
+
+      stages.push({ stage: 'S1_direct', success: true });
+      log.info(`[${date}] S1 direct write succeeded for ${type}`);
+      succeeded = true;
+      result = { success: true, type, date, method: 'direct' };
+      // Cache: S1 is optimal for this month+type
+      if (!cachedBest) setSetting(cacheKey, 'direct');
+    } catch (err) {
+      stages.push({ stage: 'S1_direct', success: false, error: 'Direct API write failed' });
+      log.info(`[${date}] S1 direct write failed for ${type}: ${err.message?.substring(0, 120)}`);
+    }
+  }
+
+  // === Stage 2: Approval API (POST /approval_requests/{type}) ===
+  if (!succeeded && !skipApiStrategies && oauth && LEAVE_APPROVAL_ENDPOINTS[type]) {
+    // If cached best is 'direct' but S1 failed, still try S2 (don't skip)
+    try {
+      const client = new FreeeApiClient();
+      await client.ensureValidToken();
+      const { companyId } = oauth;
+
+      const endpoint = LEAVE_APPROVAL_ENDPOINTS[type];
+      const { primaryRouteId, fallbackRouteId, primaryRouteUserId, primaryRouteNeedsApprover } = await findAttendanceRouteIds(client, companyId);
+      const routeId = primaryRouteId || fallbackRouteId;
+
+      const body = {
+        company_id: parseInt(companyId, 10),
+        target_date: date,
+      };
+      if (routeId) body.approval_flow_route_id = routeId;
+      if (reason) body.comment = reason;
+
+      // Handle approver for routes that need one
+      if (primaryRouteNeedsApprover && routeId === primaryRouteId) {
+        if (primaryRouteUserId) {
+          body.approver_id = primaryRouteUserId;
+        } else {
+          try {
+            const me = await client.apiRequest('GET', '/users/me');
+            body.approver_id = me.id;
+          } catch { /* ignore */ }
+        }
+      }
+
+      // Type-specific fields
+      // Note: freee API uses start_at/end_at (not start_time/end_time)
+      if (type === 'PaidHoliday') {
+        body.holiday_type = holiday_type || 'full';
+        // freee requires start_at/end_at for half and hour types
+        if ((holiday_type === 'half' || holiday_type === 'hour') && start_time && end_time) {
+          body.start_at = start_time;
+          body.end_at = end_time;
+        }
+      } else if (type === 'OvertimeWork') {
+        if (start_time) body.start_at = start_time;
+        if (end_time) body.end_at = end_time;
+      } else if (type === 'SpecialHoliday') {
+        if (req.body.special_holiday_setting_id) {
+          body.special_holiday_setting_id = parseInt(req.body.special_holiday_setting_id, 10);
+        }
+        if (req.body.holiday_type) {
+          body.holiday_type = req.body.holiday_type;
+        }
+      }
+
+      const apiResult = await client.apiRequest(
+        'POST',
+        `/approval_requests/${endpoint}`,
+        body
+      );
+
+      const requestId = apiResult?.id || apiResult?.[endpoint.replace(/s$/, '')]?.id || null;
+      stages.push({ stage: 'S2_approval', success: true, id: requestId });
+      log.info(`[${date}] S2 approval API succeeded for ${type} (id=${requestId})`);
+      succeeded = true;
+      result = { success: true, type, date, method: 'approval', id: requestId };
+      // Cache: S2 is optimal for this month+type
+      if (!cachedBest || cachedBest === 'direct') setSetting(cacheKey, 'approval');
+    } catch (err) {
+      stages.push({ stage: 'S2_approval', success: false, error: 'Approval API request failed' });
+      log.info(`[${date}] S2 approval API failed for ${type}: ${err.message?.substring(0, 120)}`);
+    }
+  }
+
+  // === Stage 4: Playwright Web automation ===
+  if (!succeeded) {
+    if (!hasWebCredentials()) {
+      stages.push({ stage: 'S4_web', success: false, error: 'web_credentials_required' });
+      log.warn(`[${date}] S4 skipped: no web credentials`);
+
+      // Log the attempt
+      try {
+        insertLog({
+          action_type: 'leave_request',
+          scheduled_time: date,
+          status: 'failure',
+          trigger_type: 'manual',
+          error_message: `type=${type} | All stages failed: ${stages.map(s => `${s.stage}:${s.error || 'ok'}`).join(', ')}`,
+        });
+      } catch { /* ignore */ }
+
+      return res.status(400).json({
+        error: 'All API strategies failed and freee Web credentials not configured.',
+        stages,
+        web_credentials_required: true,
+      });
+    }
+
+    try {
+      log.info(`[${date}] S4 Playwright web fallback for ${type}`);
+      const webResult = await submitLeaveRequest(type, date, { reason });
+
+      if (webResult.success) {
+        stages.push({ stage: 'S4_web', success: true });
+        log.info(`[${date}] S4 web submission succeeded for ${type}`);
+        succeeded = true;
+        result = { success: true, type, date, method: 'web' };
+        // Cache: S4 is the only working strategy for this month+type
+        if (!cachedBest || cachedBest !== 'web') setSetting(cacheKey, 'web');
+      } else {
+        stages.push({ stage: 'S4_web', success: false, error: 'Web automation failed' });
+        log.error(`[${date}] S4 web submission failed for ${type}: ${webResult.error}`);
+      }
+    } catch (err) {
+      stages.push({ stage: 'S4_web', success: false, error: 'Web automation error' });
+      log.error(`[${date}] S4 web submission error for ${type}: ${err.message}`);
+    }
+  }
+
+  // Log the result
+  try {
+    insertLog({
+      action_type: 'leave_request',
+      scheduled_time: date,
+      status: succeeded ? 'success' : 'failure',
+      trigger_type: 'manual',
+      error_message: succeeded
+        ? `type=${type} method=${result?.method}`
+        : `type=${type} | ${stages.map(s => `${s.stage}:${s.error || 'ok'}`).join(', ')}`,
+    });
+  } catch { /* ignore */ }
+
+  if (succeeded) {
+    res.json({ ...result, stages });
+  } else {
+    res.status(500).json({
+      error: `Leave request failed for ${type}. All strategies exhausted.`,
+      stages,
+    });
   }
 });
 
@@ -1291,6 +1674,9 @@ router.post('/approval/batch-work-time', async (req, res) => {
   const { entries, reason } = req.body;
   if (!entries || !Array.isArray(entries) || entries.length === 0) {
     return res.status(400).json({ error: 'entries array is required and must not be empty' });
+  }
+  if (entries.length > 50) {
+    return res.status(400).json({ error: 'Maximum 50 entries per batch request' });
   }
 
   const oauth = requireOAuth(res);
@@ -1345,7 +1731,496 @@ router.post('/approval/batch-work-time', async (req, res) => {
 
     res.json({ success: failed === 0, results, succeeded, failed });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: sanitizeError(err) });
+  }
+});
+
+// ===================================================================
+//  Issue 5: Batch Operations — leave requests, withdrawal, approve/reject
+// ===================================================================
+
+/**
+ * POST /api/attendance/batch-leave-request - Submit leave requests for multiple dates
+ *
+ * Body: {
+ *   type: 'PaidHoliday' | 'SpecialHoliday' | 'Absence' | 'HolidayWork' | 'OvertimeWork',
+ *   dates: ['YYYY-MM-DD', ...],
+ *   reason?: string,
+ *   holiday_type?: 'full' | 'morning_off' | 'afternoon_off' | 'half' | 'hour',
+ *   start_time?: 'HH:MM',
+ *   end_time?: 'HH:MM',
+ *   special_holiday_setting_id?: number,
+ * }
+ *
+ * Iterates over dates and reuses the same S1→S2→S4 fallback logic as single leave-request.
+ */
+router.post('/batch-leave-request', async (req, res) => {
+  const { type, dates, reason, holiday_type, start_time, end_time } = req.body;
+
+  if (!type || !dates || !Array.isArray(dates) || dates.length === 0) {
+    return res.status(400).json({ error: 'type and dates array are required' });
+  }
+  if (dates.length > 50) {
+    return res.status(400).json({ error: 'Maximum 50 dates per batch request' });
+  }
+
+  const validTypes = ['PaidHoliday', 'SpecialHoliday', 'Absence', 'HolidayWork', 'OvertimeWork'];
+  if (!validTypes.includes(type)) {
+    return res.status(400).json({ error: `Invalid leave type. Valid: ${validTypes.join(', ')}` });
+  }
+
+  // Validate all dates
+  for (const d of dates) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      return res.status(400).json({ error: `Invalid date format: ${d}. Use YYYY-MM-DD.` });
+    }
+  }
+
+  log.info(`Batch leave request: type=${type}, ${dates.length} dates`);
+
+  const results = [];
+
+  for (const date of dates) {
+    let succeeded = false;
+    let dateResult = null;
+    const stages = [];
+
+    // Check OAuth
+    const oauth = (() => {
+      if (getSetting('oauth_configured') !== '1') return null;
+      const companyId = getSetting('oauth_company_id');
+      const employeeId = getSetting('oauth_employee_id');
+      if (!companyId || !employeeId) return null;
+      return { companyId, employeeId };
+    })();
+
+    // Strategy cache
+    const month = date.substring(0, 7);
+    const cacheKey = getLeaveStrategyCacheKey(month, type);
+    const cachedBest = getSetting(cacheKey);
+    const skipApiStrategies = cachedBest === 'web';
+
+    // S1: Direct write
+    if (!skipApiStrategies && (!cachedBest || cachedBest === 'direct') && oauth && canUseS1Direct(type, holiday_type)) {
+      try {
+        const client = new FreeeApiClient();
+        await client.ensureValidToken();
+        const { companyId, employeeId } = oauth;
+        const body = { company_id: parseInt(companyId, 10) };
+
+        if (type === 'Absence') body.is_absence = true;
+        else if (type === 'PaidHoliday') body.paid_holiday = 1;
+        else if (type === 'SpecialHoliday') {
+          body.special_holiday = true;
+          if (req.body.special_holiday_setting_id) body.special_holiday_setting_id = parseInt(req.body.special_holiday_setting_id, 10);
+        }
+
+        await client.apiRequest('PUT', `/employees/${employeeId}/work_records/${date}?company_id=${companyId}`, body);
+        stages.push({ stage: 'S1_direct', success: true });
+        succeeded = true;
+        dateResult = { success: true, type, date, method: 'direct' };
+        if (!cachedBest) setSetting(cacheKey, 'direct');
+      } catch (err) {
+        stages.push({ stage: 'S1_direct', success: false, error: err.message?.substring(0, 100) });
+      }
+    }
+
+    // S2: Approval API
+    if (!succeeded && !skipApiStrategies && oauth && LEAVE_APPROVAL_ENDPOINTS[type]) {
+      try {
+        const client = new FreeeApiClient();
+        await client.ensureValidToken();
+        const { companyId } = oauth;
+        const endpoint = LEAVE_APPROVAL_ENDPOINTS[type];
+        const { primaryRouteId, fallbackRouteId, primaryRouteUserId, primaryRouteNeedsApprover } = await findAttendanceRouteIds(client, companyId);
+        const routeId = primaryRouteId || fallbackRouteId;
+
+        const body = { company_id: parseInt(companyId, 10), target_date: date };
+        if (routeId) body.approval_flow_route_id = routeId;
+        if (reason) body.comment = reason;
+
+        if (primaryRouteNeedsApprover && routeId === primaryRouteId) {
+          if (primaryRouteUserId) body.approver_id = primaryRouteUserId;
+        }
+
+        if (type === 'PaidHoliday') {
+          body.holiday_type = holiday_type || 'full';
+          if ((holiday_type === 'half' || holiday_type === 'hour') && start_time && end_time) {
+            body.start_at = start_time;
+            body.end_at = end_time;
+          }
+        } else if (type === 'OvertimeWork') {
+          if (start_time) body.start_at = start_time;
+          if (end_time) body.end_at = end_time;
+        } else if (type === 'SpecialHoliday') {
+          if (req.body.special_holiday_setting_id) body.special_holiday_setting_id = parseInt(req.body.special_holiday_setting_id, 10);
+          if (req.body.holiday_type) body.holiday_type = req.body.holiday_type;
+        }
+
+        const apiResult = await client.apiRequest('POST', `/approval_requests/${endpoint}`, body);
+        const requestId = apiResult?.id || apiResult?.[endpoint.replace(/s$/, '')]?.id || null;
+        stages.push({ stage: 'S2_approval', success: true, id: requestId });
+        succeeded = true;
+        dateResult = { success: true, type, date, method: 'approval', id: requestId };
+        if (!cachedBest || cachedBest === 'direct') setSetting(cacheKey, 'approval');
+      } catch (err) {
+        stages.push({ stage: 'S2_approval', success: false, error: err.message?.substring(0, 100) });
+      }
+    }
+
+    // S4: Playwright web
+    if (!succeeded && hasWebCredentials()) {
+      try {
+        const webResult = await submitLeaveRequest(type, date, { reason });
+        if (webResult.success) {
+          stages.push({ stage: 'S4_web', success: true });
+          succeeded = true;
+          dateResult = { success: true, type, date, method: 'web' };
+          if (!cachedBest || cachedBest !== 'web') setSetting(cacheKey, 'web');
+        } else {
+          stages.push({ stage: 'S4_web', success: false, error: webResult.error });
+        }
+      } catch (err) {
+        stages.push({ stage: 'S4_web', success: false, error: err.message });
+      }
+    }
+
+    if (succeeded) {
+      results.push({ ...dateResult, stages });
+    } else {
+      results.push({ success: false, type, date, error: 'All strategies failed', stages });
+    }
+
+    // Brief delay between requests to avoid rate limiting
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  const succeededCount = results.filter(r => r.success).length;
+  const failedCount = results.filter(r => !r.success).length;
+
+  log.info(`Batch leave request complete: ${succeededCount} succeeded, ${failedCount} failed`);
+  res.json({ success: failedCount === 0, results, succeeded: succeededCount, failed: failedCount });
+});
+
+/**
+ * POST /api/attendance/batch-withdraw - Withdraw multiple approval requests
+ *
+ * Body: {
+ *   requests: [{ id: number, type: string }, ...]
+ * }
+ *
+ * Uses cancel action → DELETE → Playwright web fallback (same as single withdraw).
+ */
+router.post('/batch-withdraw', async (req, res) => {
+  const { requests } = req.body;
+  if (!requests || !Array.isArray(requests) || requests.length === 0) {
+    return res.status(400).json({ error: 'requests array is required' });
+  }
+  if (requests.length > 50) {
+    return res.status(400).json({ error: 'Maximum 50 requests per batch' });
+  }
+
+  const typeToEndpoint = {
+    WorkTime: 'work_times',
+    PaidHoliday: 'paid_holidays',
+    OvertimeWork: 'overtime_works',
+    SpecialHoliday: 'special_holidays',
+    MonthlyAttendance: 'monthly_attendances',
+  };
+
+  const typeToResponseKey = {
+    WorkTime: 'work_time',
+    PaidHoliday: 'paid_holiday',
+    OvertimeWork: 'overtime_work',
+    SpecialHoliday: 'special_holiday',
+    MonthlyAttendance: 'monthly_attendance',
+  };
+
+  const oauth = requireOAuth(res);
+  if (!oauth) return;
+  const { companyId } = oauth;
+
+  log.info(`Batch withdraw: ${requests.length} requests`);
+
+  const results = [];
+  let client;
+  try {
+    client = new FreeeApiClient();
+    await client.ensureValidToken();
+  } catch (err) {
+    return res.status(500).json({ error: 'OAuth token error. Please reconfigure OAuth.' });
+  }
+
+  for (const request of requests) {
+    const { id, type } = request;
+    const endpoint = typeToEndpoint[type];
+    if (!endpoint) {
+      results.push({ id, type, success: false, error: `Invalid type: ${type}` });
+      continue;
+    }
+
+    let succeeded = false;
+    let method = null;
+
+    // 1) Try cancel action
+    try {
+      const responseKey = typeToResponseKey[type];
+      let requestData;
+      try {
+        requestData = await client.apiRequest('GET', `/approval_requests/${endpoint}/${id}?company_id=${companyId}`);
+      } catch { /* ignore */ }
+
+      const detail = requestData?.[responseKey] || requestData;
+      const currentStep = detail?.current_step_id;
+      const currentRound = detail?.current_round || 1;
+
+      await client.apiRequest('POST', `/approval_requests/${endpoint}/${id}/actions?company_id=${companyId}`, {
+        approval_action: 'cancel',
+        target_round: currentRound,
+        target_step_id: currentStep,
+      });
+      succeeded = true;
+      method = 'cancel';
+    } catch (cancelErr) {
+      log.info(`Batch withdraw: cancel failed for ${id} (${type}): ${cancelErr.message?.substring(0, 80)}`);
+    }
+
+    // 2) Try DELETE
+    if (!succeeded) {
+      try {
+        await client.apiRequest('DELETE', `/approval_requests/${endpoint}/${id}?company_id=${companyId}`);
+        succeeded = true;
+        method = 'delete';
+      } catch (deleteErr) {
+        log.info(`Batch withdraw: DELETE failed for ${id} (${type}): ${deleteErr.message?.substring(0, 80)}`);
+      }
+    }
+
+    // 3) Playwright web fallback
+    if (!succeeded && hasWebCredentials()) {
+      try {
+        const webResult = await withdrawApprovalRequestWeb(type, id);
+        if (webResult.success) {
+          succeeded = true;
+          method = 'web_withdraw';
+        }
+      } catch (webErr) {
+        log.error(`Batch withdraw: web fallback failed for ${id}: ${webErr.message}`);
+      }
+    }
+
+    results.push({ id, type, success: succeeded, method: method || 'failed' });
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  const succeededCount = results.filter(r => r.success).length;
+  const failedCount = results.filter(r => !r.success).length;
+  log.info(`Batch withdraw complete: ${succeededCount} succeeded, ${failedCount} failed`);
+  res.json({ success: failedCount === 0, results, succeeded: succeededCount, failed: failedCount });
+});
+
+/**
+ * POST /api/attendance/batch-approve - Batch approve or reject approval requests
+ *
+ * Body: {
+ *   requests: [{ id: number, type: string, action: 'approve' | 'feedback' }, ...]
+ * }
+ *
+ * 'approve' → approve, 'feedback' → reject/send back
+ */
+router.post('/batch-approve', async (req, res) => {
+  const { requests } = req.body;
+  if (!requests || !Array.isArray(requests) || requests.length === 0) {
+    return res.status(400).json({ error: 'requests array is required' });
+  }
+  if (requests.length > 50) {
+    return res.status(400).json({ error: 'Maximum 50 requests per batch' });
+  }
+
+  const typeToEndpoint = {
+    WorkTime: 'work_times',
+    PaidHoliday: 'paid_holidays',
+    OvertimeWork: 'overtime_works',
+    SpecialHoliday: 'special_holidays',
+    MonthlyAttendance: 'monthly_attendances',
+  };
+
+  const typeToResponseKey = {
+    WorkTime: 'work_time',
+    PaidHoliday: 'paid_holiday',
+    OvertimeWork: 'overtime_work',
+    SpecialHoliday: 'special_holiday',
+    MonthlyAttendance: 'monthly_attendance',
+  };
+
+  const oauth = requireOAuth(res);
+  if (!oauth) return;
+  const { companyId } = oauth;
+
+  log.info(`Batch approve: ${requests.length} requests`);
+
+  let client;
+  try {
+    client = new FreeeApiClient();
+    await client.ensureValidToken();
+  } catch (err) {
+    return res.status(500).json({ error: 'OAuth token error. Please reconfigure OAuth.' });
+  }
+
+  const results = [];
+
+  for (const request of requests) {
+    const { id, type, action } = request;
+    const endpoint = typeToEndpoint[type];
+
+    if (!endpoint) {
+      results.push({ id, type, success: false, error: `Invalid type: ${type}` });
+      continue;
+    }
+    if (!['approve', 'feedback'].includes(action)) {
+      results.push({ id, type, success: false, error: `Invalid action: ${action}. Must be 'approve' or 'feedback'` });
+      continue;
+    }
+
+    try {
+      // Get current step/round info
+      const responseKey = typeToResponseKey[type];
+      let requestData;
+      try {
+        requestData = await client.apiRequest('GET', `/approval_requests/${endpoint}/${id}?company_id=${companyId}`);
+      } catch { /* ignore */ }
+
+      const detail = requestData?.[responseKey] || requestData;
+      const currentStep = detail?.current_step_id;
+      const currentRound = detail?.current_round || 1;
+
+      const body = {
+        approval_action: action,
+        target_round: currentRound,
+        target_step_id: currentStep,
+      };
+
+      await client.apiRequest('POST', `/approval_requests/${endpoint}/${id}/actions?company_id=${companyId}`, body);
+
+      results.push({ id, type, action, success: true });
+      log.info(`Batch approve: ${action} succeeded for ${id} (${type})`);
+    } catch (err) {
+      results.push({ id, type, action, success: false, error: err.message?.substring(0, 120) });
+      log.error(`Batch approve: ${action} failed for ${id} (${type}): ${err.message?.substring(0, 120)}`);
+    }
+
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  const succeededCount = results.filter(r => r.success).length;
+  const failedCount = results.filter(r => !r.success).length;
+  log.info(`Batch approve complete: ${succeededCount} succeeded, ${failedCount} failed`);
+  res.json({ success: failedCount === 0, results, succeeded: succeededCount, failed: failedCount });
+});
+
+/**
+ * GET /api/attendance/incoming-requests - Get approval requests pending the current user's approval
+ *
+ * Query: year, month
+ *
+ * Returns requests across all leave/work-time types where current user is the approver.
+ */
+router.get('/incoming-requests', async (req, res) => {
+  const { year, month } = req.query;
+  if (!year || !month) {
+    return res.status(400).json({ error: 'year and month are required query parameters' });
+  }
+
+  const oauth = requireOAuth(res);
+  if (!oauth) return;
+  const { companyId } = oauth;
+
+  try {
+    const client = new FreeeApiClient();
+    await client.ensureValidToken();
+
+    // Get current user info to find their user ID
+    let currentUserId;
+    try {
+      const me = await client.apiRequest('GET', '/users/me');
+      currentUserId = me.id;
+    } catch (err) {
+      log.error(`Could not determine current user: ${err.message}`);
+      return res.status(500).json({ error: 'Could not determine current user. Please check OAuth configuration.' });
+    }
+
+    const typeToEndpoint = {
+      WorkTime: 'work_times',
+      PaidHoliday: 'paid_holidays',
+      OvertimeWork: 'overtime_works',
+      SpecialHoliday: 'special_holidays',
+      MonthlyAttendance: 'monthly_attendances',
+    };
+
+    const typeToResponseKey = {
+      WorkTime: 'work_time',
+      PaidHoliday: 'paid_holiday',
+      OvertimeWork: 'overtime_work',
+      SpecialHoliday: 'special_holiday',
+      MonthlyAttendance: 'monthly_attendance',
+    };
+
+    const allRequests = [];
+
+    for (const [type, endpoint] of Object.entries(typeToEndpoint)) {
+      try {
+        // Get in_progress requests for this type
+        const data = await client.apiRequest(
+          'GET',
+          `/approval_requests/${endpoint}?company_id=${companyId}&status=in_progress`
+        );
+
+        const responseKey = `${typeToResponseKey[type]}s`; // plural
+        const requests = data?.[responseKey] || data || [];
+
+        if (!Array.isArray(requests)) continue;
+
+        for (const req of requests) {
+          // Filter: only include requests where current user is an approver on the current step
+          const approvers = req.approvers || req.current_step_approvers || [];
+          const isMyApproval = approvers.some(a => a.id === currentUserId || a.user_id === currentUserId);
+
+          // Also check approval_steps for more detailed matching
+          const steps = req.approval_flow_route?.usage_steps || req.approval_steps || [];
+          const currentStepId = req.current_step_id;
+          const currentStepApprovers = steps
+            .filter(s => s.id === currentStepId)
+            .flatMap(s => s.approvers || []);
+          const isMyStep = currentStepApprovers.some(a => a.id === currentUserId || a.user_id === currentUserId);
+
+          if (isMyApproval || isMyStep || approvers.length === 0) {
+            allRequests.push({
+              id: req.id,
+              type,
+              status: req.status || 'in_progress',
+              target_date: req.target_date,
+              applicant: req.applicant?.display_name || req.applicant_name || '-',
+              applicant_id: req.applicant?.id || req.applicant_id,
+              comment: req.comment,
+              created_at: req.created_at,
+              current_round: req.current_round,
+              current_step_id: req.current_step_id,
+            });
+          }
+        }
+      } catch (err) {
+        log.warn(`incoming-requests: failed to fetch ${type}: ${err.message?.substring(0, 80)}`);
+      }
+    }
+
+    // Sort by created_at descending
+    allRequests.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+    log.info(`incoming-requests: found ${allRequests.length} requests for user ${currentUserId}`);
+    res.json({ requests: allRequests, count: allRequests.length });
+  } catch (err) {
+    log.error(`incoming-requests error: ${err.message}`);
+    res.status(500).json({ error: sanitizeError(err) });
   }
 });
 

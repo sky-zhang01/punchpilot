@@ -67,7 +67,7 @@ export class FreeeApiClient {
 
     if (!response.ok) {
       const errBody = await response.text();
-      console.error(chalk.red(`[API] Token refresh failed: ${response.status} ${errBody}`));
+      console.error(chalk.red(`[API] Token refresh failed: ${response.status} ${errBody.substring(0, 200)}`));
       throw new Error(`Token refresh failed (${response.status}). Please re-authorize in Settings.`);
     }
 
@@ -107,7 +107,7 @@ export class FreeeApiClient {
 
     if (!response.ok) {
       const errBody = await response.text();
-      console.error(chalk.red(`[API] ${method} ${path} → ${response.status}: ${errBody}`));
+      console.error(chalk.red(`[API] ${method} ${path} → ${response.status}: ${errBody.substring(0, 300)}`));
 
       // Parse freee error structure for better error messages
       let msg = errBody;

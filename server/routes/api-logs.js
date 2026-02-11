@@ -14,7 +14,7 @@ router.get('/', (req, res) => {
     date,
     action_type,
     page: page ? parseInt(page, 10) : 1,
-    limit: limit ? parseInt(limit, 10) : 20,
+    limit: limit ? Math.min(parseInt(limit, 10), 100) : 20,
   });
   res.json(result);
 });

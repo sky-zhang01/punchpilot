@@ -65,6 +65,11 @@ export function authMiddleware(req, res, next) {
         username: user.username,
         must_change_password: !!user.must_change_password,
       };
+
+      // Enforce password change — only allow auth endpoints until password is changed
+      if (user.must_change_password && !req.path.startsWith('/api/auth/')) {
+        return res.status(403).json({ error: 'Password change required', must_change_password: true });
+      }
     }
   }
 
@@ -100,7 +105,7 @@ export function loginHandler(req, res) {
 
   cleanExpiredSessions();
 
-  const token = crypto.randomUUID();
+  const token = crypto.randomBytes(32).toString('hex');
   const expiresAt = new Date(
     Date.now() + SESSION_DURATION_HOURS * 60 * 60 * 1000
   ).toISOString();

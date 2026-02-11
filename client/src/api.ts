@@ -88,16 +88,25 @@ const apiClient = {
   // Approval request tracking
   getApprovalRequests: (year: number, month: number): ApiCall =>
     api.get('/attendance/approval-requests', { params: { year, month } }),
-  withdrawApprovalRequest: (id: number): ApiCall =>
-    api.delete(`/attendance/approval-requests/${id}`),
+  withdrawApprovalRequest: (id: number, type?: string): ApiCall =>
+    api.delete(`/attendance/approval-requests/${id}`, { params: type ? { type } : undefined }),
   // Strategy detection
   detectStrategy: (force?: boolean): ApiCall =>
     api.post('/attendance/detect-strategy', { force }),
   getStrategyCache: (): ApiCall =>
     api.get('/attendance/strategy-cache'),
-  // Leave requests
-  submitLeaveRequest: (data: { type: string; date: string; reason?: string }): ApiCall =>
+  // Leave requests (4-stage fallback: direct → approval API → Playwright)
+  submitLeaveRequest: (data: { type: string; date: string; reason?: string; holiday_type?: string; start_time?: string; end_time?: string }): ApiCall =>
     api.post('/attendance/leave-request', data, { timeout: 3 * 60 * 1000 }),
+  // Batch operations
+  submitBatchLeaveRequest: (data: { type: string; dates: string[]; reason?: string; holiday_type?: string; start_time?: string; end_time?: string }): ApiCall =>
+    api.post('/attendance/batch-leave-request', data, { timeout: 5 * 60 * 1000 }),
+  batchWithdrawRequests: (data: { requests: Array<{ id: number; type: string }> }): ApiCall =>
+    api.post('/attendance/batch-withdraw', data, { timeout: 5 * 60 * 1000 }),
+  batchApproveRequests: (data: { requests: Array<{ id: number; type: string; action: 'approve' | 'feedback' }> }): ApiCall =>
+    api.post('/attendance/batch-approve', data, { timeout: 3 * 60 * 1000 }),
+  getIncomingRequests: (year: number, month: number): ApiCall =>
+    api.get('/attendance/incoming-requests', { params: { year, month } }),
   // Legacy — kept for backward compat
   submitBatchWorkTimeCorrection: (data: { entries: any[]; reason?: string }): ApiCall =>
     api.post('/attendance/approval/batch-work-time', data),
@@ -107,7 +116,10 @@ const apiClient = {
     api.put('/config/holiday-skip-countries', { countries }),
 
   // Holidays
+  getHolidayAvailableYears: (country?: string): ApiCall =>
+    api.get('/holidays/available-years', { params: country ? { country } : undefined }),
   getHolidays: (params?: Record<string, any>): ApiCall => api.get('/holidays', { params }),
+  getCnWorkdays: (year: number): ApiCall => api.get('/holidays/cn-workdays', { params: { year } }),
   getNationalHolidays: (): ApiCall => api.get('/holidays/national'),
   addCustomHoliday: (data: { date: string; description: string }): ApiCall => api.post('/holidays/custom', data),
   deleteCustomHoliday: (id: number | string): ApiCall => api.delete(`/holidays/custom/${id}`),

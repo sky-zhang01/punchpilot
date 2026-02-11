@@ -73,10 +73,10 @@ const en = {
     skipped: 'Skipped steps',
     credentialWarning: 'Attendance service credentials not configured. Go to Settings to configure, or enable Mock Mode for testing.',
     nextAction: 'Next: {{action}} at {{time}}',
-    allDone: 'All scheduled actions for today have been executed or skipped',
-    autoOff: 'Auto scheduling is OFF. Enable it from the header toggle or use manual triggers below.',
-    todayLog: "Today's Execution Log",
-    noActions: 'No actions executed today',
+    allDone: 'All done for today',
+    autoOff: 'Auto scheduling is OFF. Enable it in Settings or use manual triggers below.',
+    todayLog: "Today's Log",
+    noActions: 'No actions yet today',
   },
 
   // Startup Analysis (user-friendly messages)
@@ -119,6 +119,9 @@ const en = {
     name: 'Name',
     description: 'Description',
     actions: 'Actions',
+    company: 'Company',
+    type: 'Type',
+    applicant: 'Applicant',
   },
 
   // Status
@@ -222,6 +225,7 @@ const en = {
     oauthUserId: 'User ID',
     oauthClear: 'Clear OAuth Data',
     oauthCleared: 'OAuth data cleared',
+    oauthClearedKeepWeb: 'OAuth authorization cleared. Your freee web login credentials are not affected.',
     oauthVerifyFailed: 'OAuth verification failed',
     oauthUserName: 'User',
     oauthDepartment: 'Department',
@@ -246,8 +250,8 @@ const en = {
     holidaySkipTitle: 'Holiday Skip for Auto-Punch',
     holidaySkipHint: 'Select which countries\' national holidays to skip when auto-punching. Calendar can display all holidays independently.',
     holidaySkipPlaceholder: 'Select countries',
-    lunchBreak: 'Lunch Break Constraint',
-    lunchBreakNote: 'Break duration (break_end - break_start) will be clamped to a maximum of 60 minutes at runtime',
+    lunchBreak: 'Break Duration Rule',
+    lunchBreakNote: 'Break duration must be at least 60 minutes',
   },
 
   // Schedule Card
@@ -264,6 +268,8 @@ const en = {
     resolvedTime: "Today's scheduled time",
     saved: 'Configuration saved',
     saveFailed: 'Save failed',
+    breakMinDuration: 'Break duration must be at least 60 minutes',
+    windowStartBeforeEnd: 'Window start time must be before end time',
     checkin: 'Check-in',
     checkout: 'Check-out',
     breakStart: 'Break Start',
@@ -311,13 +317,13 @@ const en = {
     summaryPaidHoliday: 'Paid Holidays Used',
     summaryRemainingPaidHoliday: 'Remaining',
     summaryLatenessEarlyLeaving: 'Lateness/Early Leaving',
-    // Batch punch
-    batchPunchMode: 'Batch Punch',
+    // Punch correction
+    batchPunchMode: 'Punch Correction',
     selectAllMissing: 'Select All Missing',
     selectedCount: '{{count}} selected',
     batchSubmit: 'Submit',
     batchCancel: 'Cancel',
-    batchPunchTitle: 'Batch Punch',
+    batchPunchTitle: 'Punch Correction',
     batchTimeMode: 'Time Mode',
     batchFixed: 'Fixed',
     batchRandom: 'Random',
@@ -351,8 +357,28 @@ const en = {
     approvalApproved: 'Approved',
     approvalRejected: 'Rejected',
     withdrawApproval: 'Withdraw',
-    withdrawConfirm: 'Withdraw the request for {{date}}?',
+    withdrawConfirm: 'Are you sure you want to withdraw this request?',
     withdrawSuccess: 'Request withdrawn',
+    withdrawFailed: 'Failed to withdraw request',
+    viewRequests: 'View Requests',
+    approvalRequests: 'Approval Requests',
+    noRequests: 'No requests for this month',
+    // Batch operations
+    myRequests: 'My Requests',
+    incomingRequests: 'Incoming Requests',
+    noIncomingRequests: 'No pending approval requests',
+    selectedCount: '{{count}} selected',
+    batchWithdraw: 'Batch Withdraw',
+    batchWithdrawConfirm: 'Withdraw all selected requests?',
+    noWithdrawable: 'No withdrawable requests selected',
+    batchApprove: 'Batch Approve',
+    batchReject: 'Batch Reject',
+    approve: 'Approve',
+    reject: 'Reject',
+    approved: 'Approved',
+    rejected: 'Rejected',
+    approveConfirm: 'Approve this request?',
+    rejectConfirm: 'Reject this request?',
     // Leave requests
     leaveRequest: 'Leave Request',
     leaveType: 'Leave Type',
@@ -360,7 +386,20 @@ const en = {
     specialHoliday: 'Special Leave',
     absence: 'Absence',
     holidayWork: 'Holiday Work',
+    overtimeWork: 'Overtime Request',
     leaveSubmitted: 'Leave request submitted',
+    clickToAddDates: 'Click to add dates, multiple allowed',
+    selectDate: 'Select a date',
+    batchLeaveHint: 'Batch mode: {{count}} dates will be submitted as separate requests',
+    // PaidHoliday subtypes
+    holidaySubtype: 'Leave Duration',
+    holidayTypeFull: 'Full Day',
+    holidayTypeMorningOff: 'Morning Off',
+    holidayTypeAfternoonOff: 'Afternoon Off',
+    holidayTypeHalf: 'Half Day',
+    holidayTypeHour: 'Hourly Leave',
+    startTime: 'Start Time',
+    endTime: 'End Time',
     workRequest: 'Work Request',
     workRequestType: 'Request Type',
     workTimeCorrection: 'Work Time Correction',
@@ -388,6 +427,7 @@ const en = {
     loadFailed: 'Failed to load holidays',
     countryJp: 'Japan',
     countryCn: 'China',
+    cnWorkday: 'Makeup Workday',
   },
 
   // Password Strength
@@ -425,6 +465,22 @@ const en = {
     },
   },
 
+  // Approval statuses
+  approvalStatus: {
+    in_progress: 'Pending',
+    approved: 'Approved',
+    feedback: 'Returned',
+    draft: 'Draft',
+  },
+
+  // Leave type labels (used in approval request table)
+  leaveTypes: {
+    paidHoliday: 'Paid Leave',
+    specialHoliday: 'Special Leave',
+    overtimeWork: 'Overtime',
+    absence: 'Absence',
+  },
+
   // Common
   common: {
     on: 'ON',
@@ -435,6 +491,7 @@ const en = {
     confirm: 'Confirm',
     error: 'Error',
     backToTop: 'Back to top',
+    failed: 'failed',
   },
 };
 export default en;

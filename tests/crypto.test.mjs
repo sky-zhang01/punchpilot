@@ -21,7 +21,7 @@ beforeAll(async () => {
 
 describe('encrypt/decrypt round-trip', () => {
   it('should encrypt and decrypt ASCII text', () => {
-    const original = 'test@freee.co.jp';
+    const original = 'test@example.com';
     expect(decrypt(encrypt(original))).toBe(original);
   });
 
@@ -142,9 +142,9 @@ describe('migration logic', () => {
     expect(cryptoSrc).toContain("setSetting('freee_username', '')");
   });
 
-  it('supports legacy key migration (punchpilot-salt v1)', () => {
-    expect(cryptoSrc).toContain("'punchpilot-salt'");
-    expect(cryptoSrc).toContain('decryptWithLegacyKey');
+  it('uses punchpilot-salt-v2 for key derivation', () => {
+    expect(cryptoSrc).toContain("'punchpilot-salt-v2'");
+    expect(cryptoSrc).not.toContain('decryptWithLegacyKey');
   });
 
   it('simulated migration preserves secret value', () => {

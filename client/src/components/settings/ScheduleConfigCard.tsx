@@ -48,6 +48,12 @@ const ScheduleConfigCard: React.FC = () => {
     setEditState((prev) => ({ ...prev, [`${actionType}.${field}`]: value }));
   };
 
+  // Helper: convert "HH:mm" to total minutes
+  const timeToMinutes = (timeStr: string) => {
+    const [h, m] = timeStr.split(':').map(Number);
+    return h * 60 + m;
+  };
+
   const handleSave = async (actionType: string) => {
     const schedule = schedules.find((s) => s.action_type === actionType);
     if (!schedule) return;
@@ -60,6 +66,61 @@ const ScheduleConfigCard: React.FC = () => {
     } else {
       data.window_start = getEditValue(actionType, 'window_start', schedule.window_start);
       data.window_end = getEditValue(actionType, 'window_end', schedule.window_end);
+    }
+
+    // Validate window_start < window_end for random mode
+    if (mode === 'random' && data.window_start && data.window_end) {
+      if (timeToMinutes(data.window_start) >= timeToMinutes(data.window_end)) {
+        notifyError(t('scheduleCard.windowStartBeforeEnd'));
+        return;
+      }
+    }
+
+    // Validate break duration >= 60 minutes (both fixed and random modes)
+    // fixed: end.fixed - start.fixed >= 60
+    // random: end.window_end - start.window_start >= 60
+    //   (ensures at least 60 minutes of selectable break range)
+    if (actionType === 'break_start' || actionType === 'break_end') {
+      const breakStartSchedule = schedules.find((s) => s.action_type === 'break_start');
+      const breakEndSchedule = schedules.find((s) => s.action_type === 'break_end');
+      if (breakStartSchedule && breakEndSchedule) {
+        const startMode = actionType === 'break_start' ? mode : getEditValue('break_start', 'mode', breakStartSchedule.mode);
+        const endMode = actionType === 'break_end' ? mode : getEditValue('break_end', 'mode', breakEndSchedule.mode);
+
+        // "earliest possible start" of break
+        let earliestStart: string | undefined;
+        if (startMode === 'fixed') {
+          earliestStart = actionType === 'break_start'
+            ? (data.fixed_time || getEditValue('break_start', 'fixed_time', breakStartSchedule.fixed_time))
+            : getEditValue('break_start', 'fixed_time', breakStartSchedule.fixed_time);
+        } else {
+          // random: earliest start = window_start of break_start
+          earliestStart = actionType === 'break_start'
+            ? (data.window_start || getEditValue('break_start', 'window_start', breakStartSchedule.window_start))
+            : getEditValue('break_start', 'window_start', breakStartSchedule.window_start);
+        }
+
+        // "latest possible end" of break
+        let latestEnd: string | undefined;
+        if (endMode === 'fixed') {
+          latestEnd = actionType === 'break_end'
+            ? (data.fixed_time || getEditValue('break_end', 'fixed_time', breakEndSchedule.fixed_time))
+            : getEditValue('break_end', 'fixed_time', breakEndSchedule.fixed_time);
+        } else {
+          // random: latest end = window_end of break_end
+          latestEnd = actionType === 'break_end'
+            ? (data.window_end || getEditValue('break_end', 'window_end', breakEndSchedule.window_end))
+            : getEditValue('break_end', 'window_end', breakEndSchedule.window_end);
+        }
+
+        if (earliestStart && latestEnd) {
+          const duration = timeToMinutes(latestEnd) - timeToMinutes(earliestStart);
+          if (duration < 60) {
+            notifyError(t('scheduleCard.breakMinDuration'));
+            return;
+          }
+        }
+      }
     }
 
     try {

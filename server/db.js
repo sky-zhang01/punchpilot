@@ -5,7 +5,7 @@ import bcrypt from 'bcryptjs';
 import { migrateEncryptionIfNeeded } from './crypto.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.resolve(__dirname, '..', 'data', 'punchpilot.db');
+const DB_PATH = process.env.PUNCHPILOT_DB_PATH || path.resolve(__dirname, '..', 'data', 'punchpilot.db');
 
 let db;
 
@@ -104,6 +104,17 @@ export function initDatabase() {
     } catch {}
   }
 
+  // Add company_id and company_name columns to execution_log (migration)
+  try {
+    db.prepare('SELECT company_id FROM execution_log LIMIT 1').get();
+  } catch {
+    try {
+      db.exec('ALTER TABLE execution_log ADD COLUMN company_id TEXT');
+      db.exec('ALTER TABLE execution_log ADD COLUMN company_name TEXT');
+      console.log('[PunchPilot] Migrated execution_log table: added company_id, company_name columns');
+    } catch {}
+  }
+
   // Seed default config
   const insertConfig = db.prepare(`
     INSERT OR IGNORE INTO config (action_type, mode, fixed_time, window_start, window_end)
@@ -111,21 +122,22 @@ export function initDatabase() {
   `);
 
   insertConfig.run('checkin', 'random', '10:00', '09:50', '10:00');
-  insertConfig.run('checkout', 'random', '20:00', '19:45', '20:15');
-  insertConfig.run('break_start', 'random', '12:00', '12:00', '12:45');
-  insertConfig.run('break_end', 'random', '13:00', '13:00', '13:45');
+  insertConfig.run('checkout', 'random', '19:00', '19:00', '20:00');
+  insertConfig.run('break_start', 'random', '12:00', '12:00', '12:30');
+  insertConfig.run('break_end', 'random', '13:00', '13:00', '13:30');
 
   // Seed default settings
   const insertSetting = db.prepare(`
     INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)
   `);
-  insertSetting.run('auto_checkin_enabled', '0'); // Default OFF - user must enable
+  insertSetting.run('auto_checkin_enabled', '1'); // Default ON after initial setup
   insertSetting.run('debug_mode', '1'); // Default ON for first run (mock mode)
   insertSetting.run('holiday_cache_date', '');
   insertSetting.run('holiday_cache_data', '{}');
   insertSetting.run('freee_username', '');
   insertSetting.run('freee_username_encrypted', '');
   insertSetting.run('freee_password_encrypted', '');
+  insertSetting.run('holiday_skip_countries', 'jp'); // Default: skip Japan holidays only
   insertSetting.run('freee_configured', '0');
 
   // Connection mode & OAuth settings (browser mode disabled, default to api)
@@ -149,7 +161,26 @@ export function initDatabase() {
     console.log('[PunchPilot] Created default user: admin / admin (must change on first login)');
   }
 
-  // Migrate encryption if needed (legacy GUI_PASSWORD → APP_SECRET)
+  // Migration: fix defaults that may have been polluted by pre-isolation test runs.
+  // INSERT OR IGNORE above won't fix existing wrong values, so we force-correct them here.
+  // holiday_skip_countries: should default to 'jp' (Japan only), not 'jp,cn'
+  const currentSkip = getSetting('holiday_skip_countries');
+  if (currentSkip === 'jp,cn') {
+    setSetting('holiday_skip_countries', 'jp');
+    console.log('[PunchPilot] Migration: reset holiday_skip_countries from jp,cn to jp');
+  }
+  // checkout config: should default to 'random', not 'fixed'
+  // Only auto-fix if freee is not yet configured (i.e. fresh/polluted DB, not user-customized)
+  const freeeConfigured = getSetting('freee_configured');
+  if (!freeeConfigured || freeeConfigured === '0') {
+    const checkoutConfig = db.prepare("SELECT mode FROM config WHERE action_type = 'checkout'").get();
+    if (checkoutConfig && checkoutConfig.mode === 'fixed') {
+      db.prepare("UPDATE config SET mode = 'random', window_start = '19:00', window_end = '20:00' WHERE action_type = 'checkout'").run();
+      console.log('[PunchPilot] Migration: reset checkout mode from fixed to random');
+    }
+  }
+
+  // Migrate encryption and storage if needed (secret location, plaintext username)
   migrateEncryptionIfNeeded(getSetting, setSetting);
 
   console.log('[PunchPilot] Database initialized at', DB_PATH);
@@ -189,9 +220,12 @@ export function updateConfig(actionType, data) {
 // --- Execution log helpers ---
 
 export function insertLog(log) {
+  // Include company_id and company_name from current settings if not provided
+  const companyId = log.company_id || getSetting('oauth_company_id') || '';
+  const companyName = log.company_name || getSetting('oauth_company_name') || '';
   return getDb().prepare(`
-    INSERT INTO execution_log (action_type, scheduled_time, status, trigger_type, error_message, screenshot_before, screenshot_after, duration_ms)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO execution_log (action_type, scheduled_time, status, trigger_type, error_message, screenshot_before, screenshot_after, duration_ms, company_id, company_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     log.action_type,
     log.scheduled_time || null,
@@ -200,7 +234,9 @@ export function insertLog(log) {
     log.error_message || null,
     log.screenshot_before || null,
     log.screenshot_after || null,
-    log.duration_ms || null
+    log.duration_ms || null,
+    companyId,
+    companyName
   );
 }
 
@@ -286,6 +322,33 @@ export function setSetting(key, value) {
   return getDb().prepare(
     'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)'
   ).run(key, value);
+}
+
+/**
+ * Clean up expired leave strategy cache entries from settings table.
+ * Keeps only entries for the current month; deletes older ones.
+ * Called from the daily cron job alongside cleanOldSchedules.
+ */
+export function cleanExpiredLeaveStrategyCache() {
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const prefix = 'leave_strategy_';
+  const rows = getDb().prepare(
+    `SELECT key FROM settings WHERE key LIKE ?`
+  ).all(`${prefix}%`);
+  let deleted = 0;
+  for (const row of rows) {
+    // key format: leave_strategy_YYYY-MM_Type
+    const month = row.key.substring(prefix.length, prefix.length + 7);
+    if (month < currentMonth) {
+      getDb().prepare('DELETE FROM settings WHERE key = ?').run(row.key);
+      deleted++;
+    }
+  }
+  if (deleted > 0) {
+    console.log(`[PunchPilot] Cleaned ${deleted} expired leave strategy cache entries`);
+  }
+  return deleted;
 }
 
 // --- Session helpers ---

@@ -25,10 +25,16 @@ interface HolidayInfo {
   country?: string; // 'jp', 'cn', 'custom'
 }
 
+interface WorkdayInfo {
+  date: string;
+  name: string; // e.g. "国庆节后补班" — the holiday name this workday compensates for
+}
+
 interface CalendarViewProps {
   calendarData?: Record<string, any[]>;
   onDateClick?: (date: string) => void;
   selectionMode?: boolean;
+  leaveSelectionMode?: boolean; // When true, all dates (past/today/future) are selectable for leave requests
   refreshKey?: number;
 }
 
@@ -36,17 +42,23 @@ const CalendarView: React.FC<CalendarViewProps> = ({
   calendarData: externalData,
   onDateClick,
   selectionMode = false,
+  leaveSelectionMode = false,
   refreshKey = 0,
 }) => {
   const { t } = useTranslation();
   const dispatch = useAppDispatch();
-  const { connectionMode, oauthConfigured } = useAppSelector((state) => state.config);
+  const { connectionMode, oauthConfigured, schedules, holidaySkipCountries } = useAppSelector((state) => state.config);
   const { records: attendanceRecords, selectedDates, approvalRequests } = useAppSelector((state) => state.attendance);
 
   const [currentDate, setCurrentDate] = useState<Dayjs>(dayjs());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [calendarData, setCalendarData] = useState<Record<string, any[]>>({});
   const [holidayMap, setHolidayMap] = useState<Record<string, HolidayInfo[]>>({});
+  const [workdayMap, setWorkdayMap] = useState<Record<string, WorkdayInfo>>({});
+  const [maxHolidayYear, setMaxHolidayYear] = useState<number>(dayjs().year() + 1);
+
+  // Countries selected for auto-punch skip — only these get holiday background colors
+  const skipSet = new Set((holidaySkipCountries || 'jp').split(',').map(c => c.trim()).filter(Boolean));
 
   // Fetch punch logs for the current month (local logs)
   const fetchLogs = useCallback(async () => {
@@ -98,7 +110,17 @@ const CalendarView: React.FC<CalendarViewProps> = ({
       }
     } catch { /* silent */ }
 
+    // Fetch CN 调休 (makeup workday) data
+    const wdMap: Record<string, WorkdayInfo> = {};
+    try {
+      const wdRes = await api.getCnWorkdays(year);
+      for (const wd of wdRes.data.workdays || []) {
+        wdMap[wd.date] = { date: wd.date, name: wd.name };
+      }
+    } catch { /* silent */ }
+
     setHolidayMap(map);
+    setWorkdayMap(wdMap);
   }, [currentDate]);
 
   useEffect(() => {
@@ -111,6 +133,24 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     fetchAttendanceData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalData, fetchLogs, fetchHolidays, fetchAttendanceData, refreshKey]);
+
+  // Determine calendar valid range based on actual holiday data availability
+  useEffect(() => {
+    (async () => {
+      try {
+        const [jpRes, cnRes] = await Promise.all([
+          api.getHolidayAvailableYears('jp'),
+          api.getHolidayAvailableYears('cn'),
+        ]);
+        const jpYears = jpRes.data.years || [];
+        const cnYears = cnRes.data.years || [];
+        const allYears = [...jpYears, ...cnYears];
+        if (allYears.length > 0) {
+          setMaxHolidayYear(Math.max(...allYears));
+        }
+      } catch { /* fallback to default */ }
+    })();
+  }, []);
 
   const isWeekend = (date: Dayjs): boolean => {
     const day = date.day();
@@ -148,10 +188,23 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     return date.month() === currentDate.month() && date.year() === currentDate.year();
   };
 
-  // Check if a date is a missing punch day (past workday with no clock-in, not absence, not holiday, no pending/approved approval)
+  // Check if today is past the auto check-in window end time
+  const isTodayPastCheckinTime = useCallback((): boolean => {
+    const checkinSchedule = schedules.find(s => s.action_type === 'checkin');
+    if (!checkinSchedule) return false;
+    const endTime = checkinSchedule.mode === 'random' ? checkinSchedule.window_end : checkinSchedule.fixed_time;
+    if (!endTime) return false;
+    const [h, m] = endTime.split(':').map(Number);
+    const now = dayjs();
+    return now.hour() > h || (now.hour() === h && now.minute() >= m);
+  }, [schedules]);
+
+  // Check if a date is a missing punch day (workday with no clock-in, not absence, not holiday, no pending/approved approval)
+  // Includes today if past check-in window time and no records
   const isMissingPunch = (dateKey: string, attendance: AttendanceRecord | undefined): boolean => {
     const today = dayjs().format('YYYY-MM-DD');
-    if (dateKey >= today) return false;
+    if (dateKey > today) return false; // Future dates not missing
+    if (dateKey === today && !isTodayPastCheckinTime()) return false; // Today but not past check-in time yet
     if (!attendance) return false;
     // Skip if there's a pending or approved approval request for this date
     const approval = approvalRequests[dateKey];
@@ -164,16 +217,40 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     );
   };
 
-  // Check if a date is selectable for batch punch
+  // Check if a date is selectable for batch punch or leave request
   const isSelectable = (dateKey: string): boolean => {
+    if (leaveSelectionMode) {
+      // In leave selection mode, exclude:
+      // 1. Dates that already have punch records (clock_in exists)
+      // 2. Dates with approved approval requests
+      // 3. Public holidays
+      const attendance = attendanceRecords[dateKey];
+      if (attendance?.clock_in) return false; // Already punched in
+      const approval = approvalRequests[dateKey];
+      if (approval?.status === 'approved') return false; // Already approved
+      const holidays = holidayMap[dateKey] || [];
+      if (holidays.some(h => h.country === 'jp' || h.country === 'cn')) return false; // Public holiday
+      return true;
+    }
     const attendance = attendanceRecords[dateKey];
     return isMissingPunch(dateKey, attendance);
   };
 
+  // Whether any selection mode is active
+  const anySelectionMode = selectionMode || leaveSelectionMode;
+
+  // Check if a date has holidays from skip-selected countries (affects background color)
+  const getSkippedHolidays = (holidays: HolidayInfo[]): HolidayInfo[] => {
+    return holidays.filter(h => h.country && skipSet.has(h.country));
+  };
+
   // Get the primary holiday country for a date (for background color priority)
-  const getPrimaryHolidayCountry = (holidays: HolidayInfo[]): string => {
-    if (holidays.some(h => h.country === 'cn')) return 'cn';
-    if (holidays.some(h => h.country === 'jp')) return 'jp';
+  // Only considers skip-selected countries
+  const getPrimaryHolidayCountry = (holidays: HolidayInfo[]): string | null => {
+    const skipped = getSkippedHolidays(holidays);
+    if (skipped.length === 0) return null;
+    if (skipped.some(h => h.country === 'cn')) return 'cn';
+    if (skipped.some(h => h.country === 'jp')) return 'jp';
     return 'custom';
   };
 
@@ -209,10 +286,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({
       style.backgroundColor = 'rgba(255, 77, 79, 0.06)';
     }
 
-    // Selection mode highlight
-    if (selectionMode && selectedDates.includes(dateKey)) {
-      style.backgroundColor = 'rgba(22, 119, 255, 0.12)';
-      style.border = '2px solid rgba(22, 119, 255, 0.5)';
+    // Selection mode highlight (batch punch or leave selection)
+    if (anySelectionMode && selectedDates.includes(dateKey)) {
+      style.backgroundColor = leaveSelectionMode ? 'rgba(82, 196, 26, 0.12)' : 'rgba(22, 119, 255, 0.12)';
+      style.border = leaveSelectionMode ? '2px solid rgba(82, 196, 26, 0.5)' : '2px solid rgba(22, 119, 255, 0.5)';
     }
 
     // Today: yolk yellow background + border
@@ -221,25 +298,30 @@ const CalendarView: React.FC<CalendarViewProps> = ({
       style.border = '2px solid var(--pp-cal-today-border)';
     }
     // Selected (non-today): blue highlight
-    else if (isSelected && inCurrentMonth && !selectionMode) {
+    else if (isSelected && inCurrentMonth && !anySelectionMode) {
       style.backgroundColor = 'var(--pp-cal-selected-bg)';
       style.border = '2px solid var(--pp-cal-selected-border)';
     }
 
-    // Holiday background (overrides weekend)
+    // Holiday background — only for skip-selected countries (those affect auto-punch)
     if (holidays.length > 0) {
       const primary = getPrimaryHolidayCountry(holidays);
-      if (primary === 'cn') {
-        style.backgroundColor = 'var(--pp-cal-holiday-cn-bg)';
-      } else {
-        style.backgroundColor = 'var(--pp-cal-holiday-jp-bg)';
+      if (primary) {
+        // This holiday is from a skip-selected country → show holiday background
+        if (primary === 'cn') {
+          style.backgroundColor = 'var(--pp-cal-holiday-cn-bg)';
+        } else {
+          style.backgroundColor = 'var(--pp-cal-holiday-jp-bg)';
+        }
+        return style;
       }
-      // Keep today/selected border if applicable
-      return style;
+      // Holidays exist but none are skip-selected → fall through to normal coloring
     }
 
     // Weekend: gray background
-    if (weekend) {
+    // Skip gray if: 调休 workday AND cn is in skip set (auto-punch treats it as workday)
+    const isTiaoxiuWorkday = !!(workdayMap[dateKey] && skipSet.has('cn'));
+    if (weekend && !isTiaoxiuWorkday) {
       if (!isToday && !isSelected) {
         style.backgroundColor = 'var(--pp-cal-weekend-bg)';
       }
@@ -351,6 +433,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     const dateKey = date.format('YYYY-MM-DD');
     const dayLogs = calendarData[dateKey] || [];
     const holidays = holidayMap[dateKey] || [];
+    const workday = workdayMap[dateKey];
     const attendance = attendanceRecords[dateKey];
     const approval = approvalRequests[dateKey];
     const weekend = isWeekend(date);
@@ -359,8 +442,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({
 
     return (
       <div style={getCellStyle(date)}>
-        {/* Selection checkbox (Phase 2 batch punch) */}
-        {selectionMode && inCurrentMonth && isSelectable(dateKey) && (
+        {/* Selection checkbox (batch punch or leave selection) */}
+        {anySelectionMode && inCurrentMonth && isSelectable(dateKey) && (
           <Checkbox
             checked={selectedDates.includes(dateKey)}
             onChange={(e) => {
@@ -372,11 +455,23 @@ const CalendarView: React.FC<CalendarViewProps> = ({
           />
         )}
 
-        {/* Weekend label */}
-        {weekend && holidays.length === 0 && (
+        {/* Weekend label — hide if: has holidays, or is 调休 workday with cn skip-selected */}
+        {weekend && holidays.length === 0 && !(workday && skipSet.has('cn')) && (
           <Text type="secondary" style={{ fontSize: 10, fontWeight: 600 }}>
             {date.day() === 0 ? t('calendar.sun') : t('calendar.sat')}
           </Text>
+        )}
+
+        {/* CN 调休 makeup workday tag */}
+        {workday && (
+          <Tooltip title={workday.name}>
+            <Tag
+              color="orange"
+              style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0, marginBottom: 2 }}
+            >
+              {'\u{1F1E8}\u{1F1F3}'} {t('holidays.cnWorkday')}
+            </Tag>
+          </Tooltip>
         )}
 
         {/* Holiday tags */}
@@ -483,8 +578,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({
   const handleSelect = (date: Dayjs) => {
     const dateStr = date.format('YYYY-MM-DD');
 
-    // In selection mode — toggle checkbox via cell click
-    if (selectionMode) {
+    // In selection mode (batch punch or leave) — toggle checkbox via cell click
+    if (anySelectionMode) {
       if (isSelectable(dateStr)) {
         dispatch(toggleDateSelection(dateStr));
       }
@@ -541,6 +636,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({
         <Tag color="red" style={{ fontSize: 10, lineHeight: '14px', padding: '0 3px' }}>{'\u{1F1E8}\u{1F1F3}'}</Tag>
         <Text type="secondary">{t('holidays.countryCn')}</Text>
       </Space>
+      <Space size={4}>
+        <Tag color="orange" style={{ fontSize: 10, lineHeight: '14px', padding: '0 3px' }}>{'\u{1F1E8}\u{1F1F3}'}</Tag>
+        <Text type="secondary">{t('holidays.cnWorkday')}</Text>
+      </Space>
       {oauthConfigured && (
         <Space size={4}>
           <Text style={{ fontSize: 10, color: '#52c41a' }}>09:00-18:00</Text>
@@ -558,6 +657,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({
         onPanelChange={handlePanelChange}
         onSelect={handleSelect}
         cellRender={cellRender}
+        validRange={[dayjs().subtract(1, 'year').startOf('year'), dayjs().year(maxHolidayYear).endOf('year')]}
         style={{ borderRadius: 8 }}
       />
     </div>

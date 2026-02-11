@@ -21,7 +21,8 @@ const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
 async function verifyFreeeLogin(username, password) {
   const { chromium } = await import('playwright');
 
-  console.log(`[Verify] Using credentials: ${username} (password length: ${password.length})`);
+  const masked = username.replace(/(.{3}).*(@.*)/, '$1***$2');
+  console.log(`[Verify] Attempting freee login for user: ${masked}`);
 
   let browser = null;
   try {
@@ -232,7 +233,8 @@ router.put('/account', async (req, res) => {
     setSetting('freee_username', ''); // clear legacy plaintext
     setSetting('freee_configured', '1');
 
-    console.log(`[Config] Credentials saved for user: ${username}`);
+    const masked = username.replace(/(.{3}).*(@.*)/, '$1***$2');
+    console.log(`[Config] Credentials saved for user: ${masked}`);
 
     res.json({
       success: true,
@@ -241,7 +243,7 @@ router.put('/account', async (req, res) => {
     });
   } catch (err) {
     console.error('[Config] Error saving account:', err.message);
-    res.status(500).json({ error: 'Failed to save credentials: ' + err.message });
+    res.status(500).json({ error: 'Failed to save credentials' });
   }
 });
 
@@ -324,7 +326,7 @@ router.put('/connection-mode', async (req, res) => {
     res.json({ connection_mode: mode });
   } catch (err) {
     console.error('[Config] Error setting connection mode:', err.message);
-    res.status(500).json({ error: 'Failed to set connection mode: ' + err.message });
+    res.status(500).json({ error: 'Failed to set connection mode' });
   }
 });
 
@@ -419,7 +421,7 @@ router.get('/oauth-callback', async (req, res) => {
 
     if (!tokenRes.ok) {
       const errBody = await tokenRes.text();
-      console.error('[OAuth] Token exchange failed:', tokenRes.status, errBody);
+      console.error('[OAuth] Token exchange failed:', tokenRes.status, errBody.substring(0, 200));
       return res.send(callbackHtml(`Token exchange failed (${tokenRes.status})`, false));
     }
 
@@ -597,7 +599,7 @@ router.put('/oauth-select-company', async (req, res) => {
     console.log(`[OAuth] Warning: No employee_id for company ${selected.name} (ID: ${cid}). Employee record needs to be created in freee HR admin.`);
   }
 
-  console.log(`[OAuth] Selected company: ${selected.name} (ID: ${cid}, Employee: ${eid}, Num: ${employeeNum})`);
+  console.log(`[OAuth] Selected company: ${selected.name} (ID: ${cid})`);
 
   res.json({
     success: true,
@@ -716,10 +718,53 @@ router.put('/:actionType', async (req, res) => {
     return res.status(400).json({ error: 'window_end must be in HH:MM format' });
   }
 
-  // Validate window: start < end
-  if (window_start && window_end) {
-    if (timeToMinutes(window_start) >= timeToMinutes(window_end)) {
-      return res.status(400).json({ error: 'window_start must be before window_end' });
+  // Validate window: start < end (check both submitted and existing values)
+  {
+    const currentConfig = getConfigByAction(actionType);
+    const effStart = window_start || currentConfig?.window_start;
+    const effEnd = window_end || currentConfig?.window_end;
+    if (effStart && effEnd) {
+      if (timeToMinutes(effStart) >= timeToMinutes(effEnd)) {
+        return res.status(400).json({ error: 'window_start must be before window_end' });
+      }
+    }
+  }
+
+  // Validate break duration minimum 60 minutes
+  // Applies to BOTH fixed and random modes:
+  //   - fixed: break_end.fixed_time - break_start.fixed_time >= 60
+  //   - random: break_end.window_end - break_start.window_start >= 60
+  //     (ensures at least 60 minutes of selectable break range)
+  if (actionType === 'break_end' || actionType === 'break_start') {
+    const breakStartConfig = getConfigByAction('break_start');
+    const breakEndConfig = getConfigByAction('break_end');
+
+    const effectiveStartMode = actionType === 'break_start' ? (mode || breakStartConfig?.mode) : breakStartConfig?.mode;
+    const effectiveEndMode = actionType === 'break_end' ? (mode || breakEndConfig?.mode) : breakEndConfig?.mode;
+
+    // Determine the earliest possible break start and latest possible break end
+    let earliestStart = null;
+    let latestEnd = null;
+
+    if (effectiveStartMode === 'fixed') {
+      earliestStart = actionType === 'break_start' ? (fixed_time || breakStartConfig?.fixed_time) : breakStartConfig?.fixed_time;
+    } else {
+      // random: earliest start = window_start of break_start
+      earliestStart = actionType === 'break_start' ? (window_start || breakStartConfig?.window_start) : breakStartConfig?.window_start;
+    }
+
+    if (effectiveEndMode === 'fixed') {
+      latestEnd = actionType === 'break_end' ? (fixed_time || breakEndConfig?.fixed_time) : breakEndConfig?.fixed_time;
+    } else {
+      // random: latest end = window_end of break_end
+      latestEnd = actionType === 'break_end' ? (window_end || breakEndConfig?.window_end) : breakEndConfig?.window_end;
+    }
+
+    if (earliestStart && latestEnd) {
+      const duration = timeToMinutes(latestEnd) - timeToMinutes(earliestStart);
+      if (duration < 60) {
+        return res.status(400).json({ error: 'Break duration must be at least 60 minutes' });
+      }
     }
   }
 

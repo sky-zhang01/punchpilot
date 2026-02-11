@@ -229,7 +229,7 @@ const LoginPage: React.FC = () => {
             fontSize: 12,
           }}
         >
-          PunchPilot v0.3.0
+          PunchPilot v0.4.0
         </Text>
       </div>
     </div>

@@ -1,4 +1,8 @@
 import { defineConfig } from 'vitest/config';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   test: {
@@ -7,5 +11,9 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 30000,
     fileParallelism: false,  // Run test files sequentially (shared SQLite DB)
+    env: {
+      // Use a separate test DB to avoid overwriting production data
+      PUNCHPILOT_DB_PATH: path.resolve(__dirname, 'data', 'punchpilot-test.db'),
+    },
   },
 });
