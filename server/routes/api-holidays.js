@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { addCustomHoliday, deleteCustomHoliday } from '../db.js';
-import { getHolidaysForMonth, getHolidaysForYear, fetchNationalHolidays } from '../holiday.js';
+import { getHolidaysForMonth, getHolidaysForYear, fetchNationalHolidays, getAvailableYears } from '../holiday.js';
 
 const router = Router();
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const SUPPORTED_COUNTRIES = ['jp', 'cn'];
 
 /**
  * GET /api/holidays - Get holidays (national + custom)
@@ -18,6 +19,9 @@ router.get('/', async (req, res) => {
   }
 
   const countryCode = country || 'jp';
+  if (!SUPPORTED_COUNTRIES.includes(countryCode)) {
+    return res.status(400).json({ error: `Unsupported country: ${countryCode}` });
+  }
 
   try {
     let holidays;
@@ -39,6 +43,29 @@ router.get('/national', async (req, res) => {
   try {
     const holidays = await fetchNationalHolidays();
     res.json(holidays);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/holidays/available-years - Get years that have holiday data
+ * Query params: country (optional, defaults to 'jp')
+ * Returns: { years: [2020, 2021, ..., 2027] }
+ */
+router.get('/available-years', async (req, res) => {
+  const { country } = req.query;
+  const countryCode = country || 'jp';
+  if (!SUPPORTED_COUNTRIES.includes(countryCode)) {
+    return res.status(400).json({ error: `Unsupported country: ${countryCode}` });
+  }
+
+  try {
+    const allYears = await getAvailableYears(countryCode);
+    // Filter: show from (currentYear - 1) to the latest available year
+    const currentYear = new Date().getFullYear();
+    const years = allYears.filter(y => y >= currentYear - 1);
+    res.json({ years, country: countryCode });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

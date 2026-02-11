@@ -288,6 +288,33 @@ export function setSetting(key, value) {
   ).run(key, value);
 }
 
+/**
+ * Clean up expired leave strategy cache entries from settings table.
+ * Keeps only entries for the current month; deletes older ones.
+ * Called from the daily cron job alongside cleanOldSchedules.
+ */
+export function cleanExpiredLeaveStrategyCache() {
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const prefix = 'leave_strategy_';
+  const rows = getDb().prepare(
+    `SELECT key FROM settings WHERE key LIKE ?`
+  ).all(`${prefix}%`);
+  let deleted = 0;
+  for (const row of rows) {
+    // key format: leave_strategy_YYYY-MM_Type
+    const month = row.key.substring(prefix.length, prefix.length + 7);
+    if (month < currentMonth) {
+      getDb().prepare('DELETE FROM settings WHERE key = ?').run(row.key);
+      deleted++;
+    }
+  }
+  if (deleted > 0) {
+    console.log(`[PunchPilot] Cleaned ${deleted} expired leave strategy cache entries`);
+  }
+  return deleted;
+}
+
 // --- Session helpers ---
 
 export function createSession(token, userId, expiresAt) {

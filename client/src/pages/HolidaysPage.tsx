@@ -49,7 +49,31 @@ const HolidaysPage: React.FC = () => {
   // Delete confirmation state
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
 
-  const years = Array.from({ length: 5 }, (_, i) => dayjs().year() - 2 + i);
+  // Dynamic years from API
+  const [availableYears, setAvailableYears] = useState<number[]>([]);
+  const years = availableYears.length > 0
+    ? availableYears
+    : Array.from({ length: 5 }, (_, i) => dayjs().year() - 2 + i);
+
+  // Fetch available years when country changes
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.getHolidayAvailableYears(country);
+        if (!cancelled && res.data.years?.length > 0) {
+          setAvailableYears(res.data.years);
+          // If current year is not in the list, select the latest available
+          if (!res.data.years.includes(year)) {
+            setYear(res.data.years[res.data.years.length - 1]);
+          }
+        }
+      } catch {
+        // Fallback: keep hardcoded range
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [country]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadHolidays = useCallback(async () => {
     setLoading(true);

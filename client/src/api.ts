@@ -88,15 +88,15 @@ const apiClient = {
   // Approval request tracking
   getApprovalRequests: (year: number, month: number): ApiCall =>
     api.get('/attendance/approval-requests', { params: { year, month } }),
-  withdrawApprovalRequest: (id: number): ApiCall =>
-    api.delete(`/attendance/approval-requests/${id}`),
+  withdrawApprovalRequest: (id: number, type?: string): ApiCall =>
+    api.delete(`/attendance/approval-requests/${id}`, { params: type ? { type } : undefined }),
   // Strategy detection
   detectStrategy: (force?: boolean): ApiCall =>
     api.post('/attendance/detect-strategy', { force }),
   getStrategyCache: (): ApiCall =>
     api.get('/attendance/strategy-cache'),
-  // Leave requests
-  submitLeaveRequest: (data: { type: string; date: string; reason?: string }): ApiCall =>
+  // Leave requests (4-stage fallback: direct → approval API → Playwright)
+  submitLeaveRequest: (data: { type: string; date: string; reason?: string; holiday_type?: string; start_time?: string; end_time?: string }): ApiCall =>
     api.post('/attendance/leave-request', data, { timeout: 3 * 60 * 1000 }),
   // Legacy — kept for backward compat
   submitBatchWorkTimeCorrection: (data: { entries: any[]; reason?: string }): ApiCall =>
@@ -107,6 +107,8 @@ const apiClient = {
     api.put('/config/holiday-skip-countries', { countries }),
 
   // Holidays
+  getHolidayAvailableYears: (country?: string): ApiCall =>
+    api.get('/holidays/available-years', { params: country ? { country } : undefined }),
   getHolidays: (params?: Record<string, any>): ApiCall => api.get('/holidays', { params }),
   getNationalHolidays: (): ApiCall => api.get('/holidays/national'),
   addCustomHoliday: (data: { date: string; description: string }): ApiCall => api.post('/holidays/custom', data),
