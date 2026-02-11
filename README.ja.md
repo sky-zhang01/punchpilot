@@ -84,6 +84,25 @@ open http://localhost:8681
 - **外部通信なし**：すべてのデータはユーザーと freee サーバー間のみで通信
 - **ログの無害化**：サーバーログやクライアントエラーレスポンスにトークン、パスワード、個人情報を含まない
 
+## 対応プラットフォーム
+
+PunchPilot はマルチアーキテクチャ Docker イメージとして配布しています。
+
+| アーキテクチャ | プラットフォーム | 対応ハードウェア例 |
+|---|---|---|
+| `linux/amd64` | x86_64 | Intel/AMD サーバー、PC、ほとんどのクラウド VM |
+| `linux/arm64` | aarch64 | Apple M シリーズ（M1/M2/M3/M4）、AWS Graviton、Raspberry Pi 4+ |
+
+> **Windows / macOS**：[Docker Desktop](https://www.docker.com/products/docker-desktop/) で同じ Linux イメージを実行できます（内部で軽量 Linux VM を使用）。
+
+```bash
+# イメージを取得
+docker pull ghcr.io/sky-zhang01/punchpilot:latest
+
+# または docker-compose で起動（推奨）
+docker compose up -d
+```
+
 ## 設定
 
 ### 環境変数

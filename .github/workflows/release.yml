@@ -1,0 +1,67 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          # Extract the section for the current version from CHANGELOG.md
+          # Matches from "## [x.y.z]" to the next "## [" or end of file
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          NOTES=$(awk -v ver="$VERSION" '
+            /^## \[/ {
+              if (found) exit
+              if (index($0, "[" ver "]")) found=1
+              next
+            }
+            found { print }
+          ' CHANGELOG.md)
+
+          # Write to file for gh release (avoids quoting issues)
+          echo "$NOTES" > /tmp/release-notes.md
+
+          # Append platform info
+          cat >> /tmp/release-notes.md << 'EOF'
+
+          ---
+
+          ## Docker Image
+
+          ```bash
+          docker pull ghcr.io/${{ github.repository }}:${{ steps.version.outputs.VERSION }}
+          ```
+
+          ### Supported Platforms
+
+          | Architecture | Platform | Example Hardware |
+          |---|---|---|
+          | `linux/amd64` | x86_64 | Intel/AMD servers, PCs, most cloud VMs |
+          | `linux/arm64` | aarch64 | Apple M-series, AWS Graviton, Raspberry Pi 4+ |
+
+          > Windows and macOS users run the same image through Docker Desktop (Linux VM).
+          EOF
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "PunchPilot $GITHUB_REF_NAME" \
+            --notes-file /tmp/release-notes.md

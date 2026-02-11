@@ -37,16 +37,26 @@ jobs:
         run: npm test
 
   docker-build:
-    name: Docker Build Check
+    name: Docker Build Check (Multi-Arch)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Build (dry run)
+      - name: Build amd64 (dry run)
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Build arm64 (dry run)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: false
+          cache-from: type=gha

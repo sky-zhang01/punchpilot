@@ -84,6 +84,25 @@ Once a month, PunchPilot detects which strategy works for your company and cache
 - **No external calls**: All data stays between you and freee's servers
 - **Sanitized logs**: No tokens, passwords, or PII in server logs or client error responses
 
+## Platform Support
+
+PunchPilot is distributed as a multi-architecture Docker image.
+
+| Architecture | Platform | Example Hardware |
+|---|---|---|
+| `linux/amd64` | x86_64 | Intel/AMD servers, PCs, most cloud VMs |
+| `linux/arm64` | aarch64 | Apple M-series (M1/M2/M3/M4), AWS Graviton, Raspberry Pi 4+ |
+
+> **Windows / macOS**: Run the same Linux image via [Docker Desktop](https://www.docker.com/products/docker-desktop/) (uses a lightweight Linux VM internally).
+
+```bash
+# Pull the image
+docker pull ghcr.io/sky-zhang01/punchpilot:latest
+
+# Or use docker-compose (recommended)
+docker compose up -d
+```
+
 ## Configuration
 
 ### Environment Variables

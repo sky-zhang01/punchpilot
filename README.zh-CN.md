@@ -84,6 +84,25 @@ open http://localhost:8681
 - **无外部调用**：所有数据仅在你和 freee 服务器之间传输
 - **日志脱敏**：服务端日志和客户端错误响应中不包含令牌、密码或个人信息
 
+## 平台支持
+
+PunchPilot 以多架构 Docker 镜像分发。
+
+| 架构 | 平台 | 典型硬件 |
+|------|------|----------|
+| `linux/amd64` | x86_64 | Intel/AMD 服务器、PC、大多数云主机 |
+| `linux/arm64` | aarch64 | Apple M 系列（M1/M2/M3/M4）、AWS Graviton、树莓派 4+ |
+
+> **Windows / macOS**：通过 [Docker Desktop](https://www.docker.com/products/docker-desktop/) 运行同一 Linux 镜像（内部使用轻量级 Linux 虚拟机）。
+
+```bash
+# 拉取镜像
+docker pull ghcr.io/sky-zhang01/punchpilot:latest
+
+# 或使用 docker-compose（推荐）
+docker compose up -d
+```
+
 ## 配置说明
 
 ### 环境变量
