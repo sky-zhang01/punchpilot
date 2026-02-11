@@ -12,7 +12,7 @@ import {
 } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { changePassword, logoutUser } from '../store/authSlice';
+import { changePassword } from '../store/authSlice';
 import PasswordStrengthMeter, {
   passwordRules,
 } from '../components/common/PasswordStrengthMeter';
