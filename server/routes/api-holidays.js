@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { addCustomHoliday, deleteCustomHoliday } from '../db.js';
-import { getHolidaysForMonth, getHolidaysForYear, fetchNationalHolidays, getAvailableYears } from '../holiday.js';
+import { getHolidaysForMonth, getHolidaysForYear, fetchNationalHolidays, getAvailableYears, getCnWorkdays } from '../holiday.js';
 import logger from '../logger.js';
 
 const log = logger.child('Holidays');
@@ -74,6 +74,33 @@ router.get('/available-years', async (req, res) => {
   } catch (error) {
     log.error(`Failed to fetch available years: ${error.message}`);
     res.status(500).json({ error: 'Failed to fetch available years' });
+  }
+});
+
+/**
+ * GET /api/holidays/cn-workdays - Get Chinese 调休 (makeup workday) dates
+ * These are weekends designated as working days during holiday periods.
+ * Query params: year (required)
+ * Returns: { workdays: [{ date: "YYYY-MM-DD", name: "..." }, ...] }
+ */
+router.get('/cn-workdays', async (req, res) => {
+  const { year } = req.query;
+
+  if (!year) {
+    return res.status(400).json({ error: 'year is required' });
+  }
+
+  try {
+    const y = parseInt(year, 10);
+    // Ensure CN data is fetched first (populates workday cache as side effect)
+    await fetchNationalHolidays('cn', y);
+    const workdays = getCnWorkdays(y);
+    const result = Object.entries(workdays).map(([date, name]) => ({ date, name }));
+    result.sort((a, b) => a.date.localeCompare(b.date));
+    res.json({ workdays: result, year: y });
+  } catch (error) {
+    log.error(`Failed to fetch CN workdays: ${error.message}`);
+    res.status(500).json({ error: 'Failed to fetch CN workdays' });
   }
 });
 

@@ -17,6 +17,9 @@ const log = logger.child('Express');
 
 const app = express();
 
+// Hide framework identity
+app.disable('x-powered-by');
+
 // Security headers middleware
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -84,7 +87,7 @@ function loginRateLimiter(req, res, next) {
 }
 
 // Middleware
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
 
 // Request timeout — longer for attendance endpoints (Playwright may take minutes)

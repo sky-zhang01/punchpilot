@@ -51,13 +51,12 @@ interface NavItem {
   icon: React.ReactNode;
 }
 
-// Navigation items
+// Navigation items — Profile removed (accessible via header username click)
 const navItems: NavItem[] = [
   { path: '/dashboard', labelKey: 'nav.dashboard', icon: <DashboardOutlined /> },
-  { path: '/settings', labelKey: 'nav.settings', icon: <SettingOutlined /> },
-  { path: '/logs', labelKey: 'nav.logs', icon: <UnorderedListOutlined /> },
   { path: '/calendar', labelKey: 'nav.calendar', icon: <CalendarOutlined /> },
-  { path: '/profile', labelKey: 'nav.profile', icon: <UserOutlined /> },
+  { path: '/logs', labelKey: 'nav.logs', icon: <UnorderedListOutlined /> },
+  { path: '/settings', labelKey: 'nav.settings', icon: <SettingOutlined /> },
 ];
 
 // Max width for content area
@@ -97,9 +96,13 @@ const AppLayout: React.FC = () => {
 
   const currentLang = i18n.language || 'en';
 
-  // Current page title
+  // Current page title — include Profile page which is not in sidebar
   const currentNav = navItems.find((item) => location.pathname.startsWith(item.path));
-  const pageTitle = currentNav ? t(currentNav.labelKey) : '';
+  const pageTitle = currentNav
+    ? t(currentNav.labelKey)
+    : location.pathname.startsWith('/profile')
+      ? t('nav.profile')
+      : '';
 
   const selectedKey = navItems.find((item) => location.pathname.startsWith(item.path))?.path || '';
 
@@ -140,25 +143,40 @@ const AppLayout: React.FC = () => {
         }}
         theme="light"
       >
-        {/* Logo area with collapse toggle */}
+        {/* Logo area — freee/Google style: hamburger + logo always visible */}
         <div
           style={{
-            padding: collapsed ? '16px 8px' : '16px 16px',
+            padding: collapsed ? '12px 0' : '12px 16px',
             display: 'flex',
+            flexDirection: collapsed ? 'column' : 'row',
             alignItems: 'center',
             justifyContent: collapsed ? 'center' : 'space-between',
+            gap: collapsed ? 8 : 0,
             minHeight: 64,
           }}
         >
-          <PunchPilotLogo size={32} collapsed={collapsed} showText={!collapsed} />
-          {!collapsed && (
-            <Button
-              type="text"
-              icon={<MenuFoldOutlined />}
-              onClick={() => setCollapsed(true)}
-              size="small"
-              style={{ color: collapseIconColor, flexShrink: 0 }}
-            />
+          {collapsed ? (
+            <>
+              <Button
+                type="text"
+                icon={<MenuUnfoldOutlined />}
+                onClick={() => setCollapsed(false)}
+                size="small"
+                style={{ color: collapseIconColor }}
+              />
+              <PunchPilotLogo size={28} collapsed showText={false} />
+            </>
+          ) : (
+            <>
+              <PunchPilotLogo size={32} collapsed={false} showText />
+              <Button
+                type="text"
+                icon={<MenuFoldOutlined />}
+                onClick={() => setCollapsed(true)}
+                size="small"
+                style={{ color: collapseIconColor, flexShrink: 0 }}
+              />
+            </>
           )}
         </div>
 
@@ -210,8 +228,8 @@ const AppLayout: React.FC = () => {
           })}
         </nav>
 
-        {/* Bottom area: expand button + debug tag — pinned at sidebar bottom */}
-        {(collapsed || debugMode) && (
+        {/* Bottom area: debug tag — pinned at sidebar bottom */}
+        {debugMode && (
           <div
             style={{
               position: 'sticky',
@@ -224,20 +242,9 @@ const AppLayout: React.FC = () => {
               background: sidebarBg,
             }}
           >
-            {collapsed && (
-              <Button
-                type="text"
-                icon={<MenuUnfoldOutlined />}
-                onClick={() => setCollapsed(false)}
-                size="small"
-                style={{ color: collapseIconColor }}
-              />
-            )}
-            {debugMode && (
-              <Tag color="warning" style={{ fontSize: 11, margin: 0 }}>
-                {collapsed ? 'M' : t('header.mockMode')}
-              </Tag>
-            )}
+            <Tag color="warning" style={{ fontSize: 11, margin: 0 }}>
+              {collapsed ? 'M' : t('header.mockMode')}
+            </Tag>
           </div>
         )}
       </Sider>
@@ -287,8 +294,15 @@ const AppLayout: React.FC = () => {
               </Button>
             </Dropdown>
 
-            {/* Username */}
-            <Text type="secondary">{username}</Text>
+            {/* Username — click to go to profile */}
+            <Text
+              type="secondary"
+              style={{ cursor: 'pointer' }}
+              onClick={() => navigate('/profile')}
+            >
+              <UserOutlined style={{ marginRight: 4 }} />
+              {username}
+            </Text>
 
             {/* Logout */}
             <Tooltip title={t('header.logout')}>
@@ -320,7 +334,7 @@ const AppLayout: React.FC = () => {
         {/* Footer */}
         <Footer style={{ textAlign: 'center', padding: '12px 24px' }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            PunchPilot v0.3.0 | Developed by Sky Zhang
+            PunchPilot v0.4.0 | Developed by Sky Zhang
           </Text>
         </Footer>
       </Layout>

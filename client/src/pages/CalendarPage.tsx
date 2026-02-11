@@ -78,12 +78,15 @@ const CalendarPage: React.FC = () => {
   // Delete confirmation state
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
 
-  // Batch punch state
-  const [selectionMode, setSelectionMode] = useState(false);
+  // Selection mode state (mutually exclusive)
+  const [selectionMode, setSelectionMode] = useState(false);           // Punch correction mode
+  const [leaveSelectionMode, setLeaveSelectionMode] = useState(false); // Leave request mode
+  const [workSelectionMode, setWorkSelectionMode] = useState(false);   // Work request mode
   const [batchModalOpen, setBatchModalOpen] = useState(false);
   const [leaveModalOpen, setLeaveModalOpen] = useState(false);
   const [workModalOpen, setWorkModalOpen] = useState(false);
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
+  const anyModeActive = selectionMode || leaveSelectionMode || workSelectionMode;
 
   // Dynamic years from API
   const [availableYears, setAvailableYears] = useState<number[]>([]);
@@ -181,11 +184,37 @@ const CalendarPage: React.FC = () => {
 
   const handleToggleSelectionMode = () => {
     if (selectionMode) {
-      // Exit selection mode
       setSelectionMode(false);
       dispatch(clearDateSelection());
     } else {
+      setLeaveSelectionMode(false);
+      setWorkSelectionMode(false);
+      dispatch(clearDateSelection());
       setSelectionMode(true);
+    }
+  };
+
+  const handleToggleLeaveSelectionMode = () => {
+    if (leaveSelectionMode) {
+      setLeaveSelectionMode(false);
+      dispatch(clearDateSelection());
+    } else {
+      setSelectionMode(false);
+      setWorkSelectionMode(false);
+      dispatch(clearDateSelection());
+      setLeaveSelectionMode(true);
+    }
+  };
+
+  const handleToggleWorkSelectionMode = () => {
+    if (workSelectionMode) {
+      setWorkSelectionMode(false);
+      dispatch(clearDateSelection());
+    } else {
+      setSelectionMode(false);
+      setLeaveSelectionMode(false);
+      dispatch(clearDateSelection());
+      setWorkSelectionMode(true);
     }
   };
 
@@ -199,11 +228,37 @@ const CalendarPage: React.FC = () => {
     }
   };
 
+  const handleOpenLeaveModal = () => {
+    if (selectedDates.length > 0) {
+      setLeaveModalOpen(true);
+    }
+  };
+
   const handleBatchModalClose = () => {
     setBatchModalOpen(false);
     setSelectionMode(false);
     dispatch(clearDateSelection());
     // Trigger calendar data refresh after batch submission
+    setCalendarRefreshKey(k => k + 1);
+  };
+
+  const handleLeaveModalClose = () => {
+    setLeaveModalOpen(false);
+    setLeaveSelectionMode(false);
+    dispatch(clearDateSelection());
+    setCalendarRefreshKey(k => k + 1);
+  };
+
+  const handleOpenWorkModal = () => {
+    if (selectedDates.length > 0) {
+      setWorkModalOpen(true);
+    }
+  };
+
+  const handleWorkModalClose = () => {
+    setWorkModalOpen(false);
+    setWorkSelectionMode(false);
+    dispatch(clearDateSelection());
     setCalendarRefreshKey(k => k + 1);
   };
 
@@ -284,14 +339,16 @@ const CalendarPage: React.FC = () => {
             />
           )}
 
-          {/* Toolbar: batch punch + monthly closing */}
+          {/* Toolbar: punch correction + leave request + work request */}
           {oauthConfigured && (
             <Space wrap size="middle">
+              {/* Punch Correction Mode button */}
               <Button
                 type={selectionMode ? 'primary' : 'default'}
                 icon={selectionMode ? <CloseOutlined /> : <CheckSquareOutlined />}
                 onClick={handleToggleSelectionMode}
                 size="small"
+                disabled={anyModeActive && !selectionMode}
               >
                 {selectionMode ? t('calendar.batchCancel') : t('calendar.batchPunchMode')}
               </Button>
@@ -313,31 +370,64 @@ const CalendarPage: React.FC = () => {
                   </Button>
                 </>
               )}
-              {!selectionMode && (
+              {/* Leave Request Mode button */}
+              <Button
+                type={leaveSelectionMode ? 'primary' : 'default'}
+                icon={leaveSelectionMode ? <CloseOutlined /> : <FileAddOutlined />}
+                onClick={handleToggleLeaveSelectionMode}
+                size="small"
+                disabled={anyModeActive && !leaveSelectionMode}
+              >
+                {leaveSelectionMode ? t('calendar.batchCancel') : t('calendar.leaveRequest')}
+              </Button>
+              {leaveSelectionMode && (
                 <>
+                  <Text type="secondary">
+                    {t('calendar.selectedCount', { count: selectedDates.length })}
+                  </Text>
                   <Button
-                    icon={<FileAddOutlined />}
+                    type="primary"
                     size="small"
-                    onClick={() => setLeaveModalOpen(true)}
+                    disabled={selectedDates.length === 0}
+                    onClick={handleOpenLeaveModal}
                   >
-                    {t('calendar.leaveRequest')}
+                    {t('calendar.batchSubmit')}
                   </Button>
-                  <Button
-                    icon={<FormOutlined />}
-                    size="small"
-                    onClick={() => setWorkModalOpen(true)}
-                  >
-                    {t('calendar.workRequest')}
-                  </Button>
-                  <ApprovalSection />
                 </>
               )}
+              {/* Work Request Mode button */}
+              <Button
+                type={workSelectionMode ? 'primary' : 'default'}
+                icon={workSelectionMode ? <CloseOutlined /> : <FormOutlined />}
+                onClick={handleToggleWorkSelectionMode}
+                size="small"
+                disabled={anyModeActive && !workSelectionMode}
+              >
+                {workSelectionMode ? t('calendar.batchCancel') : t('calendar.workRequest')}
+              </Button>
+              {workSelectionMode && (
+                <>
+                  <Text type="secondary">
+                    {t('calendar.selectedCount', { count: selectedDates.length })}
+                  </Text>
+                  <Button
+                    type="primary"
+                    size="small"
+                    disabled={selectedDates.length === 0}
+                    onClick={handleOpenWorkModal}
+                  >
+                    {t('calendar.batchSubmit')}
+                  </Button>
+                </>
+              )}
+              {/* Approval section only when no mode active */}
+              {!anyModeActive && <ApprovalSection />}
             </Space>
           )}
 
           <MonthlySummary />
           <Card>
-            <CalendarView selectionMode={selectionMode} refreshKey={calendarRefreshKey} />
+            <CalendarView selectionMode={selectionMode} leaveSelectionMode={leaveSelectionMode || workSelectionMode} refreshKey={calendarRefreshKey} />
           </Card>
         </Space>
       ),
@@ -457,8 +547,8 @@ const CalendarPage: React.FC = () => {
       <BatchPunchModal open={batchModalOpen} onClose={handleBatchModalClose} />
 
       {/* Leave Request Modal */}
-      <LeaveRequestModal open={leaveModalOpen} onClose={() => setLeaveModalOpen(false)} />
-      <WorkRequestModal open={workModalOpen} onClose={() => setWorkModalOpen(false)} />
+      <LeaveRequestModal open={leaveModalOpen} onClose={handleLeaveModalClose} preSelectedDates={selectedDates} />
+      <WorkRequestModal open={workModalOpen} onClose={handleWorkModalClose} preSelectedDates={selectedDates} />
 
       {/* Add custom holiday modal */}
       <Modal

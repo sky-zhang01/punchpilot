@@ -8,10 +8,14 @@
 
 - **自动打卡** — 按设定时间自动出退勤，自动跳过周末和节假日（日本/中国）
 - **批量补卡** — 一键补录缺勤日的考勤记录
+- **休假申请** — 提交、跟踪、取消有休、特别休假、加班和缺勤申请
+- **批量操作** — 批量休假申请、批量取消、批量审批/驳回
 - **4 级智能回退策略**：直接 API > 审批申请 > 打刻 > 网页表单（Playwright）
 - **月度策略缓存** — 自动跳过已知失败的方式，每月初重新检测
-- **审批工作流** — 提交、跟踪、撤回勤务修正申请
+- **审批工作流** — 提交、跟踪、撤回勤务修正申请；管理者批量审批/驳回
+- **假日日历** — 日本国定假日和中国假日（含调休/补班）
 - **Web 管理面板** — 日历视图、执行日志、实时状态
+- **多语言** — 英语、日语、中文
 
 ## 快速开始
 
@@ -20,9 +24,8 @@
 git clone https://github.com/sky-zhang01/punchpilot.git
 cd punchpilot
 
-# 配置
+# 配置（可选）
 cp .env.example .env
-# 编辑 .env — 至少设置 GUI_PASSWORD
 
 # 启动
 docker compose up -d
@@ -31,7 +34,7 @@ docker compose up -d
 open http://localhost:8681
 ```
 
-首次登录使用 `.env` 中设置的密码，然后配置：
+首次登录使用默认凭证（`admin` / `admin`），系统会要求修改密码。然后配置：
 1. **OAuth 凭证** — 在 freee 开发者平台创建应用，获取 Client ID 和 Secret
 2. **授权** — 授权 PunchPilot 访问你的 freee HR 账户
 3. **排班** — 设置工作时间和自动打卡时间
@@ -73,10 +76,13 @@ open http://localhost:8681
 
 ## 安全性
 
-- **加密存储**：所有凭证（freee 密码、OAuth 令牌）均使用 AES-256-GCM 加密
+- **加密存储**：所有凭证（freee 密码、OAuth 令牌）均使用 AES-256-GCM 加密；密钥通过 scrypt 派生
 - **密钥隔离**：加密密钥存储在 Docker 命名卷中，与数据绑定挂载物理分离
+- **认证加固**：bcrypt 密码哈希、首次登录强制改密、CSPRNG 会话令牌、登录频率限制（10次/15分钟）
+- **安全头**：CSP、HSTS、X-Frame-Options DENY、X-Content-Type-Options nosniff
 - **非 root 运行**：容器以非特权用户 `ppuser` 运行
 - **无外部调用**：所有数据仅在你和 freee 服务器之间传输
+- **日志脱敏**：服务端日志和客户端错误响应中不包含令牌、密码或个人信息
 
 ## 配置说明
 
@@ -84,7 +90,6 @@ open http://localhost:8681
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `GUI_PASSWORD` | （必填） | Web 管理面板登录密码 |
 | `TZ` | `Asia/Tokyo` | 容器时区 |
 | `PORT` | `8681` | 服务端口 |
 
@@ -111,10 +116,6 @@ npm test
 # 构建前端
 cd client && npx vite build
 ```
-
-## Kubernetes
-
-Kubernetes 部署清单位于 `k8s/` 目录。详见 YAML 文件中的 namespace、PVC、secret 和 deployment 配置。
 
 ## 致谢
 

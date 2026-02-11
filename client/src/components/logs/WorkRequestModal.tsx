@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Modal, Select, DatePicker, Input, Space, Typography, TimePicker, Switch } from 'antd';
+import { Modal, Select, DatePicker, Input, Space, Typography, TimePicker, Switch, Tag } from 'antd';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import api from '../../api';
@@ -12,6 +12,7 @@ const { TextArea } = Input;
 interface WorkRequestModalProps {
   open: boolean;
   onClose: () => void;
+  preSelectedDates?: string[]; // Dates pre-selected from calendar selection mode (YYYY-MM-DD)
 }
 
 const WORK_TYPES = [
@@ -19,10 +20,11 @@ const WORK_TYPES = [
   { value: 'WorkTimeCorrection', labelKey: 'calendar.workTimeCorrection' },
 ];
 
-const WorkRequestModal: React.FC<WorkRequestModalProps> = ({ open, onClose }) => {
+const WorkRequestModal: React.FC<WorkRequestModalProps> = ({ open, onClose, preSelectedDates }) => {
   const { t } = useTranslation();
   const [type, setType] = useState<string>('HolidayWork');
   const [date, setDate] = useState<Dayjs | null>(null);
+  const hasPreSelectedDates = preSelectedDates && preSelectedDates.length > 0;
   const [reason, setReason] = useState('');
   const [clockIn, setClockIn] = useState<Dayjs | null>(dayjs().hour(10).minute(0));
   const [clockOut, setClockOut] = useState<Dayjs | null>(dayjs().hour(19).minute(0));
@@ -30,6 +32,14 @@ const WorkRequestModal: React.FC<WorkRequestModalProps> = ({ open, onClose }) =>
   const [breakStart, setBreakStart] = useState<Dayjs | null>(dayjs().hour(12).minute(0));
   const [breakEnd, setBreakEnd] = useState<Dayjs | null>(dayjs().hour(13).minute(0));
   const [submitting, setSubmitting] = useState(false);
+
+  // Sync pre-selected dates from calendar when modal opens
+  React.useEffect(() => {
+    if (open && hasPreSelectedDates) {
+      // Use first pre-selected date as the selected date
+      setDate(dayjs(preSelectedDates[0]));
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const resetForm = () => {
     setDate(null);
@@ -43,34 +53,46 @@ const WorkRequestModal: React.FC<WorkRequestModalProps> = ({ open, onClose }) =>
   };
 
   const handleSubmit = async () => {
-    if (!date || !type) return;
+    const datesToSubmit = hasPreSelectedDates ? preSelectedDates : (date ? [date.format('YYYY-MM-DD')] : []);
+    if (datesToSubmit.length === 0 || !type) return;
 
     setSubmitting(true);
     try {
-      if (type === 'HolidayWork') {
-        // HolidayWork uses the leave-request endpoint (web automation)
-        await api.submitLeaveRequest({
-          type: 'HolidayWork',
-          date: date.format('YYYY-MM-DD'),
-          reason: reason.trim() || undefined,
-        });
-      } else {
-        // WorkTimeCorrection uses the approval API endpoint
-        const data: Record<string, any> = {
-          date: date.format('YYYY-MM-DD'),
-          clock_in_at: clockIn ? clockIn.format('HH:mm') : undefined,
-          clock_out_at: clockOut ? clockOut.format('HH:mm') : undefined,
-          reason: reason.trim() || undefined,
-        };
-        if (includeBreak && breakStart && breakEnd) {
-          data.break_records = [{
-            clock_in_at: breakStart.format('HH:mm'),
-            clock_out_at: breakEnd.format('HH:mm'),
-          }];
+      let succeeded = 0;
+      let failed = 0;
+      for (const dateStr of datesToSubmit) {
+        try {
+          if (type === 'HolidayWork') {
+            await api.submitLeaveRequest({
+              type: 'HolidayWork',
+              date: dateStr,
+              reason: reason.trim() || undefined,
+            });
+          } else {
+            const data: Record<string, any> = {
+              date: dateStr,
+              clock_in_at: clockIn ? clockIn.format('HH:mm') : undefined,
+              clock_out_at: clockOut ? clockOut.format('HH:mm') : undefined,
+              reason: reason.trim() || undefined,
+            };
+            if (includeBreak && breakStart && breakEnd) {
+              data.break_records = [{
+                clock_in_at: breakStart.format('HH:mm'),
+                clock_out_at: breakEnd.format('HH:mm'),
+              }];
+            }
+            await api.submitWorkTimeCorrection(data);
+          }
+          succeeded++;
+        } catch {
+          failed++;
         }
-        await api.submitWorkTimeCorrection(data);
       }
-      notifySuccess(t('calendar.workRequestSubmitted'));
+      if (failed > 0) {
+        notifyError(`${succeeded}/${datesToSubmit.length} ${t('calendar.workRequestSubmitted')}, ${failed} ${t('common.failed')}`);
+      } else {
+        notifySuccess(`${succeeded} ${t('calendar.workRequestSubmitted')}`);
+      }
       onClose();
       resetForm();
     } catch (err: any) {
@@ -89,7 +111,8 @@ const WorkRequestModal: React.FC<WorkRequestModalProps> = ({ open, onClose }) =>
       onCancel={() => { onClose(); resetForm(); }}
       onOk={handleSubmit}
       confirmLoading={submitting}
-      okButtonProps={{ disabled: !date || !type || (isCorrection && (!clockIn || !clockOut)) }}
+      okText={hasPreSelectedDates && preSelectedDates.length > 1 ? `${t('calendar.batchSubmit')} (${preSelectedDates.length})` : t('common.confirm')}
+      okButtonProps={{ disabled: (!date && !hasPreSelectedDates) || !type || (isCorrection && (!clockIn || !clockOut)) }}
       width={440}
     >
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
@@ -109,17 +132,30 @@ const WorkRequestModal: React.FC<WorkRequestModalProps> = ({ open, onClose }) =>
           />
         </div>
 
-        {/* Date */}
-        <div>
-          <Text strong style={{ display: 'block', marginBottom: 4 }}>
-            {t('table.date')}
-          </Text>
-          <DatePicker
-            value={date}
-            onChange={setDate}
-            style={{ width: '100%' }}
-          />
-        </div>
+        {/* Date — hide picker when dates come from calendar */}
+        {hasPreSelectedDates ? (
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 4 }}>
+              {t('table.date')} ({t('calendar.selectedCount', { count: preSelectedDates.length })})
+            </Text>
+            <Space wrap size={[4, 4]}>
+              {preSelectedDates.map(d => (
+                <Tag key={d} color="blue">{d} ({dayjs(d).format('ddd')})</Tag>
+              ))}
+            </Space>
+          </div>
+        ) : (
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 4 }}>
+              {t('table.date')}
+            </Text>
+            <DatePicker
+              value={date}
+              onChange={setDate}
+              style={{ width: '100%' }}
+            />
+          </div>
+        )}
 
         {/* Time fields for WorkTimeCorrection */}
         {isCorrection && (

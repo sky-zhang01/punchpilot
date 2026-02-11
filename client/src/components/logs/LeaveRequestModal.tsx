@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Modal, Select, DatePicker, Input, TimePicker, Space, Typography, Divider } from 'antd';
+import { Modal, Select, DatePicker, Input, TimePicker, Space, Typography, Divider, Tag, Alert, Progress } from 'antd';
 import type { Dayjs } from 'dayjs';
+import dayjs from 'dayjs';
 import api from '../../api';
 import { notifySuccess, notifyError } from '../../utils/notify';
 
@@ -11,6 +12,7 @@ const { TextArea } = Input;
 interface LeaveRequestModalProps {
   open: boolean;
   onClose: () => void;
+  preSelectedDates?: string[]; // Dates pre-selected from calendar selection mode (YYYY-MM-DD)
 }
 
 const LEAVE_TYPES = [
@@ -28,60 +30,117 @@ const HOLIDAY_SUBTYPES = [
   { value: 'hour', labelKey: 'calendar.holidayTypeHour' },
 ];
 
-const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({ open, onClose }) => {
+const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({ open, onClose, preSelectedDates }) => {
   const { t } = useTranslation();
   const [type, setType] = useState<string>('PaidHoliday');
-  const [date, setDate] = useState<Dayjs | null>(null);
+  const [dates, setDates] = useState<Dayjs[]>([]);
   const [reason, setReason] = useState('');
+  // Whether dates came from calendar selection (hide internal date picker)
+  const hasPreSelectedDates = preSelectedDates && preSelectedDates.length > 0;
   const [holidayType, setHolidayType] = useState<string>('full');
   const [startTime, setStartTime] = useState<Dayjs | null>(null);
   const [endTime, setEndTime] = useState<Dayjs | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ total: number; succeeded: number; failed: number } | null>(null);
+
+  // Sync pre-selected dates from calendar when modal opens
+  React.useEffect(() => {
+    if (open && hasPreSelectedDates) {
+      setDates(preSelectedDates.map(d => dayjs(d)).sort((a, b) => a.valueOf() - b.valueOf()));
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Whether to show time inputs
   const needsTimeInputs = type === 'OvertimeWork' ||
     (type === 'PaidHoliday' && (holidayType === 'half' || holidayType === 'hour'));
 
+  // Batch mode: when multiple dates selected and type supports it (full day leave)
+  const isBatchMode = dates.length > 1;
+
   const handleReset = () => {
-    setDate(null);
+    setDates([]);
     setReason('');
     setType('PaidHoliday');
     setHolidayType('full');
     setStartTime(null);
     setEndTime(null);
+    setBatchProgress(null);
+  };
+
+  const handleDateSelect = (date: Dayjs | null) => {
+    if (!date) return;
+    const dateStr = date.format('YYYY-MM-DD');
+    // Toggle: add if not present, remove if present
+    const existing = dates.find(d => d.format('YYYY-MM-DD') === dateStr);
+    if (existing) {
+      setDates(dates.filter(d => d.format('YYYY-MM-DD') !== dateStr));
+    } else {
+      setDates([...dates, date].sort((a, b) => a.valueOf() - b.valueOf()));
+    }
+  };
+
+  const handleRemoveDate = (dateStr: string) => {
+    setDates(dates.filter(d => d.format('YYYY-MM-DD') !== dateStr));
   };
 
   const handleSubmit = async () => {
-    if (!date || !type) return;
+    if (dates.length === 0 || !type) return;
     if (needsTimeInputs && (!startTime || !endTime)) return;
 
     setSubmitting(true);
-    try {
-      const data: Record<string, any> = {
-        type,
-        date: date.format('YYYY-MM-DD'),
-        reason: reason.trim() || undefined,
-      };
+    setBatchProgress(null);
 
-      // PaidHoliday subtypes
-      if (type === 'PaidHoliday') {
-        data.holiday_type = holidayType;
-        if ((holidayType === 'half' || holidayType === 'hour') && startTime && endTime) {
+    try {
+      if (isBatchMode) {
+        // Batch submission
+        const data: Record<string, any> = {
+          type,
+          dates: dates.map(d => d.format('YYYY-MM-DD')),
+          reason: reason.trim() || undefined,
+        };
+        if (type === 'PaidHoliday') {
+          data.holiday_type = holidayType;
+        }
+
+        const res = await api.submitBatchLeaveRequest(data);
+        const result = res.data;
+        setBatchProgress({ total: result.total, succeeded: result.succeeded, failed: result.failed });
+
+        if (result.failed > 0) {
+          notifyError(`${result.succeeded}/${result.total} ${t('calendar.leaveSubmitted')}, ${result.failed} ${t('common.failed')}`);
+        } else {
+          notifySuccess(`${result.succeeded} ${t('calendar.leaveSubmitted')}`);
+          setTimeout(() => {
+            onClose();
+            handleReset();
+          }, 1500);
+        }
+      } else {
+        // Single submission
+        const data: Record<string, any> = {
+          type,
+          date: dates[0].format('YYYY-MM-DD'),
+          reason: reason.trim() || undefined,
+        };
+
+        if (type === 'PaidHoliday') {
+          data.holiday_type = holidayType;
+          if ((holidayType === 'half' || holidayType === 'hour') && startTime && endTime) {
+            data.start_time = startTime.format('HH:mm');
+            data.end_time = endTime.format('HH:mm');
+          }
+        }
+
+        if (type === 'OvertimeWork' && startTime && endTime) {
           data.start_time = startTime.format('HH:mm');
           data.end_time = endTime.format('HH:mm');
         }
-      }
 
-      // OvertimeWork requires times
-      if (type === 'OvertimeWork' && startTime && endTime) {
-        data.start_time = startTime.format('HH:mm');
-        data.end_time = endTime.format('HH:mm');
+        await api.submitLeaveRequest(data);
+        notifySuccess(t('calendar.leaveSubmitted'));
+        onClose();
+        handleReset();
       }
-
-      await api.submitLeaveRequest(data);
-      notifySuccess(t('calendar.leaveSubmitted'));
-      onClose();
-      handleReset();
     } catch (err: any) {
       const errData = err?.response?.data;
       if (errData?.web_credentials_required) {
@@ -94,7 +153,7 @@ const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({ open, onClose }) 
     }
   };
 
-  const canSubmit = date && type && (!needsTimeInputs || (startTime && endTime));
+  const canSubmit = dates.length > 0 && type && (!needsTimeInputs || (startTime && endTime));
 
   return (
     <Modal
@@ -106,8 +165,9 @@ const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({ open, onClose }) 
       }}
       onOk={handleSubmit}
       confirmLoading={submitting}
+      okText={isBatchMode ? `${t('calendar.batchSubmit')} (${dates.length})` : t('common.confirm')}
       okButtonProps={{ disabled: !canSubmit }}
-      width={440}
+      width={480}
     >
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         {/* Leave type */}
@@ -119,7 +179,6 @@ const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({ open, onClose }) 
             value={type}
             onChange={(val) => {
               setType(val);
-              // Reset time inputs when changing type
               setStartTime(null);
               setEndTime(null);
               if (val !== 'PaidHoliday') setHolidayType('full');
@@ -156,20 +215,59 @@ const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({ open, onClose }) 
           </div>
         )}
 
-        {/* Date */}
-        <div>
-          <Text strong style={{ display: 'block', marginBottom: 4 }}>
-            {t('table.date')}
-          </Text>
-          <DatePicker
-            value={date}
-            onChange={setDate}
-            style={{ width: '100%' }}
-          />
-        </div>
+        {/* Date picker - only show when dates are NOT pre-selected from calendar */}
+        {!hasPreSelectedDates && (
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 4 }}>
+              {t('table.date')} ({t('calendar.clickToAddDates')})
+            </Text>
+            <DatePicker
+              onChange={handleDateSelect}
+              value={null}
+              style={{ width: '100%' }}
+              placeholder={t('calendar.selectDate')}
+            />
+          </div>
+        )}
 
-        {/* Time inputs for hourly leave or overtime */}
-        {needsTimeInputs && (
+        {/* Selected dates display */}
+        {dates.length > 0 && (
+          <div>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+              {t('calendar.selectedCount', { count: dates.length })}
+            </Text>
+            <Space wrap size={[4, 4]}>
+              {dates.map(d => {
+                const dateStr = d.format('YYYY-MM-DD');
+                const dayName = d.format('ddd');
+                return (
+                  <Tag
+                    key={dateStr}
+                    closable
+                    onClose={() => handleRemoveDate(dateStr)}
+                    color="blue"
+                    style={{ marginBottom: 0 }}
+                  >
+                    {dateStr} ({dayName})
+                  </Tag>
+                );
+              })}
+            </Space>
+          </div>
+        )}
+
+        {/* Batch mode notice */}
+        {isBatchMode && (
+          <Alert
+            type="info"
+            showIcon
+            message={t('calendar.batchLeaveHint', { count: dates.length })}
+            style={{ padding: '4px 12px' }}
+          />
+        )}
+
+        {/* Time inputs for hourly leave or overtime (single date only) */}
+        {needsTimeInputs && !isBatchMode && (
           <>
             <Divider style={{ margin: '4px 0' }} />
             <Space size="middle" style={{ width: '100%' }}>
@@ -213,6 +311,15 @@ const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({ open, onClose }) 
             rows={2}
           />
         </div>
+
+        {/* Batch progress */}
+        {batchProgress && (
+          <Alert
+            type={batchProgress.failed > 0 ? 'warning' : 'success'}
+            showIcon
+            message={`${batchProgress.succeeded}/${batchProgress.total} ${t('calendar.leaveSubmitted')}${batchProgress.failed > 0 ? `, ${batchProgress.failed} ${t('common.failed')}` : ''}`}
+          />
+        )}
       </Space>
     </Modal>
   );

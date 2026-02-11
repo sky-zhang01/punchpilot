@@ -8,10 +8,14 @@ Smart attendance automation for [freee HR](https://www.freee.co.jp/hr/). Runs as
 
 - **Auto clock-in/out** on a configurable schedule, skipping weekends and holidays (JP/CN)
 - **Batch attendance correction** for missed days with one click
+- **Leave requests** — submit, track, and cancel paid holidays, special holidays, overtime, and absences
+- **Batch operations** — bulk leave requests, bulk withdrawal, and bulk approval/rejection
 - **4-tier smart fallback**: Direct API > Approval Request > Time Clocks > Web form (Playwright)
 - **Monthly strategy caching** to skip known-failing methods automatically
-- **Approval workflow**: submit, track, and withdraw work time corrections
+- **Approval workflow**: submit, track, and withdraw work time corrections; manager batch approve/reject
+- **Holiday calendar** with JP national holidays and CN holidays (including tiaoxiu/workday swaps)
 - **Web dashboard** with calendar view, execution logs, and real-time status
+- **Multi-language** UI — English, Japanese, Chinese
 
 ## Quick Start
 
@@ -20,9 +24,8 @@ Smart attendance automation for [freee HR](https://www.freee.co.jp/hr/). Runs as
 git clone https://github.com/sky-zhang01/punchpilot.git
 cd punchpilot
 
-# Configure
+# Configure (optional)
 cp .env.example .env
-# Edit .env — set GUI_PASSWORD at minimum
 
 # Launch
 docker compose up -d
@@ -31,7 +34,7 @@ docker compose up -d
 open http://localhost:8681
 ```
 
-On first login, use the password from `.env`. Then configure:
+On first login, use the default credentials (`admin` / `admin`). You'll be prompted to change your password. Then configure:
 1. **OAuth credentials** — create a freee developer app and enter Client ID / Secret
 2. **Authorize** — grant PunchPilot access to your freee HR account
 3. **Schedule** — set your work hours and auto-punch times
@@ -73,10 +76,13 @@ Once a month, PunchPilot detects which strategy works for your company and cache
 
 ## Security
 
-- **Encryption**: AES-256-GCM for all stored credentials (freee password, OAuth tokens)
-- **Key isolation**: Encryption key lives in a Docker named volume, separate from data bind mount
+- **Encryption**: AES-256-GCM for all stored credentials (freee password, OAuth tokens); key derived via scrypt
+- **Key isolation**: Encryption key in Docker named volume, physically separate from data bind mount
+- **Auth hardening**: bcrypt password hashing, forced password change on first login, session tokens via CSPRNG, login rate limiting (10/15min)
+- **Security headers**: CSP, HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff
 - **Non-root**: Container runs as unprivileged user `ppuser`
 - **No external calls**: All data stays between you and freee's servers
+- **Sanitized logs**: No tokens, passwords, or PII in server logs or client error responses
 
 ## Configuration
 
@@ -84,7 +90,6 @@ Once a month, PunchPilot detects which strategy works for your company and cache
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GUI_PASSWORD` | (required) | Web dashboard login password |
 | `TZ` | `Asia/Tokyo` | Container timezone |
 | `PORT` | `8681` | Server port |
 
@@ -111,10 +116,6 @@ npm test
 # Build client
 cd client && npx vite build
 ```
-
-## Kubernetes
-
-Kubernetes manifests are in the `k8s/` directory. See the YAML files for namespace, PVC, secret, and deployment configuration.
 
 ## Acknowledgments
 

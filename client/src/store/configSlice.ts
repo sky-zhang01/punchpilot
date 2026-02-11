@@ -25,7 +25,7 @@ interface ConfigState {
 
 const initialState: ConfigState = {
   schedules: [],
-  autoEnabled: false,
+  autoEnabled: true,
   debugMode: true,
   freeeConfigured: false,
   freeeUsername: '',

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Card,
@@ -53,6 +53,25 @@ const OAuthConfigCard: React.FC = () => {
     } catch {}
   }, []);
 
+  // Ref for polling interval (OAuth popup fallback) — must be before useEffects that reference them
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const popupRef = useRef<Window | null>(null);
+
+  const stopOAuthPolling = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    popupRef.current = null;
+  }, []);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     loadOAuthStatus();
   }, [loadOAuthStatus]);
@@ -72,11 +91,13 @@ const OAuthConfigCard: React.FC = () => {
         notifySuccess(t('settings.oauthSuccess'));
         dispatch(fetchConfig());
         loadOAuthStatus();
+        loadEmployeeInfo();
+        stopOAuthPolling(); // Stop polling if postMessage succeeded
       }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [dispatch, t, loadOAuthStatus]);
+  }, [dispatch, t, loadOAuthStatus, loadEmployeeInfo, stopOAuthPolling]);
 
   const handleSaveApp = async () => {
     if (!clientId.trim() || !clientSecret.trim()) {
@@ -93,10 +114,63 @@ const OAuthConfigCard: React.FC = () => {
     }
   };
 
+  const startOAuthPolling = useCallback(() => {
+    // Don't create duplicate intervals
+    if (pollIntervalRef.current) return;
+
+    // Track whether we've already seen OAuth configured (to detect change)
+    let wasConfigured = false;
+    // Get initial state
+    api.getOAuthStatus().then(res => {
+      wasConfigured = !!(res.data?.configured && res.data?.token_valid);
+    }).catch(() => {});
+
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        // Check if popup was closed by user
+        if (popupRef.current && popupRef.current.closed) {
+          // Popup closed — do one final check
+          const res = await api.getOAuthStatus();
+          if (res.data?.configured && res.data?.token_valid && !wasConfigured) {
+            notifySuccess(t('settings.oauthSuccess'));
+            dispatch(fetchConfig());
+            loadOAuthStatus();
+            loadEmployeeInfo();
+          }
+          stopOAuthPolling();
+          return;
+        }
+        // Poll OAuth status endpoint — detect when configured + token_valid becomes true
+        const res = await api.getOAuthStatus();
+        if (res.data?.configured && res.data?.token_valid && !wasConfigured) {
+          notifySuccess(t('settings.oauthSuccess'));
+          dispatch(fetchConfig());
+          loadOAuthStatus();
+          loadEmployeeInfo();
+          // Close popup if still open
+          if (popupRef.current && !popupRef.current.closed) {
+            popupRef.current.close();
+          }
+          stopOAuthPolling();
+        }
+      } catch {
+        // Ignore polling errors
+      }
+    }, 2000);
+  }, [dispatch, t, loadOAuthStatus, loadEmployeeInfo, stopOAuthPolling]);
+
   const handleAuthorize = async () => {
     try {
       const res = await api.getOAuthAuthorizeUrl();
-      window.open(res.data.url, '_blank', 'width=600,height=700');
+      // Use named target + popup features to ensure window.opener is set
+      const popup = window.open(
+        res.data.url,
+        'punchpilot_oauth',
+        'popup=yes,width=600,height=700,left=200,top=100'
+      );
+      popupRef.current = popup;
+      // Start polling as fallback (in case postMessage doesn't work)
+      startOAuthPolling();
     } catch (err: any) {
       notifyError(err?.response?.data?.error || t('common.error'));
     }
@@ -123,9 +197,11 @@ const OAuthConfigCard: React.FC = () => {
     await api.clearOAuth();
     dispatch(fetchConfig());
     setOauthStatus(null);
+    setEmployeeInfo(null);
     setClientId('');
     setClientSecret('');
-    notifySuccess(t('settings.oauthCleared'));
+    stopOAuthPolling();
+    notifySuccess(t('settings.oauthClearedKeepWeb'));
   };
 
   const handleSelectCompany = async (companyId: string | number) => {

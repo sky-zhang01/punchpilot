@@ -67,7 +67,7 @@ setInterval(() => cleanOldScreenshots(), 24 * 60 * 60 * 1000);
 // Start Express server
 app.listen(PORT, '0.0.0.0', () => {
   const tz = getTimezone();
-  log.info(`PunchPilot v0.3.0 running on http://0.0.0.0:${PORT}`);
+  log.info(`PunchPilot v0.4.0 running on http://0.0.0.0:${PORT}`);
   log.info(`Dashboard: http://localhost:${PORT}`);
   log.info(`Timezone: ${tz} (${todayStringInTz()} ${currentTimeInTz()})`);
   log.info(`System TZ env: ${process.env.TZ || '(not set, using Intl: ' + Intl.DateTimeFormat().resolvedOptions().timeZone + ')'}`);

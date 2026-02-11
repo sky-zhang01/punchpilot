@@ -159,6 +159,13 @@ const LogsPage: React.FC = () => {
       width: 100,
     },
     {
+      title: t('table.company'),
+      dataIndex: 'company_name',
+      key: 'company',
+      render: (val: string) => val || '-',
+      width: 130,
+    },
+    {
       title: t('table.trigger'),
       dataIndex: 'trigger_type',
       key: 'trigger',
@@ -337,6 +344,11 @@ const LogsPage: React.FC = () => {
               <Text strong>{t('table.trigger')}:</Text>{' '}
               {t(`status.${detailLog.trigger_type || detailLog.trigger}`)}
             </Text>
+            {detailLog.company_name && (
+              <Text>
+                <Text strong>{t('table.company')}:</Text> {detailLog.company_name}
+              </Text>
+            )}
             {(detailLog.error_message || detailLog.error) && (
               <Text type="danger">
                 <Text strong>{t('table.error')}:</Text> {detailLog.error_message || detailLog.error}

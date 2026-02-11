@@ -759,6 +759,117 @@ class FreeeBot {
     console.log(chalk.green(`[Bot] Leave request submitted: ${type} for ${date}`));
     return { success: true };
   }
+
+  /**
+   * Withdraw (取下げ) an approval request via freee Web.
+   * Navigates to the request detail page and clicks the withdraw button.
+   *
+   * @param {string} type — freee type e.g. 'PaidHoliday', 'WorkTime', 'OvertimeWork'
+   * @param {string|number} requestId — freee approval request ID
+   * @returns {{ success: boolean, error?: string }}
+   */
+  async withdrawApprovalRequest(type, requestId) {
+    // Map type to freee URL type format
+    const typeMap = {
+      PaidHoliday: 'ApprovalRequest::PaidHoliday',
+      SpecialHoliday: 'ApprovalRequest::SpecialHoliday',
+      Absence: 'ApprovalRequest::Absence',
+      HolidayWork: 'ApprovalRequest::HolidayWork',
+      OvertimeWork: 'ApprovalRequest::OvertimeWork',
+      WorkTime: 'ApprovalRequest::WorkTime',
+      MonthlyAttendance: 'ApprovalRequest::MonthlyAttendance',
+    };
+
+    const freeeType = typeMap[type] || `ApprovalRequest::${type}`;
+    // freee SPA URL format: #requests/{id}?type=ApprovalRequest::Type
+    const detailUrl = `https://p.secure.freee.co.jp/approval_requests#requests/${requestId}?type=${encodeURIComponent(freeeType)}`;
+    console.log(chalk.blue(`[Bot] Navigating to approval request detail: ${detailUrl}`));
+
+    // Navigate to the approval requests base first (SPA needs to load)
+    const currentUrl = this.page.url();
+    const baseUrl = 'https://p.secure.freee.co.jp/approval_requests';
+    if (!currentUrl.startsWith(baseUrl)) {
+      await this.page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await this.page.waitForTimeout(3000);
+    }
+    // Navigate to detail via hash change
+    await this.page.evaluate((url) => { window.location.href = url; }, detailUrl);
+    await this.page.waitForTimeout(4000);
+
+    // Wait for the detail page to load — look for the withdraw button or request info
+    let pageLoaded = false;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const bodyText = await this.page.evaluate(() => document.body.innerText.substring(0, 3000)).catch(() => '');
+      // Check if the request detail is shown
+      if (bodyText.includes('取り下げ') || bodyText.includes('取下げ') || bodyText.includes('申請中') || bodyText.includes('承認待ち')) {
+        pageLoaded = true;
+        break;
+      }
+      const waitMs = 2000 + attempt * 1500;
+      console.log(chalk.yellow(`[Bot] Request detail not loaded yet, waiting ${waitMs}ms (attempt ${attempt + 1}/5)...`));
+      await this.page.waitForTimeout(waitMs);
+      if (attempt === 2) {
+        await this.page.evaluate((url) => { window.location.hash = url.split('#')[1]; }, detailUrl);
+        await this.page.waitForTimeout(2000);
+      }
+    }
+
+    if (!pageLoaded) {
+      const debugPath = path.join(SCREENSHOTS_DIR, `withdraw-debug-${type}-${requestId}-${Date.now()}.png`);
+      await this.page.screenshot({ path: debugPath }).catch(() => {});
+      const bodySnippet = await this.page.evaluate(() => document.body.innerText.substring(0, 500)).catch(() => '');
+      throw new Error(`Request detail page did not load. Page: ${bodySnippet.substring(0, 200)}`);
+    }
+
+    // Screenshot before withdraw
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const beforePath = path.join(SCREENSHOTS_DIR, `withdraw-${type}-${requestId}-before-${ts}.png`);
+    await this.page.screenshot({ path: beforePath });
+
+    // Find and click the 取下げ button
+    // freee may render it as "取り下げ" or "取下げ" depending on the page version
+    let withdrawBtn = this.page.locator('button').filter({ hasText: '取り下げ' });
+    if ((await withdrawBtn.count()) === 0) {
+      withdrawBtn = this.page.locator('button').filter({ hasText: '取下げ' });
+    }
+    if ((await withdrawBtn.count()) === 0) {
+      // Try broader search — might be a link or anchor
+      withdrawBtn = this.page.locator('a, button').filter({ hasText: /取り?下げ/ });
+    }
+
+    if ((await withdrawBtn.count()) === 0) {
+      const bodyText = await this.page.evaluate(() => document.body.innerText.substring(0, 2000)).catch(() => '');
+      console.log(chalk.red(`[Bot] Withdraw button not found. Page text: ${bodyText.substring(0, 300)}`));
+      return { success: false, error: 'Withdraw button (取下げ) not found on page', screenshotBefore: beforePath };
+    }
+
+    console.log(chalk.blue(`[Bot] Clicking withdraw button...`));
+    await withdrawBtn.first().click();
+    await this.page.waitForTimeout(2000);
+
+    // Handle confirmation dialog (freee shows a confirmation modal/dialog)
+    const confirmBtn = this.page.locator('button').filter({ hasText: /^(OK|はい|確認|取り下げ(する|る)?|取下げ)$/ });
+    if ((await confirmBtn.count()) > 0) {
+      console.log(chalk.blue(`[Bot] Clicking confirm button in dialog...`));
+      await confirmBtn.first().click();
+      await this.page.waitForTimeout(3000);
+    }
+
+    // Screenshot after withdraw
+    const afterPath = path.join(SCREENSHOTS_DIR, `withdraw-${type}-${requestId}-after-${ts}.png`);
+    await this.page.screenshot({ path: afterPath });
+
+    // Check for success
+    const postText = await this.page.evaluate(() => document.body.innerText.substring(0, 2000)).catch(() => '');
+    if (postText.includes('エラー') || postText.includes('取り下げできません') || postText.includes('削除できない')) {
+      const errorDetail = postText.match(/(エラー.{0,100}|取り下げできません.{0,80}|削除できない.{0,80})/)?.[0] || 'Unknown withdrawal error';
+      console.log(chalk.red(`[Bot] Withdrawal failed: ${errorDetail}`));
+      return { success: false, error: errorDetail, screenshotBefore: beforePath, screenshotAfter: afterPath };
+    }
+
+    console.log(chalk.green(`[Bot] Approval request ${type}-${requestId} withdrawn successfully`));
+    return { success: true, screenshotBefore: beforePath, screenshotAfter: afterPath };
+  }
 }
 
 // ─── Mock mode ────────────────────────────────────────────
@@ -1111,6 +1222,45 @@ export async function submitLeaveRequest(type, date, options = {}) {
     await bot.init();
     await bot.login();
     return await bot.submitLeaveRequest(type, date, options);
+  } finally {
+    await bot.cleanup();
+    releaseLock();
+  }
+}
+
+/**
+ * Withdraw an approval request via freee Web (Playwright).
+ * Used as fallback when API withdrawal fails (e.g., companies with
+ * dept/position-based approval routing that the API cannot handle).
+ *
+ * @param {string} type — 'PaidHoliday' | 'WorkTime' | 'OvertimeWork' etc.
+ * @param {string|number} requestId — freee approval request ID
+ * @returns {{ success: boolean, error?: string }}
+ */
+export async function withdrawApprovalRequestWeb(type, requestId) {
+  const creds = getCredentials();
+  if (!creds.username || !creds.password) {
+    return { success: false, error: 'web_credentials_required' };
+  }
+
+  await acquireLock();
+  const bot = new FreeeBot();
+  try {
+    await bot.init();
+
+    try {
+      await bot.login();
+    } catch (loginErr) {
+      if (loginErr.code === 'WEB_LOGIN_FAILED' || loginErr.code === 'WEB_CREDENTIALS_NOT_CONFIGURED') {
+        return { success: false, error: 'web_credentials_invalid' };
+      }
+      throw loginErr;
+    }
+
+    return await bot.withdrawApprovalRequest(type, requestId);
+  } catch (err) {
+    console.error(chalk.red(`[Bot] Web withdrawal failed for ${type}-${requestId}: ${err.message}`));
+    return { success: false, error: err.message };
   } finally {
     await bot.cleanup();
     releaseLock();

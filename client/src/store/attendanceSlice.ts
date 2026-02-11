@@ -260,7 +260,7 @@ const attendanceSlice = createSlice({
         const hasApproval = state.approvalRequests[date] &&
           (state.approvalRequests[date].status === 'in_progress' || state.approvalRequests[date].status === 'approved');
         if (
-          date < today &&
+          date <= today && // Include today (CalendarView handles check-in time gate)
           record.day_pattern === 'normal_day' &&
           !record.clock_in &&
           !record.is_absence &&

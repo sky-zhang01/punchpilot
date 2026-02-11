@@ -33,19 +33,28 @@ function extractTokenFromCookies(res) {
 
 beforeAll(async () => {
   const db = getDb();
-  // Reset admin user
+  // Reset admin user (create if not exists)
   const adminHash = bcrypt.hashSync(DEFAULT_PASS, 10);
   const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(DEFAULT_USER);
   if (existing) {
     db.prepare('UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?')
       .run(adminHash, existing.id);
+  } else {
+    db.prepare('INSERT INTO users (username, password_hash, must_change_password) VALUES (?, ?, 1)')
+      .run(DEFAULT_USER, adminHash);
   }
 
-  // Login
+  // Login (must_change_password=1 required to allow 'admin' username login)
   const res = await request(app)
     .post('/api/auth/login')
     .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
   TOKEN = extractTokenFromCookies(res);
+
+  // Clear must_change_password so API endpoints are accessible (server enforces this)
+  const userId = existing?.id || db.prepare('SELECT id FROM users WHERE username = ?').get(DEFAULT_USER)?.id;
+  if (userId) {
+    db.prepare('UPDATE users SET must_change_password = 0 WHERE id = ?').run(userId);
+  }
 
   // Enable debug/mock mode
   await request(app)
@@ -170,8 +179,9 @@ describe('Schedule Endpoints', () => {
       .put('/api/config/checkout')
       .set('x-session-token', TOKEN)
       .send({
-        mode: 'fixed',
-        fixed_time: '18:00',
+        mode: 'random',
+        window_start: '19:00',
+        window_end: '20:00',
         enabled: true
       });
     expect(res.status).toBe(200);
@@ -191,16 +201,42 @@ describe('Schedule Endpoints', () => {
   });
 
   it('PUT /api/config/break_end updates break end config', async () => {
+    // window_start(13:15) - break_start.window_end(12:15) = 60 min (valid)
     const res = await request(app)
       .put('/api/config/break_end')
       .set('x-session-token', TOKEN)
       .send({
         mode: 'random',
-        window_start: '13:00',
-        window_end: '13:15',
+        window_start: '13:15',
+        window_end: '13:30',
         enabled: true
       });
     expect(res.status).toBe(200);
+  });
+
+  it('PUT /api/config/break_end rejects duration < 60 min', async () => {
+    // First set break_start to a tight window for this test
+    await request(app)
+      .put('/api/config/break_start')
+      .set('x-session-token', TOKEN)
+      .send({ mode: 'random', window_start: '12:30', window_end: '12:45', enabled: true });
+    // break_end.window_end(13:20) - break_start.window_start(12:30) = 50 min (invalid, < 60)
+    const res = await request(app)
+      .put('/api/config/break_end')
+      .set('x-session-token', TOKEN)
+      .send({
+        mode: 'random',
+        window_start: '13:10',
+        window_end: '13:20',
+        enabled: true
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('at least 60 minutes');
+    // Restore break_start for subsequent tests
+    await request(app)
+      .put('/api/config/break_start')
+      .set('x-session-token', TOKEN)
+      .send({ mode: 'random', window_start: '12:00', window_end: '12:15', enabled: true });
   });
 
   it('config roundtrip: saved schedule reflects in GET', async () => {
@@ -218,7 +254,7 @@ describe('Schedule Endpoints', () => {
     expect(checkinSched).toBeDefined();
     expect(checkoutSched).toBeDefined();
     expect(checkinSched.mode).toBe('random');
-    expect(checkoutSched.mode).toBe('fixed');
+    expect(checkoutSched.mode).toBe('random');
   });
 });
 
@@ -228,25 +264,34 @@ describe('Schedule Endpoints', () => {
 
 describe('Config Toggle Endpoints', () => {
   it('PUT /api/config/toggle enables/disables auto checkin', async () => {
-    // Enable
+    // Get current state first
+    const initialConfig = await request(app)
+      .get('/api/config')
+      .set('x-session-token', TOKEN);
+    const initialValue = initialConfig.body.auto_checkin_enabled;
+
+    // Toggle once — should flip the value
     let res = await request(app)
       .put('/api/config/toggle')
-      .set('x-session-token', TOKEN)
-      .send({ enabled: true });
+      .set('x-session-token', TOKEN);
     expect(res.status).toBe(200);
 
-    // Check value
+    // Check value is flipped
     const configRes = await request(app)
       .get('/api/config')
       .set('x-session-token', TOKEN);
-    expect(configRes.body.auto_checkin_enabled).toBe(true);
+    expect(configRes.body.auto_checkin_enabled).toBe(!initialValue);
 
-    // Disable
+    // Toggle again — should restore original value
     res = await request(app)
       .put('/api/config/toggle')
-      .set('x-session-token', TOKEN)
-      .send({ enabled: false });
+      .set('x-session-token', TOKEN);
     expect(res.status).toBe(200);
+
+    const restoredConfig = await request(app)
+      .get('/api/config')
+      .set('x-session-token', TOKEN);
+    expect(restoredConfig.body.auto_checkin_enabled).toBe(initialValue);
   });
 
   it('PUT /api/config/debug toggles debug/mock mode', async () => {
@@ -270,6 +315,12 @@ describe('Config Toggle Endpoints', () => {
       .get('/api/config')
       .set('x-session-token', TOKEN);
     expect(configRes.body.holiday_skip_countries).toContain('jp');
+
+    // Restore default to prevent pollution if test DB is shared
+    await request(app)
+      .put('/api/config/holiday-skip-countries')
+      .set('x-session-token', TOKEN)
+      .send({ countries: 'jp' });
   });
 });
 
@@ -350,7 +401,7 @@ describe('Web Credential Management', () => {
       .put('/api/config/account')
       .set('x-session-token', TOKEN)
       .send({
-        username: 'test@freee.co.jp',
+        username: 'test@example.com',
         password: 'TestPassword123!'
       });
     expect(res.status).toBe(200);
@@ -362,7 +413,7 @@ describe('Web Credential Management', () => {
       .get('/api/config/account')
       .set('x-session-token', TOKEN);
     expect(res.status).toBe(200);
-    expect(res.body.freee_username).toBe('test@freee.co.jp');
+    expect(res.body.freee_username).toBe('test@example.com');
     expect(res.body.freee_configured).toBe(true);
     // Password must NEVER be returned
     expect(res.body.password).toBeUndefined();

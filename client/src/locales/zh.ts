@@ -73,9 +73,9 @@ const zh = {
     skipped: '已跳过的步骤',
     credentialWarning: '考勤服务凭据未配置。请前往设置进行配置，或启用模拟模式进行测试。',
     nextAction: '下一步：{{action}} 于 {{time}}',
-    allDone: '今日所有计划操作已执行或跳过',
-    autoOff: '自动调度已关闭。请从顶部开关启用，或使用下方手动触发。',
-    todayLog: '今日执行日志',
+    allDone: '今日打卡已全部完成',
+    autoOff: '自动打卡已关闭。请在设置中开启，或使用下方手动触发。',
+    todayLog: '今日日志',
     noActions: '今日暂无执行记录',
   },
 
@@ -119,6 +119,9 @@ const zh = {
     name: '名称',
     description: '描述',
     actions: '操作',
+    company: '事务所',
+    type: '类型',
+    applicant: '申请人',
   },
 
   // Status
@@ -222,6 +225,7 @@ const zh = {
     oauthUserId: '用户 ID',
     oauthClear: '清除 OAuth 数据',
     oauthCleared: 'OAuth 数据已清除',
+    oauthClearedKeepWeb: 'OAuth授权已清除。freee网页登录信息不受影响。',
     oauthVerifyFailed: 'OAuth 验证失败',
     oauthUserName: '用户名',
     oauthDepartment: '部门',
@@ -246,8 +250,8 @@ const zh = {
     holidaySkipTitle: '自动打卡跳过节假日',
     holidaySkipHint: '选择自动打卡时跳过哪些国家的法定节假日。日历上可以独立显示所有国家的假日。',
     holidaySkipPlaceholder: '选择国家',
-    lunchBreak: '午休约束',
-    lunchBreakNote: '休息时长（结束时间 - 开始时间）在运行时将被限制为最多60分钟',
+    lunchBreak: '休息时间规则',
+    lunchBreakNote: '休息时间必须至少60分钟',
   },
 
   // Schedule Card
@@ -264,6 +268,8 @@ const zh = {
     resolvedTime: '今日计划时间',
     saved: '配置已保存',
     saveFailed: '保存失败',
+    breakMinDuration: '休息时间必须至少60分钟',
+    windowStartBeforeEnd: '开始时间必须早于结束时间',
     checkin: '签到',
     checkout: '签退',
     breakStart: '开始休息',
@@ -311,13 +317,13 @@ const zh = {
     summaryPaidHoliday: '已用带薪假',
     summaryRemainingPaidHoliday: '剩余带薪假',
     summaryLatenessEarlyLeaving: '迟到早退',
-    // 批量打卡
-    batchPunchMode: '批量打卡',
+    // 补签到
+    batchPunchMode: '补签到',
     selectAllMissing: '选择所有缺勤',
     selectedCount: '已选 {{count}} 个',
     batchSubmit: '提交',
     batchCancel: '取消',
-    batchPunchTitle: '批量打卡',
+    batchPunchTitle: '补签到',
     batchTimeMode: '时间模式',
     batchFixed: '固定时间',
     batchRandom: '随机窗口',
@@ -351,8 +357,28 @@ const zh = {
     approvalApproved: '已批准',
     approvalRejected: '已拒绝',
     withdrawApproval: '撤回',
-    withdrawConfirm: '撤回 {{date}} 的申请？',
+    withdrawConfirm: '确定要撤回此申请吗？',
     withdrawSuccess: '申请已撤回',
+    withdrawFailed: '撤回申请失败',
+    viewRequests: '查看申请',
+    approvalRequests: '申请列表',
+    noRequests: '本月暂无申请',
+    // 批量操作
+    myRequests: '我的申请',
+    incomingRequests: '待审批',
+    noIncomingRequests: '暂无待审批的申请',
+    selectedCount: '已选择 {{count}} 项',
+    batchWithdraw: '批量撤回',
+    batchWithdrawConfirm: '确定要批量撤回选中的申请吗？',
+    noWithdrawable: '未选择可撤回的申请',
+    batchApprove: '批量批准',
+    batchReject: '批量驳回',
+    approve: '批准',
+    reject: '驳回',
+    approved: '已批准',
+    rejected: '已驳回',
+    approveConfirm: '确定要批准此申请吗？',
+    rejectConfirm: '确定要驳回此申请吗？',
     // 休假申请
     leaveRequest: '休假申请',
     leaveType: '休假类型',
@@ -362,6 +388,9 @@ const zh = {
     holidayWork: '假日出勤',
     overtimeWork: '加班申请',
     leaveSubmitted: '休假申请已提交',
+    clickToAddDates: '点击添加日期，支持多选',
+    selectDate: '选择日期',
+    batchLeaveHint: '批量模式：将为{{count}}个日期分别提交申请',
     // 带薪休假子类型
     holidaySubtype: '休假单位',
     holidayTypeFull: '全天',
@@ -398,6 +427,7 @@ const zh = {
     loadFailed: '加载假日数据失败',
     countryJp: '日本',
     countryCn: '中国',
+    cnWorkday: '调休上班',
   },
 
   // Password Strength
@@ -435,6 +465,22 @@ const zh = {
     },
   },
 
+  // 申请状态
+  approvalStatus: {
+    in_progress: '审批中',
+    approved: '已批准',
+    feedback: '已退回',
+    draft: '草稿',
+  },
+
+  // 休假类型标签（申请列表中使用）
+  leaveTypes: {
+    paidHoliday: '带薪休假',
+    specialHoliday: '特别休假',
+    overtimeWork: '加班',
+    absence: '缺勤',
+  },
+
   // Common
   common: {
     on: '开',
@@ -445,6 +491,7 @@ const zh = {
     confirm: '确认',
     error: '错误',
     backToTop: '回到顶部',
+    failed: '失败',
   },
 };
 export default zh;

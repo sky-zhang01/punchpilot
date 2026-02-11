@@ -222,28 +222,39 @@ export async function getAvailableYears(country = 'jp') {
 
     if (country === 'jp') {
       // JP API returns ALL years in a single file — extract unique years
+      // Filter to >= currentYear - 1 to keep dropdown practical
       const response = await fetch(JP_API_URL);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const allData = await response.json();
+      const currentYear = new Date().getFullYear();
+      const minYear = currentYear - 1;
       const yearSet = new Set();
       for (const date of Object.keys(allData)) {
         const y = parseInt(date.substring(0, 4), 10);
-        if (!isNaN(y)) yearSet.add(y);
+        if (!isNaN(y) && y >= minYear) yearSet.add(y);
       }
       years = [...yearSet].sort((a, b) => a - b);
     } else if (country === 'cn') {
       // CN has per-year files — probe from 2007 to current+2
+      // Use GET (not HEAD) and validate actual data is non-empty to avoid
+      // showing years with no real holiday data
       const currentYear = new Date().getFullYear();
+      const minYear = currentYear - 1;
       const probeYears = [];
-      for (let y = 2007; y <= currentYear + 2; y++) {
+      for (let y = minYear; y <= currentYear + 2; y++) {
         probeYears.push(y);
       }
-      // Probe in parallel (with small batches to avoid overwhelming)
       const results = await Promise.allSettled(
         probeYears.map(async (y) => {
           const url = CN_API_URL(y);
-          const resp = await fetch(url, { method: 'HEAD' });
-          return resp.ok ? y : null;
+          const resp = await fetch(url);
+          if (!resp.ok) return null;
+          const data = await resp.json();
+          // Validate: must have non-empty days array
+          if (data && Array.isArray(data.days) && data.days.length > 0) {
+            return y;
+          }
+          return null;
         })
       );
       years = results

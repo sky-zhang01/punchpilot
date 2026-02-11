@@ -79,7 +79,7 @@ console.log('\x1b[33m── T1-T5: crypto.js ──\x1b[0m');
   const { encrypt, decrypt } = await import(path.join(PROJECT_ROOT, 'server', 'crypto.js'));
 
   // T1: round-trip
-  const original = 'test@freee.co.jp';
+  const original = 'test@example.com';
   const encrypted = encrypt(original);
   const decrypted = decrypt(encrypted);
   assert(decrypted === original, 'T1', `encrypt/decrypt round-trip: "${original}" → encrypted → "${decrypted}"`);
