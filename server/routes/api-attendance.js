@@ -1080,6 +1080,9 @@ router.get('/approval-requests', async (req, res) => {
  */
 router.delete('/approval-requests/:id', async (req, res) => {
   const { id } = req.params;
+  if (!/^\d+$/.test(id)) {
+    return res.status(400).json({ error: 'Invalid request ID' });
+  }
   const requestType = req.query.type || 'WorkTime';
 
   // Map type names to API endpoints
@@ -1156,7 +1159,7 @@ router.delete('/approval-requests/:id', async (req, res) => {
     res.json({ success: true, id: parseInt(id, 10), type: requestType, method: 'delete' });
   } catch (err) {
     log.error(`Failed to withdraw approval request ${id} (${requestType}): ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Failed to withdraw approval request. Please try again.' });
   }
 });
 
@@ -1388,6 +1391,15 @@ router.post('/leave-request', async (req, res) => {
     return res.status(400).json({ error: `Invalid holiday_type. Valid: ${validHolidayTypes.join(', ')}` });
   }
 
+  // Validate time format when provided
+  const TIME_REGEX = /^\d{2}:\d{2}$/;
+  if (start_time && !TIME_REGEX.test(start_time)) {
+    return res.status(400).json({ error: 'start_time must be in HH:MM format' });
+  }
+  if (end_time && !TIME_REGEX.test(end_time)) {
+    return res.status(400).json({ error: 'end_time must be in HH:MM format' });
+  }
+
   // half/hour type requires start/end times (freee API requires start_at/end_at for both)
   if (type === 'PaidHoliday' && (holiday_type === 'half' || holiday_type === 'hour') && (!start_time || !end_time)) {
     return res.status(400).json({ error: 'start_time and end_time are required for half/hourly leave' });
@@ -1396,6 +1408,14 @@ router.post('/leave-request', async (req, res) => {
   // OvertimeWork requires start/end times
   if (type === 'OvertimeWork' && (!start_time || !end_time)) {
     return res.status(400).json({ error: 'start_time and end_time are required for overtime requests' });
+  }
+
+  // Validate special_holiday_setting_id
+  if (type === 'SpecialHoliday') {
+    const settingId = parseInt(req.body.special_holiday_setting_id, 10);
+    if (isNaN(settingId) || settingId <= 0) {
+      return res.status(400).json({ error: 'special_holiday_setting_id must be a positive integer for SpecialHoliday' });
+    }
   }
 
   log.info(`Leave request: type=${type}, date=${date}, holiday_type=${holiday_type || 'full'}`);
@@ -1460,7 +1480,7 @@ router.post('/leave-request', async (req, res) => {
       // Cache: S1 is optimal for this month+type
       if (!cachedBest) setSetting(cacheKey, 'direct');
     } catch (err) {
-      stages.push({ stage: 'S1_direct', success: false, error: err.message?.substring(0, 150) });
+      stages.push({ stage: 'S1_direct', success: false, error: 'Direct API write failed' });
       log.info(`[${date}] S1 direct write failed for ${type}: ${err.message?.substring(0, 120)}`);
     }
   }
@@ -1531,7 +1551,7 @@ router.post('/leave-request', async (req, res) => {
       // Cache: S2 is optimal for this month+type
       if (!cachedBest || cachedBest === 'direct') setSetting(cacheKey, 'approval');
     } catch (err) {
-      stages.push({ stage: 'S2_approval', success: false, error: err.message?.substring(0, 150) });
+      stages.push({ stage: 'S2_approval', success: false, error: 'Approval API request failed' });
       log.info(`[${date}] S2 approval API failed for ${type}: ${err.message?.substring(0, 120)}`);
     }
   }
@@ -1572,11 +1592,11 @@ router.post('/leave-request', async (req, res) => {
         // Cache: S4 is the only working strategy for this month+type
         if (!cachedBest || cachedBest !== 'web') setSetting(cacheKey, 'web');
       } else {
-        stages.push({ stage: 'S4_web', success: false, error: webResult.error });
+        stages.push({ stage: 'S4_web', success: false, error: 'Web automation failed' });
         log.error(`[${date}] S4 web submission failed for ${type}: ${webResult.error}`);
       }
     } catch (err) {
-      stages.push({ stage: 'S4_web', success: false, error: err.message?.substring(0, 150) });
+      stages.push({ stage: 'S4_web', success: false, error: 'Web automation error' });
       log.error(`[${date}] S4 web submission error for ${type}: ${err.message}`);
     }
   }

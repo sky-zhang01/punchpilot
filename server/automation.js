@@ -170,7 +170,7 @@ class FreeeBot {
 
     console.log(chalk.green('[Bot] Login completed'));
 
-    // Ensure we're on the correct company (テスト事業所 vs GCU)
+    // Ensure we're on the correct company
     await this.ensureCompany();
 
     return true;
@@ -178,7 +178,7 @@ class FreeeBot {
 
   /**
    * Ensure the browser is on the configured company.
-   * freee may default to a different company after login (e.g., 株式会社GCU).
+   * freee may default to a different company after login.
    * Reads oauth_company_name from DB and switches if needed.
    */
   async ensureCompany() {

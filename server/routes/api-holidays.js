@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import { addCustomHoliday, deleteCustomHoliday } from '../db.js';
 import { getHolidaysForMonth, getHolidaysForYear, fetchNationalHolidays, getAvailableYears } from '../holiday.js';
+import logger from '../logger.js';
+
+const log = logger.child('Holidays');
 
 const router = Router();
 
@@ -32,7 +35,8 @@ router.get('/', async (req, res) => {
     }
     res.json(holidays);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    log.error(`Failed to fetch holidays: ${error.message}`);
+    res.status(500).json({ error: 'Failed to fetch holidays' });
   }
 });
 
@@ -44,7 +48,8 @@ router.get('/national', async (req, res) => {
     const holidays = await fetchNationalHolidays();
     res.json(holidays);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    log.error(`Failed to fetch national holidays: ${error.message}`);
+    res.status(500).json({ error: 'Failed to fetch national holidays' });
   }
 });
 
@@ -67,7 +72,8 @@ router.get('/available-years', async (req, res) => {
     const years = allYears.filter(y => y >= currentYear - 1);
     res.json({ years, country: countryCode });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    log.error(`Failed to fetch available years: ${error.message}`);
+    res.status(500).json({ error: 'Failed to fetch available years' });
   }
 });
 
@@ -89,7 +95,8 @@ router.post('/custom', (req, res) => {
     if (error.message.includes('UNIQUE')) {
       return res.status(409).json({ error: 'Holiday already exists for this date' });
     }
-    res.status(500).json({ error: error.message });
+    log.error(`Failed to add custom holiday: ${error.message}`);
+    res.status(500).json({ error: 'Failed to add custom holiday' });
   }
 });
 
