@@ -121,13 +121,18 @@ describe('Docker configuration', () => {
     expect(dockerfile).toContain('/app/keystore');
   });
 
-  it('runs as non-root user (UID 568)', () => {
-    expect(dockerfile).toContain('USER 568');
-    expect(dockerfile).toContain('groupadd -g 568');
+  it('uses entrypoint with PUID/PGID support for non-root execution', () => {
+    expect(dockerfile).toContain('ENTRYPOINT');
+    expect(dockerfile).toContain('docker-entrypoint.sh');
+    expect(dockerfile).toContain('gosu');
   });
 
-  it('/app is owned by UID 568', () => {
-    expect(dockerfile).toContain('chown -R 568:568 /app');
+  it('entrypoint script handles UID/GID switching', () => {
+    const entrypoint = readSrc('docker-entrypoint.sh');
+    expect(entrypoint).toContain('PUID');
+    expect(entrypoint).toContain('PGID');
+    expect(entrypoint).toContain('chown');
+    expect(entrypoint).toContain('gosu');
   });
 
   it('crypto.js keystore path matches Docker mount', () => {

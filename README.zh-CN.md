@@ -80,7 +80,7 @@ open http://localhost:8681
 - **密钥隔离**：加密密钥存储在 Docker 命名卷中，与数据绑定挂载物理分离
 - **认证加固**：bcrypt 密码哈希、首次登录强制改密、CSPRNG 会话令牌、登录频率限制（10次/15分钟）
 - **安全头**：CSP、HSTS、X-Frame-Options DENY、X-Content-Type-Options nosniff
-- **非 root 运行**：容器以非特权用户 UID 568 运行（兼容 TrueNAS `apps` 用户）
+- **非 root 运行**：通过 `PUID`/`PGID` 环境变量降权运行（默认 1000，TrueNAS 设为 568）
 - **无外部调用**：所有数据仅在你和 freee 服务器之间传输
 - **日志脱敏**：服务端日志和客户端错误响应中不包含令牌、密码或个人信息
 

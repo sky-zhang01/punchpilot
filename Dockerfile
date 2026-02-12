@@ -11,11 +11,12 @@ WORKDIR /app
 ENV TZ=Asia/Tokyo
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# Install tzdata and build tools (required for better-sqlite3 native compilation)
+# Install tzdata, build tools, and gosu (for runtime UID/GID switching)
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     tzdata \
     build-essential \
     python3 \
+    gosu \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy server package files and install
@@ -41,12 +42,11 @@ RUN mkdir -p /app/data /app/logs /app/screenshots /app/keystore
 # Ensure Playwright browser path
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Run as non-root user for container security (UID/GID 568 = TrueNAS "apps" convention)
-RUN groupadd -g 568 apps 2>/dev/null || true \
-    && useradd -u 568 -g 568 -d /app -s /bin/false apps 2>/dev/null || true \
-    && chown -R 568:568 /app
-USER 568
+# Entrypoint handles runtime UID/GID switch via PUID/PGID env vars
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 EXPOSE 8681
 
+ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["node", "server/server.js"]

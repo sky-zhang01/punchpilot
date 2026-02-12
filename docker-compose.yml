@@ -4,6 +4,8 @@ services:
     container_name: punchpilot
     restart: unless-stopped
     environment:
+      - PUID=1000
+      - PGID=1000
       - TZ=Asia/Tokyo
       - NODE_ENV=production
     env_file:

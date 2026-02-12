@@ -578,16 +578,17 @@ console.log('\n\x1b[33m── T13: Docker configuration ──\x1b[0m');
     'T13d', 'Dockerfile: creates /app/keystore directory'
   );
   assert(
-    dockerfileSrc.includes('USER 568'),
-    'T13e', 'Dockerfile: runs as non-root user (UID 568)'
+    dockerfileSrc.includes('ENTRYPOINT') && dockerfileSrc.includes('docker-entrypoint.sh'),
+    'T13e', 'Dockerfile: uses entrypoint for runtime UID/GID switching'
   );
   assert(
-    dockerfileSrc.includes('groupadd -g 568') && dockerfileSrc.includes('useradd -u 568 -g 568'),
-    'T13f', 'Dockerfile: uses UID/GID 568 (TrueNAS apps convention)'
+    dockerfileSrc.includes('gosu'),
+    'T13f', 'Dockerfile: installs gosu for privilege dropping'
   );
+  const entrypointSrc = fs.readFileSync(path.join(PROJECT_ROOT, 'docker-entrypoint.sh'), 'utf8');
   assert(
-    dockerfileSrc.includes('chown -R 568:568 /app'),
-    'T13g', 'Dockerfile: /app owned by UID 568'
+    entrypointSrc.includes('PUID') && entrypointSrc.includes('PGID') && entrypointSrc.includes('chown'),
+    'T13g', 'Entrypoint: supports PUID/PGID with chown'
   );
 
   // Verify volume config matches crypto.js expectations

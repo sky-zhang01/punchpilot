@@ -80,7 +80,7 @@ Once a month, PunchPilot detects which strategy works for your company and cache
 - **Key isolation**: Encryption key in Docker named volume, physically separate from data bind mount
 - **Auth hardening**: bcrypt password hashing, forced password change on first login, session tokens via CSPRNG, login rate limiting (10/15min)
 - **Security headers**: CSP, HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff
-- **Non-root**: Container runs as unprivileged UID 568 (TrueNAS `apps` compatible)
+- **Non-root**: Container drops privileges via `PUID`/`PGID` env vars (default 1000, set to 568 for TrueNAS)
 - **No external calls**: All data stays between you and freee's servers
 - **Sanitized logs**: No tokens, passwords, or PII in server logs or client error responses
 
