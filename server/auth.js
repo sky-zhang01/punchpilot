@@ -112,12 +112,12 @@ export function loginHandler(req, res) {
 
   createSession(token, user.id, expiresAt);
 
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isSecure = req.protocol === 'https';
   res.cookie('session_token', token, {
     httpOnly: true,
     maxAge: SESSION_DURATION_HOURS * 3600 * 1000,
     sameSite: 'lax',
-    secure: isProduction, // Only send cookie over HTTPS in production
+    secure: isSecure, // Set secure flag based on actual request protocol
   });
 
   res.json({
@@ -214,12 +214,12 @@ export function changePasswordHandler(req, res) {
 
   createSession(newToken, user.id, expiresAt);
 
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isSecure = req.protocol === 'https';
   res.cookie('session_token', newToken, {
     httpOnly: true,
     maxAge: SESSION_DURATION_HOURS * 3600 * 1000,
     sameSite: 'lax',
-    secure: isProduction,
+    secure: isSecure, // Set secure flag based on actual request protocol
   });
 
   res.json({

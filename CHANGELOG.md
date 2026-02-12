@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-02-12
+
+### Fixed
+- **Reverse proxy cookie handling**: `trust proxy` + protocol-aware `secure` flag — fixes login failure behind NPM/Cloudflare
+- **504 timeout on batch operations**: Converted batch punch, batch leave, and batch withdraw to async task model with client-side polling — bypasses Cloudflare's 100s gateway timeout
+
 ## [0.4.0] - 2026-02-12
 
 ### Added

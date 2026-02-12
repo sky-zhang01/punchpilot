@@ -17,6 +17,10 @@ const log = logger.child('Express');
 
 const app = express();
 
+// Trust reverse proxy headers (X-Forwarded-For, X-Forwarded-Proto, etc.)
+// Required for correct req.protocol behind NPM / Cloudflare / any reverse proxy
+app.set('trust proxy', 1);
+
 // Hide framework identity
 app.disable('x-powered-by');
 
