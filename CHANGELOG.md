@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - **Key separation architecture** - encryption key stored in Docker named volume, separate from data
 - AES-256-GCM encryption for all sensitive fields (credentials, OAuth tokens)
-- Non-root container execution (`ppuser`)
+- Non-root container execution via `PUID`/`PGID` (LinuxServer.io convention)
 - Screenshot auto-cleanup (7-day retention)
 - Request timeout protection (30s API, 5min Playwright)
 

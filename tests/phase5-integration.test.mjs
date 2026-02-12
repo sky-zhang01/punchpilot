@@ -578,16 +578,17 @@ console.log('\n\x1b[33m── T13: Docker configuration ──\x1b[0m');
     'T13d', 'Dockerfile: creates /app/keystore directory'
   );
   assert(
-    dockerfileSrc.includes('USER ppuser'),
-    'T13e', 'Dockerfile: runs as non-root user ppuser'
+    dockerfileSrc.includes('ENTRYPOINT') && dockerfileSrc.includes('docker-entrypoint.sh'),
+    'T13e', 'Dockerfile: uses entrypoint for runtime UID/GID switching'
   );
   assert(
-    dockerfileSrc.includes('groupadd -r ppuser') && dockerfileSrc.includes('useradd -r -g ppuser'),
-    'T13f', 'Dockerfile: ppuser is a system user with restricted group'
+    dockerfileSrc.includes('gosu'),
+    'T13f', 'Dockerfile: installs gosu for privilege dropping'
   );
+  const entrypointSrc = fs.readFileSync(path.join(PROJECT_ROOT, 'docker-entrypoint.sh'), 'utf8');
   assert(
-    dockerfileSrc.includes('chown -R ppuser:ppuser /app'),
-    'T13g', 'Dockerfile: /app owned by ppuser'
+    entrypointSrc.includes('PUID') && entrypointSrc.includes('PGID') && entrypointSrc.includes('chown'),
+    'T13g', 'Entrypoint: supports PUID/PGID with chown'
   );
 
   // Verify volume config matches crypto.js expectations
