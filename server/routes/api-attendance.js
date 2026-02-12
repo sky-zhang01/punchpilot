@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import crypto from 'crypto';
 import { getSetting, setSetting, getStrategyCache, setStrategyCache, insertLog } from '../db.js';
 import { FreeeApiClient } from '../freee-api.js';
 import { submitWebCorrections, hasWebCredentials, scrapeEmployeeProfile, submitLeaveRequest, withdrawApprovalRequestWeb } from '../automation.js';
@@ -6,6 +7,37 @@ import logger from '../logger.js';
 
 const router = Router();
 const log = logger.child('Attendance');
+
+// ===================================================================
+//  Async Task Store — in-memory store for long-running batch tasks
+//  Allows immediate HTTP response + client polling for results.
+//  Tasks auto-expire after 30 minutes to prevent memory leaks.
+// ===================================================================
+const asyncTasks = new Map();
+const TASK_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+function createTask() {
+  const id = crypto.randomUUID();
+  asyncTasks.set(id, { status: 'running', createdAt: Date.now() });
+  return id;
+}
+
+function updateTask(id, data) {
+  const task = asyncTasks.get(id);
+  if (task) Object.assign(task, data);
+}
+
+function getTask(id) {
+  return asyncTasks.get(id) || null;
+}
+
+// Periodically clean expired tasks
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, task] of asyncTasks) {
+    if (now - task.createdAt > TASK_TTL_MS) asyncTasks.delete(id);
+  }
+}, 5 * 60 * 1000);
 
 /**
  * Sanitize error messages for client response.
@@ -397,6 +429,15 @@ router.put('/records/:date', async (req, res) => {
  * This is the user's one-click "batch punch" — they don't need to know
  * whether it's a direct write or an approval request.
  */
+/**
+ * GET /api/attendance/batch/status/:taskId - Poll async batch task status
+ */
+router.get('/batch/status/:taskId', (req, res) => {
+  const task = getTask(req.params.taskId);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  res.json(task);
+});
+
 router.post('/batch', async (req, res) => {
   const { entries, reason } = req.body;
 
@@ -411,6 +452,12 @@ router.post('/batch', async (req, res) => {
   if (!oauth) return;
   const { companyId, employeeId } = oauth;
 
+  // Return task_id immediately, process in background
+  const taskId = createTask();
+  res.json({ task_id: taskId, status: 'running' });
+
+  // Background processing (runs after response is sent)
+  (async () => {
   try {
     const client = new FreeeApiClient();
     await client.ensureValidToken();
@@ -674,11 +721,12 @@ router.post('/batch', async (req, res) => {
       web_credentials_invalid: webCredsInvalid,
     };
 
-    res.json({ success: failedCount === 0, results, succeeded: succeededCount, failed: failedCount, strategy_info: strategyInfo });
+    updateTask(taskId, { status: 'completed', success: failedCount === 0, results, succeeded: succeededCount, failed: failedCount, strategy_info: strategyInfo });
   } catch (err) {
     log.error(`Batch failed: ${err.message}`);
-    res.status(500).json({ error: sanitizeError(err) });
+    updateTask(taskId, { status: 'failed', error: sanitizeError(err) });
   }
+  })();
 });
 
 // ===================================================================
@@ -1778,6 +1826,11 @@ router.post('/batch-leave-request', async (req, res) => {
 
   log.info(`Batch leave request: type=${type}, ${dates.length} dates`);
 
+  // Return task_id immediately, process in background
+  const taskId = createTask();
+  res.json({ task_id: taskId, status: 'running' });
+
+  (async () => {
   const results = [];
 
   for (const date of dates) {
@@ -1899,7 +1952,8 @@ router.post('/batch-leave-request', async (req, res) => {
   const failedCount = results.filter(r => !r.success).length;
 
   log.info(`Batch leave request complete: ${succeededCount} succeeded, ${failedCount} failed`);
-  res.json({ success: failedCount === 0, results, succeeded: succeededCount, failed: failedCount });
+  updateTask(taskId, { status: 'completed', success: failedCount === 0, results, succeeded: succeededCount, failed: failedCount });
+  })();
 });
 
 /**
@@ -1942,13 +1996,19 @@ router.post('/batch-withdraw', async (req, res) => {
 
   log.info(`Batch withdraw: ${requests.length} requests`);
 
+  // Return task_id immediately, process in background
+  const taskId = createTask();
+  res.json({ task_id: taskId, status: 'running' });
+
+  (async () => {
   const results = [];
   let client;
   try {
     client = new FreeeApiClient();
     await client.ensureValidToken();
   } catch (err) {
-    return res.status(500).json({ error: 'OAuth token error. Please reconfigure OAuth.' });
+    updateTask(taskId, { status: 'failed', error: 'OAuth token error. Please reconfigure OAuth.' });
+    return;
   }
 
   for (const request of requests) {
@@ -2016,7 +2076,8 @@ router.post('/batch-withdraw', async (req, res) => {
   const succeededCount = results.filter(r => r.success).length;
   const failedCount = results.filter(r => !r.success).length;
   log.info(`Batch withdraw complete: ${succeededCount} succeeded, ${failedCount} failed`);
-  res.json({ success: failedCount === 0, results, succeeded: succeededCount, failed: failedCount });
+  updateTask(taskId, { status: 'completed', success: failedCount === 0, results, succeeded: succeededCount, failed: failedCount });
+  })();
 });
 
 /**
