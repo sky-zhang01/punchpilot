@@ -24,6 +24,6 @@ PunchPilot handles sensitive credentials (freee OAuth tokens, user passwords) an
 - **Key isolation**: Encryption key stored in a Docker named volume, separate from the data bind mount
 - **Auth hardening**: bcrypt password hashing, forced password change on first login, CSPRNG session tokens, login rate limiting (10/15min)
 - **Security headers**: CSP, HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff
-- **Non-root execution**: Container runs as unprivileged user `ppuser`
+- **Non-root execution**: Container runs as unprivileged UID 568 (compatible with TrueNAS `apps` user)
 - **Sanitized logs**: No tokens, passwords, or PII in server logs or client error responses
 - **No external telemetry**: All data stays between you and freee's servers

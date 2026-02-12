@@ -578,16 +578,16 @@ console.log('\n\x1b[33m── T13: Docker configuration ──\x1b[0m');
     'T13d', 'Dockerfile: creates /app/keystore directory'
   );
   assert(
-    dockerfileSrc.includes('USER ppuser'),
-    'T13e', 'Dockerfile: runs as non-root user ppuser'
+    dockerfileSrc.includes('USER 568'),
+    'T13e', 'Dockerfile: runs as non-root user (UID 568)'
   );
   assert(
-    dockerfileSrc.includes('groupadd -r ppuser') && dockerfileSrc.includes('useradd -r -g ppuser'),
-    'T13f', 'Dockerfile: ppuser is a system user with restricted group'
+    dockerfileSrc.includes('groupadd -g 568') && dockerfileSrc.includes('useradd -u 568 -g 568'),
+    'T13f', 'Dockerfile: uses UID/GID 568 (TrueNAS apps convention)'
   );
   assert(
-    dockerfileSrc.includes('chown -R ppuser:ppuser /app'),
-    'T13g', 'Dockerfile: /app owned by ppuser'
+    dockerfileSrc.includes('chown -R 568:568 /app'),
+    'T13g', 'Dockerfile: /app owned by UID 568'
   );
 
   // Verify volume config matches crypto.js expectations

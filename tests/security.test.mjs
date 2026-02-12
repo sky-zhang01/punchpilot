@@ -121,13 +121,13 @@ describe('Docker configuration', () => {
     expect(dockerfile).toContain('/app/keystore');
   });
 
-  it('runs as non-root user ppuser', () => {
-    expect(dockerfile).toContain('USER ppuser');
-    expect(dockerfile).toContain('groupadd -r ppuser');
+  it('runs as non-root user (UID 568)', () => {
+    expect(dockerfile).toContain('USER 568');
+    expect(dockerfile).toContain('groupadd -g 568');
   });
 
-  it('/app is owned by ppuser', () => {
-    expect(dockerfile).toContain('chown -R ppuser:ppuser /app');
+  it('/app is owned by UID 568', () => {
+    expect(dockerfile).toContain('chown -R 568:568 /app');
   });
 
   it('crypto.js keystore path matches Docker mount', () => {

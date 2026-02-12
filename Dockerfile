@@ -41,10 +41,11 @@ RUN mkdir -p /app/data /app/logs /app/screenshots /app/keystore
 # Ensure Playwright browser path
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Run as non-root user for container security
-RUN groupadd -r ppuser && useradd -r -g ppuser -d /app ppuser \
-    && chown -R ppuser:ppuser /app
-USER ppuser
+# Run as non-root user for container security (UID/GID 568 = TrueNAS "apps" convention)
+RUN groupadd -g 568 apps 2>/dev/null || true \
+    && useradd -u 568 -g 568 -d /app -s /bin/false apps 2>/dev/null || true \
+    && chown -R 568:568 /app
+USER 568
 
 EXPOSE 8681
 
