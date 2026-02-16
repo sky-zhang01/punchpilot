@@ -81,6 +81,55 @@ describe('Security Headers', () => {
   });
 });
 
+describe('HSTS Header', () => {
+  it('UT-SEC-05: no HSTS on plain HTTP request', async () => {
+    const res = await request(app).get('/api/auth/status');
+    // Supertest defaults to HTTP, so no HSTS should be set
+    expect(res.headers['strict-transport-security']).toBeUndefined();
+  });
+
+  it('UT-SEC-06: HSTS sent when X-Forwarded-Proto is https', async () => {
+    const res = await request(app)
+      .get('/api/auth/status')
+      .set('X-Forwarded-Proto', 'https');
+    const hsts = res.headers['strict-transport-security'];
+    expect(hsts).toBeDefined();
+    expect(hsts).toContain('max-age=31536000');
+    expect(hsts).toContain('includeSubDomains');
+  });
+});
+
+describe('Cookie Secure Flag (v0.4.2)', () => {
+  it('UT-TP-06: HTTP login → cookie WITHOUT Secure flag', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
+    if (res.status === 429) return; // Skip if rate-limited
+    expect(res.status).toBe(200);
+    const cookies = res.headers['set-cookie'];
+    const sessionCookie = Array.isArray(cookies)
+      ? cookies.find(c => c.startsWith('session_token='))
+      : cookies;
+    expect(sessionCookie).toBeDefined();
+    expect(sessionCookie.toLowerCase()).not.toContain('; secure');
+  });
+
+  it('UT-TP-07: HTTPS (X-Forwarded-Proto) login → cookie WITH Secure flag', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .set('X-Forwarded-Proto', 'https')
+      .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
+    if (res.status === 429) return; // Skip if rate-limited
+    expect(res.status).toBe(200);
+    const cookies = res.headers['set-cookie'];
+    const sessionCookie = Array.isArray(cookies)
+      ? cookies.find(c => c.startsWith('session_token='))
+      : cookies;
+    expect(sessionCookie).toBeDefined();
+    expect(sessionCookie).toContain('Secure');
+  });
+});
+
 describe('Auth: Login', () => {
   it('POST /api/auth/login with valid credentials → 200 + cookie', async () => {
     const res = await request(app)

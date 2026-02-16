@@ -18,6 +18,34 @@ api.interceptors.response.use(
 // Generic response helper type
 type ApiCall<T = any> = Promise<AxiosResponse<T>>;
 
+/**
+ * Poll an async batch task until it completes.
+ * Returns the final task result (same shape as the old synchronous response).
+ */
+async function pollTask(taskId: string, intervalMs = 2000, maxMs = 600000): Promise<any> {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    const res = await api.get(`/attendance/batch/status/${taskId}`);
+    const task = res.data;
+    if (task.status === 'completed') return task;
+    if (task.status === 'failed') throw new Error(task.error || 'Task failed');
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  throw new Error('Task timed out');
+}
+
+/**
+ * Submit an async batch request: POST → get task_id → poll until done.
+ */
+async function asyncBatchRequest(url: string, data: any): Promise<AxiosResponse> {
+  const res = await api.post(url, data);
+  if (res.data?.task_id) {
+    const result = await pollTask(res.data.task_id);
+    return { ...res, data: result };
+  }
+  return res; // Fallback: synchronous response (shouldn't happen)
+}
+
 const apiClient = {
   // Auth
   login: (username: string, password: string): ApiCall => api.post('/auth/login', { username, password }),
@@ -84,7 +112,7 @@ const apiClient = {
   submitWorkTimeCorrection: (data: Record<string, any>): ApiCall =>
     api.post('/attendance/approval/work-time', data),
   submitBatch: (data: { entries: any[]; reason?: string }): ApiCall =>
-    api.post('/attendance/batch', data, { timeout: 5 * 60 * 1000 }),
+    asyncBatchRequest('/attendance/batch', data),
   // Approval request tracking
   getApprovalRequests: (year: number, month: number): ApiCall =>
     api.get('/attendance/approval-requests', { params: { year, month } }),
@@ -100,9 +128,9 @@ const apiClient = {
     api.post('/attendance/leave-request', data, { timeout: 3 * 60 * 1000 }),
   // Batch operations
   submitBatchLeaveRequest: (data: { type: string; dates: string[]; reason?: string; holiday_type?: string; start_time?: string; end_time?: string }): ApiCall =>
-    api.post('/attendance/batch-leave-request', data, { timeout: 5 * 60 * 1000 }),
+    asyncBatchRequest('/attendance/batch-leave-request', data),
   batchWithdrawRequests: (data: { requests: Array<{ id: number; type: string }> }): ApiCall =>
-    api.post('/attendance/batch-withdraw', data, { timeout: 5 * 60 * 1000 }),
+    asyncBatchRequest('/attendance/batch-withdraw', data),
   batchApproveRequests: (data: { requests: Array<{ id: number; type: string; action: 'approve' | 'feedback' }> }): ApiCall =>
     api.post('/attendance/batch-approve', data, { timeout: 3 * 60 * 1000 }),
   getIncomingRequests: (year: number, month: number): ApiCall =>

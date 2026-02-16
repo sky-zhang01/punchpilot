@@ -197,6 +197,22 @@ class Scheduler {
     });
 
     markDailyScheduleExecuted(today, actionType);
+
+    // Refresh detected state after successful action so Dashboard/API reflect the new state
+    if (result.status === 'success') {
+      try {
+        const updatedState = await detectCurrentState();
+        this.startupAnalysis = {
+          ...this.startupAnalysis,
+          state: updatedState,
+          reason: `Updated after ${actionType}`,
+        };
+        console.log(`[Scheduler] State refreshed to: ${updatedState}`);
+      } catch (e) {
+        console.warn(`[Scheduler] Failed to refresh state after ${actionType}:`, e.message);
+      }
+    }
+
     console.log(`[Scheduler] ${actionType} -> ${result.status}`);
   }
 
@@ -214,6 +230,21 @@ class Scheduler {
       screenshot_after: result.screenshotAfter || null,
       duration_ms: result.durationMs,
     });
+
+    // Refresh detected state after successful manual action
+    if (result.status === 'success') {
+      try {
+        const updatedState = await detectCurrentState();
+        this.startupAnalysis = {
+          ...this.startupAnalysis,
+          state: updatedState,
+          reason: `Updated after manual ${actionType}`,
+        };
+        console.log(`[Scheduler] State refreshed to: ${updatedState}`);
+      } catch (e) {
+        console.warn(`[Scheduler] Failed to refresh state after manual ${actionType}:`, e.message);
+      }
+    }
 
     return result;
   }

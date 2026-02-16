@@ -17,6 +17,10 @@ const log = logger.child('Express');
 
 const app = express();
 
+// Trust reverse proxy headers (X-Forwarded-For, X-Forwarded-Proto, etc.)
+// Required for correct req.protocol behind NPM / Cloudflare / any reverse proxy
+app.set('trust proxy', 1);
+
 // Hide framework identity
 app.disable('x-powered-by');
 
@@ -26,7 +30,7 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'");
-  if (process.env.NODE_ENV === 'production') {
+  if (req.protocol === 'https') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
   next();
