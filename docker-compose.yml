@@ -7,7 +7,6 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Asia/Tokyo
-      - NODE_ENV=production
     env_file:
       - .env
     ports:

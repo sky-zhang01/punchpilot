@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Reverse proxy cookie handling**: `trust proxy` + protocol-aware `secure` flag — fixes login failure behind NPM/Cloudflare
 - **504 timeout on batch operations**: Converted batch punch, batch leave, and batch withdraw to async task model with client-side polling — bypasses Cloudflare's 100s gateway timeout
+- **Dashboard status stuck on "unknown"**: Scheduler now refreshes detected state via `detectCurrentState()` after successful auto-punch and manual trigger
+- **Calendar showing "missing punch" after auto-punch**: CalendarView now auto-refreshes freee attendance data every 60 seconds
 
 ## [0.4.0] - 2026-02-12
 

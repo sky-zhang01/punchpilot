@@ -134,6 +134,16 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalData, fetchLogs, fetchHolidays, fetchAttendanceData, refreshKey]);
 
+  // Auto-refresh attendance data every 60s so Calendar reflects auto-punch results
+  useEffect(() => {
+    if (!oauthConfigured) return;
+    const interval = setInterval(() => {
+      fetchAttendanceData();
+      if (!externalData) fetchLogs();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [oauthConfigured, fetchAttendanceData, fetchLogs, externalData]);
+
   // Determine calendar valid range based on actual holiday data availability
   useEffect(() => {
     (async () => {

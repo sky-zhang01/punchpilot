@@ -189,6 +189,121 @@ describe('screenshot cleanup', () => {
   });
 });
 
+describe('Reverse Proxy Support (v0.4.2)', () => {
+  const appSrc = readSrc('server/app.js');
+  const authSrc = readSrc('server/auth.js');
+
+  it('UT-TP-08: app.js sets trust proxy to 1', () => {
+    expect(appSrc).toContain("app.set('trust proxy', 1)");
+  });
+
+  it('UT-TP-09: auth.js loginHandler uses req.protocol for cookie secure', () => {
+    // Find the loginHandler function and check it uses req.protocol
+    const loginBlock = authSrc.substring(
+      authSrc.indexOf('loginHandler'),
+      authSrc.indexOf('changePasswordHandler')
+    );
+    expect(loginBlock).toContain("req.protocol === 'https'");
+    expect(loginBlock).not.toContain('isProduction');
+  });
+
+  it('UT-TP-10: auth.js changePasswordHandler uses req.protocol for cookie secure', () => {
+    const cpBlock = authSrc.substring(
+      authSrc.indexOf('changePasswordHandler')
+    );
+    expect(cpBlock).toContain("req.protocol === 'https'");
+    expect(cpBlock).not.toContain('isProduction');
+  });
+
+  it('UT-SEC-05: HSTS header sent only when req.protocol is https', () => {
+    expect(appSrc).toContain("req.protocol === 'https'");
+    expect(appSrc).toContain('Strict-Transport-Security');
+  });
+
+  it('UT-SEC-06: HSTS max-age is at least 1 year', () => {
+    expect(appSrc).toContain('max-age=31536000');
+  });
+
+  it('UT-SEC-07: HSTS includes includeSubDomains', () => {
+    expect(appSrc).toContain('includeSubDomains');
+  });
+
+  it('UT-DOCKER-07: docker-compose.yml does not set NODE_ENV', () => {
+    const compose = readSrc('docker-compose.yml');
+    expect(compose).not.toContain('NODE_ENV');
+  });
+});
+
+describe('v0.4.2: Async Batch Task Implementation', () => {
+  const attendanceSrc = readSrc('server/routes/api-attendance.js');
+  const apiTsSrc = readSrc('client/src/api.ts');
+
+  it('UT-AT-01: api-attendance.js has asyncTasks Map', () => {
+    expect(attendanceSrc).toContain('const asyncTasks = new Map()');
+  });
+
+  it('UT-AT-02: Task ID uses crypto.randomUUID()', () => {
+    expect(attendanceSrc).toContain('crypto.randomUUID()');
+  });
+
+  it('UT-AT-03: Task TTL is 30 minutes', () => {
+    expect(attendanceSrc).toContain('30 * 60 * 1000');
+  });
+
+  it('UT-AT-04: GET /batch/status/:taskId endpoint exists', () => {
+    expect(attendanceSrc).toContain("router.get('/batch/status/:taskId'");
+  });
+
+  it('UT-AT-05: POST /batch returns task_id immediately', () => {
+    expect(attendanceSrc).toContain("res.json({ task_id: taskId, status: 'running' })");
+  });
+
+  it('UT-AT-06: POST /batch-leave-request returns task_id', () => {
+    // Same async pattern used for leave requests
+    const batchLeaveBlock = attendanceSrc.substring(attendanceSrc.indexOf("'/batch-leave-request'"));
+    expect(batchLeaveBlock).toContain('task_id');
+  });
+
+  it('UT-AT-07: POST /batch-withdraw returns task_id', () => {
+    const batchWithdrawBlock = attendanceSrc.substring(attendanceSrc.indexOf("'/batch-withdraw'"));
+    expect(batchWithdrawBlock).toContain('task_id');
+  });
+
+  it('UT-AT-10: api.ts has pollTask function', () => {
+    expect(apiTsSrc).toContain('async function pollTask');
+  });
+
+  it('UT-AT-11: api.ts has asyncBatchRequest function', () => {
+    expect(apiTsSrc).toContain('async function asyncBatchRequest');
+  });
+
+  it('UT-AT-12: submitBatch uses asyncBatchRequest', () => {
+    expect(apiTsSrc).toContain("asyncBatchRequest('/attendance/batch'");
+  });
+});
+
+describe('v0.4.2: Version Consistency', () => {
+  it('UT-VER-01: package.json version is 0.4.2', () => {
+    const pkg = JSON.parse(readSrc('package.json'));
+    expect(pkg.version).toBe('0.4.2');
+  });
+
+  it('UT-VER-02: client/package.json version is 0.4.2', () => {
+    const pkg = JSON.parse(readSrc('client/package.json'));
+    expect(pkg.version).toBe('0.4.2');
+  });
+
+  it('UT-VER-03: Dockerfile has version label 0.4.2', () => {
+    const dockerfile = readSrc('Dockerfile');
+    expect(dockerfile).toContain('0.4.2');
+  });
+
+  it('UT-VER-04: CHANGELOG.md has [0.4.2] section', () => {
+    const changelog = readSrc('CHANGELOG.md');
+    expect(changelog).toContain('[0.4.2]');
+  });
+});
+
 describe('api-config.js credential handling', () => {
   const src = readSrc('server/routes/api-config.js');
 
