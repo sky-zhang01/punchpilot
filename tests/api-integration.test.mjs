@@ -69,24 +69,15 @@ describe('Security Headers', () => {
     expect(res.headers['x-frame-options']).toBe('DENY');
   });
 
-  it('returns Content-Security-Policy with per-request nonce', async () => {
+  it('returns Content-Security-Policy header', async () => {
     const res = await request(app).get('/api/auth/status');
     const csp = res.headers['content-security-policy'];
     expect(csp).toBeDefined();
     expect(csp).toContain("default-src 'self'");
-    // CSP must contain a nonce (not unsafe-inline)
-    expect(csp).toMatch(/nonce-[A-Za-z0-9+/=]+/);
-    expect(csp).not.toContain('unsafe-inline');
-  });
-
-  it('UT-SEC-13: CSP nonce is unique per request', async () => {
-    const res1 = await request(app).get('/api/auth/status');
-    const res2 = await request(app).get('/api/auth/status');
-    const nonce1 = res1.headers['content-security-policy'].match(/nonce-([A-Za-z0-9+/=]+)/)?.[1];
-    const nonce2 = res2.headers['content-security-policy'].match(/nonce-([A-Za-z0-9+/=]+)/)?.[1];
-    expect(nonce1).toBeDefined();
-    expect(nonce2).toBeDefined();
-    expect(nonce1).not.toBe(nonce2);
+    expect(csp).toContain("script-src 'self'");
+    // style-src requires 'unsafe-inline' because antd 6's @ant-design/cssinjs v2
+    // injects <style> tags at runtime without nonce support
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
   });
 
   it('returns Referrer-Policy', async () => {
