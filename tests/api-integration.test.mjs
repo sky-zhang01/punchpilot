@@ -103,9 +103,12 @@ describe('Security Headers', () => {
     expect(pp).toContain('camera=()');
   });
 
-  it('UT-SEC-11: returns Cross-Origin-Opener-Policy: same-origin', async () => {
+  // COOP (Cross-Origin-Opener-Policy) is intentionally omitted — 'same-origin' severs
+  // window.opener between OAuth callback popups and the main window, breaking postMessage
+  // auto-refresh (REQ-OAUTH-01). Clickjacking is mitigated by X-Frame-Options + CSP.
+  it('UT-SEC-11: does NOT set Cross-Origin-Opener-Policy (OAuth popup compatibility)', async () => {
     const res = await request(app).get('/api/auth/status');
-    expect(res.headers['cross-origin-opener-policy']).toBe('same-origin');
+    expect(res.headers['cross-origin-opener-policy']).toBeUndefined();
   });
 
   it('UT-SEC-12: returns Cross-Origin-Resource-Policy: same-origin', async () => {

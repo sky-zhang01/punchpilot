@@ -28,13 +28,16 @@ app.disable('x-powered-by');
 // NOTE: style-src requires 'unsafe-inline' because antd 6's @ant-design/cssinjs v2
 // injects <style> tags at runtime without nonce support (StyleProvider has no nonce prop).
 // script-src uses 'self' only (all JS is served as external files by Vite build).
+// NOTE: COOP (Cross-Origin-Opener-Policy) is intentionally omitted because 'same-origin'
+// severs the window.opener link between OAuth callback popups and the main window,
+// breaking the postMessage-based auto-refresh flow (REQ-OAUTH-01). Clickjacking is
+// already mitigated by X-Frame-Options: DENY and CSP frame-ancestors 'none'.
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'");
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), usb=(), payment=()');
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   if (req.protocol === 'https') {
