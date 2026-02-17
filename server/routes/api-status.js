@@ -4,6 +4,7 @@ import { scheduler } from '../scheduler.js';
 import { isHolidayOrWeekend, getTodayString } from '../holiday.js';
 import { hasCredentials, isDebugMode, detectCurrentState, FREEE_STATE, getConnectionMode } from '../automation.js';
 import { nowInTz, getTimezone } from '../timezone.js';
+import { FreeeApiClient } from '../freee-api.js';
 
 const router = Router();
 
@@ -74,6 +75,27 @@ router.get('/', async (req, res) => {
 
   if (nextAction) {
     delete nextAction.minutes;
+    // Attach mode and window info for random mode display
+    const cfg = configs.find((c) => c.action_type === nextAction.action_type);
+    if (cfg) {
+      nextAction.mode = cfg.mode;
+      if (cfg.mode === 'random') {
+        nextAction.window_start = cfg.window_start;
+        nextAction.window_end = cfg.window_end;
+      }
+    }
+  }
+
+  // Fetch today's actual punch times from freee time_clocks API
+  // This gives us real timestamps (e.g., checkin at 09:51) that work_records may not yet reflect
+  let todayPunchTimes = [];
+  if (credentialsOk && !debugMode) {
+    try {
+      const client = new FreeeApiClient();
+      todayPunchTimes = await client.getTodayTimeClocks();
+    } catch (e) {
+      console.warn('[Status] Failed to fetch today time_clocks:', e.message?.substring(0, 100));
+    }
   }
 
   res.json({
@@ -87,6 +109,7 @@ router.get('/', async (req, res) => {
     is_holiday: isHoliday,
     today_schedule: todaySchedule,
     today_logs: todayLogs,
+    today_punch_times: todayPunchTimes,
     next_action: nextAction,
     startup_analysis: startupAnalysis,
     skipped_actions: skippedActions,

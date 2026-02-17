@@ -143,41 +143,26 @@ const AppLayout: React.FC = () => {
         }}
         theme="light"
       >
-        {/* Logo area — freee/Google style: hamburger + logo always visible */}
+        {/* Logo area — freee style: logo + hamburger always in same row */}
         <div
           style={{
-            padding: collapsed ? '12px 0' : '12px 16px',
+            padding: collapsed ? '12px 8px' : '12px 16px',
             display: 'flex',
-            flexDirection: collapsed ? 'column' : 'row',
+            flexDirection: 'row',
             alignItems: 'center',
-            justifyContent: collapsed ? 'center' : 'space-between',
-            gap: collapsed ? 8 : 0,
-            minHeight: 64,
+            justifyContent: collapsed ? 'space-evenly' : 'space-between',
+            gap: 4,
+            minHeight: 56,
           }}
         >
-          {collapsed ? (
-            <>
-              <Button
-                type="text"
-                icon={<MenuUnfoldOutlined />}
-                onClick={() => setCollapsed(false)}
-                size="small"
-                style={{ color: collapseIconColor }}
-              />
-              <PunchPilotLogo size={28} collapsed showText={false} />
-            </>
-          ) : (
-            <>
-              <PunchPilotLogo size={32} collapsed={false} showText />
-              <Button
-                type="text"
-                icon={<MenuFoldOutlined />}
-                onClick={() => setCollapsed(true)}
-                size="small"
-                style={{ color: collapseIconColor, flexShrink: 0 }}
-              />
-            </>
-          )}
+          <PunchPilotLogo size={collapsed ? 28 : 32} collapsed={collapsed} showText={!collapsed} />
+          <Button
+            type="text"
+            icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            onClick={() => setCollapsed(!collapsed)}
+            size="small"
+            style={{ color: collapseIconColor, flexShrink: 0 }}
+          />
         </div>
 
         {/* Google-style navigation items */}
@@ -334,7 +319,7 @@ const AppLayout: React.FC = () => {
         {/* Footer */}
         <Footer style={{ textAlign: 'center', padding: '12px 24px' }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            PunchPilot v0.4.0 | Developed by Sky Zhang
+            PunchPilot v{__APP_VERSION__} | Developed by Sky Zhang
           </Text>
         </Footer>
       </Layout>

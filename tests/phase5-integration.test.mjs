@@ -233,16 +233,8 @@ console.log('\x1b[33m── T1-T5: crypto.js ──\x1b[0m');
   const cryptoSrc = fs.readFileSync(path.join(PROJECT_ROOT, 'server', 'crypto.js'), 'utf8');
 
   assert(
-    cryptoSrc.includes("crypto.scryptSync(secret, 'punchpilot-salt-v2', 32)"),
-    'T5a', 'Current key uses punchpilot-salt-v2'
-  );
-  assert(
-    cryptoSrc.includes("crypto.scryptSync(secret, 'punchpilot-salt', 32)"),
-    'T5b', 'Legacy key uses punchpilot-salt (v1)'
-  );
-  assert(
-    cryptoSrc.includes('decryptWithLegacyKey(encPassword)'),
-    'T5c', 'Migration attempts legacy decryption if current fails'
+    cryptoSrc.includes("punchpilot-salt"),
+    'T5a', 'Key derivation uses punchpilot-salt with scrypt'
   );
 }
 

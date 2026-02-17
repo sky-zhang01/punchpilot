@@ -103,7 +103,7 @@ const ManualTrigger: React.FC<ManualTriggerProps> = ({ onActionComplete }) => {
     setDetecting(true);
     try {
       const res = await api.getFreeeState();
-      setFreeeState(res.data.freee_state || 'unknown');
+      setFreeeState(res.data.state || 'unknown');
     } catch {
       setFreeeState('unknown');
     } finally {

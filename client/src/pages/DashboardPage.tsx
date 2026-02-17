@@ -10,6 +10,7 @@ import {
   Spin,
   Row,
   Col,
+  Steps,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -17,11 +18,13 @@ import {
   ClockCircleOutlined,
   WarningOutlined,
   InfoCircleOutlined,
+  ForwardOutlined,
 } from '@ant-design/icons';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { fetchStatus } from '../store/statusSlice';
 import { fetchConfig } from '../store/configSlice';
 import ManualTrigger from '../components/dashboard/ManualTrigger';
+import { snakeToCamel } from '../utils/i18n-helpers';
 
 const { Title, Text } = Typography;
 
@@ -58,10 +61,16 @@ interface LogEntry {
   executed_at?: string;
   action_type?: string;
   status?: string;
-  trigger?: string;
+  trigger_type?: string;
   duration?: number | string;
   company_name?: string;
   company_id?: string;
+}
+
+interface PunchTime {
+  type: string;   // 'checkin' | 'break_start' | 'break_end' | 'checkout'
+  time: string;   // 'HH:MM'
+  datetime: string;
 }
 
 const DashboardPage: React.FC = () => {
@@ -78,12 +87,29 @@ const DashboardPage: React.FC = () => {
     dispatch(fetchStatus());
   }, [dispatch]);
 
-  // Fetch status and config on mount, auto-refresh every 30 seconds
+  // Fetch status and config on mount, visibility-aware auto-refresh every 30 seconds.
+  // Pauses polling when the browser tab is hidden to save resources (Plan E optimization).
   useEffect(() => {
     dispatch(fetchConfig());
     loadStatus();
-    const interval = setInterval(loadStatus, 30000);
-    return () => clearInterval(interval);
+    let interval: ReturnType<typeof setInterval> | null = setInterval(loadStatus, 30000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        // Tab hidden → stop polling
+        if (interval) { clearInterval(interval); interval = null; }
+      } else {
+        // Tab visible → refresh immediately + restart polling
+        loadStatus();
+        if (!interval) { interval = setInterval(loadStatus, 30000); }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      if (interval) clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [dispatch, loadStatus]);
 
   // Browser mode disabled — only check OAuth credentials
@@ -105,7 +131,7 @@ const DashboardPage: React.FC = () => {
       title: t('table.action'),
       dataIndex: 'action_type',
       key: 'action',
-      render: (val: string) => t(`actions.${val?.replace('_', '')}`),
+      render: (val: string) => t(`actions.${snakeToCamel(val || '')}`),
     },
     {
       title: t('table.status'),
@@ -122,10 +148,10 @@ const DashboardPage: React.FC = () => {
     },
     {
       title: t('table.trigger'),
-      dataIndex: 'trigger',
+      dataIndex: 'trigger_type',
       key: 'trigger',
       render: (val: string) => (
-        <Tag bordered={false}>{t(`status.${val}`)}</Tag>
+        <Tag bordered={false}>{t(`status.${val || 'unknown'}`)}</Tag>
       ),
     },
     {
@@ -188,10 +214,18 @@ const DashboardPage: React.FC = () => {
             {/* Next action info */}
             {statusData.next_action ? (
               <Alert
-                message={t('dashboard.nextAction', {
-                  action: t(`actions.${statusData.next_action.action_type?.replace('_', '')}`),
-                  time: statusData.next_action.time,
-                })}
+                message={
+                  statusData.next_action.mode === 'random'
+                    ? t('dashboard.nextActionRandom', {
+                        action: t(`actions.${snakeToCamel(statusData.next_action.action_type || '')}`),
+                        start: statusData.next_action.window_start,
+                        end: statusData.next_action.window_end,
+                      })
+                    : t('dashboard.nextAction', {
+                        action: t(`actions.${snakeToCamel(statusData.next_action.action_type || '')}`),
+                        time: statusData.next_action.time,
+                      })
+                }
                 type="info"
                 showIcon
                 icon={<ClockCircleOutlined />}
@@ -223,6 +257,142 @@ const DashboardPage: React.FC = () => {
           </Space>
         ) : null}
       </Card>
+
+      {/* Today's punch progress */}
+      {statusData && (() => {
+        const isHoliday = statusData.is_holiday;
+        const isDisabled = detectedState === 'disabled';
+        const skippedSet = new Set<string>(statusData.skipped_actions || []);
+        const punchTimes: PunchTime[] = statusData.today_punch_times || [];
+
+        if (isHoliday || isDisabled) {
+          return (
+            <Card size="small">
+              <Text type="secondary">
+                {isHoliday ? t('analysis.holiday') : t('analysis.disabled')}
+              </Text>
+            </Card>
+          );
+        }
+
+        // Build log map for fallback (mock mode / no freee time_clocks)
+        const logs: LogEntry[] = statusData.today_logs || [];
+        const logMap: Record<string, LogEntry> = {};
+        for (const log of logs) {
+          const at = log.action_type || '';
+          if (!logMap[at] || log.status === 'success') {
+            logMap[at] = log;
+          }
+        }
+
+        // When freee time_clocks data is available, use it as primary source.
+        // Otherwise fall back to logs + detected state (mock mode, API unavailable).
+        const hasPunchData = punchTimes.length > 0;
+
+        // Build dynamic step list
+        const punchSteps: string[] = hasPunchData
+          ? punchTimes.map(pt => pt.type)                     // from freee records
+          : ['checkin', 'break_start', 'break_end', 'checkout']; // default 4-step
+
+        // Append pending steps based on current state
+        if (hasPunchData) {
+          const lastType = punchTimes[punchTimes.length - 1].type;
+          if (detectedState === 'working' || lastType === 'break_end' || lastType === 'checkin') {
+            punchSteps.push('checkout');
+          } else if (detectedState === 'on_break' || lastType === 'break_start') {
+            punchSteps.push('break_end', 'checkout');
+          }
+          // checked_out → nothing to append
+        }
+
+        // Determine completed steps
+        // With freee data: completed = index < punchTimes.length (1:1 mapping)
+        // Without freee data: infer from logs + state (fallback)
+        const completedByState = new Set<string>();
+        if (!hasPunchData) {
+          if (['working', 'on_break', 'checked_out'].includes(detectedState)) completedByState.add('checkin');
+          if (['on_break', 'checked_out'].includes(detectedState)) completedByState.add('break_start');
+          if (detectedState === 'checked_out') { completedByState.add('break_end'); completedByState.add('checkout'); }
+          if (logMap['checkout']?.status === 'success') { completedByState.add('checkin'); completedByState.add('break_start'); completedByState.add('break_end'); }
+          if (logMap['break_end']?.status === 'success') { completedByState.add('checkin'); completedByState.add('break_start'); }
+          if (logMap['break_start']?.status === 'success') { completedByState.add('checkin'); }
+        }
+
+        const isStepDone = (step: string, i: number) => {
+          if (hasPunchData) return i < punchTimes.length;
+          return logMap[step]?.status === 'success' || completedByState.has(step);
+        };
+
+        // Check if ANY step has actual evidence of completion (log/state)
+        // If so, remaining skips are stale (user intervened manually)
+        const hasAnyEvidence = punchSteps.some((s) => logMap[s]?.status === 'success' || completedByState.has(s));
+        // If no evidence at all and everything skipped, treat skips as final
+        const allSkippedNoEvidence = !hasAnyEvidence && skippedSet.size >= 4;
+
+        let currentStep = 0;
+        for (let i = 0; i < punchSteps.length; i++) {
+          const step = punchSteps[i];
+          const done = isStepDone(step, i);
+          const isSkipFinal = allSkippedNoEvidence && skippedSet.has(step);
+          if (done || isSkipFinal) currentStep = i + 1;
+          else break;
+        }
+
+        return (
+          <Card
+            title={<Title level={5} style={{ margin: 0 }}>{t('dashboard.punchProgress')}</Title>}
+            size="small"
+          >
+            <Steps
+              current={currentStep}
+              size="small"
+              items={punchSteps.map((step, i) => {
+                const done = isStepDone(step, i);
+                const freeTime = hasPunchData && i < punchTimes.length ? punchTimes[i].time : undefined;
+                const log = logMap[step];
+                // Only show skip icon when ALL steps were skipped with no manual intervention
+                const isSkipped = allSkippedNoEvidence && !done && skippedSet.has(step);
+
+                // Step label: append number when the same type appears more than once
+                const sameTypeBefore = punchSteps.slice(0, i).filter(s => s === step).length;
+                const sameTypeTotal = punchSteps.filter(s => s === step).length;
+                const needsNumber = sameTypeTotal > 1 && ['break_start', 'break_end'].includes(step);
+                const title = t(`actions.${snakeToCamel(step)}`) + (needsNumber ? ` ${sameTypeBefore + 1}` : '');
+
+                let status: 'wait' | 'process' | 'finish' | 'error' = done ? 'finish' : 'wait';
+                let icon: React.ReactNode | undefined;
+                let description: string | undefined;
+
+                if (freeTime) {
+                  description = freeTime;
+                } else if (done && log?.status === 'success') {
+                  const time = log.executed_at?.split(' ')[1];
+                  description = time || undefined;
+                } else if (!done && log?.status === 'failure') {
+                  status = 'error';
+                  const time = log.executed_at?.split(' ')[1];
+                  description = time || undefined;
+                } else if (done && completedByState.has(step) && !skippedSet.has(step)) {
+                  description = t('status.detected');
+                }
+
+                if (isSkipped) {
+                  status = 'finish';
+                  icon = <ForwardOutlined style={{ color: '#faad14' }} />;
+                  description = t('status.skipped');
+                }
+
+                // Current in-progress step
+                if (!done && !isSkipped && i === currentStep) {
+                  status = 'process';
+                }
+
+                return { title, status, description, icon };
+              })}
+            />
+          </Card>
+        );
+      })()}
 
       {/* Manual trigger */}
       <ManualTrigger onActionComplete={loadStatus} />
