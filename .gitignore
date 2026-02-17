@@ -34,6 +34,7 @@ coverage/
 # Tool caches
 .claude/
 .scannerwork/
+zap.yaml
 
 # Legacy config (not used by GUI mode)
 config.json

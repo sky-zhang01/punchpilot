@@ -93,6 +93,7 @@ const zh = {
     windowPassed: '{{action}} 已跳过 - 计划窗口已过。',
     lateStart: '基于服务启动时间，部分自动打卡操作已跳过。',
     unknown: '无法确定当前考勤状态。',
+    retrying: '正在重试 {{attempt}}/{{max}}...',
   },
 
   // Actions

@@ -84,8 +84,9 @@ export class FreeeApiClient {
 
   /**
    * Make an authenticated API request.
+   * On 401, forces a token refresh and retries once before failing.
    */
-  async apiRequest(method, path, body = null) {
+  async apiRequest(method, path, body = null, _retry = false) {
     const token = await this.ensureValidToken();
 
     const options = {
@@ -109,6 +110,16 @@ export class FreeeApiClient {
       const errBody = await response.text();
       console.error(chalk.red(`[API] ${method} ${path} → ${response.status}: ${errBody.substring(0, 300)}`));
 
+      // On 401 (first attempt only): force token refresh and retry once.
+      // This handles cases where the stored token is invalidated server-side
+      // (e.g., revoked, or stale after Docker rebuild) but the local expiry
+      // timestamp hasn't passed yet.
+      if (response.status === 401 && !_retry) {
+        console.log(chalk.yellow('[API] 401 received, forcing token refresh and retrying...'));
+        this.forceTokenRefresh();
+        return this.apiRequest(method, path, body, true);
+      }
+
       // Parse freee error structure for better error messages
       let msg = errBody;
       try {
@@ -123,6 +134,13 @@ export class FreeeApiClient {
     }
 
     return response.json();
+  }
+
+  /**
+   * Force the next ensureValidToken() call to refresh by expiring the cached timestamp.
+   */
+  forceTokenRefresh() {
+    setSetting('oauth_token_expires_at', '0');
   }
 
   /**

@@ -93,6 +93,7 @@ const ja = {
     windowPassed: '{{action}} はスキップされました - 予定ウィンドウが過ぎました。',
     lateStart: '起動時刻により、一部の打刻アクションがスキップされました。',
     unknown: '現在の勤怠状態を判定できませんでした。',
+    retrying: 'リトライ中 {{attempt}}/{{max}}...',
   },
 
   // Actions
