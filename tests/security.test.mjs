@@ -282,25 +282,26 @@ describe('v0.4.2: Async Batch Task Implementation', () => {
   });
 });
 
-describe('v0.4.2: Version Consistency', () => {
-  it('UT-VER-01: package.json version is 0.4.2', () => {
-    const pkg = JSON.parse(readSrc('package.json'));
-    expect(pkg.version).toBe('0.4.2');
+describe('Version Consistency', () => {
+  const expectedVersion = JSON.parse(readSrc('package.json')).version;
+
+  it('UT-VER-01: package.json version is defined', () => {
+    expect(expectedVersion).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
-  it('UT-VER-02: client/package.json version is 0.4.2', () => {
+  it('UT-VER-02: client/package.json version matches root', () => {
     const pkg = JSON.parse(readSrc('client/package.json'));
-    expect(pkg.version).toBe('0.4.2');
+    expect(pkg.version).toBe(expectedVersion);
   });
 
-  it('UT-VER-03: Dockerfile has version label 0.4.2', () => {
+  it('UT-VER-03: Dockerfile has matching version label', () => {
     const dockerfile = readSrc('Dockerfile');
-    expect(dockerfile).toContain('0.4.2');
+    expect(dockerfile).toContain(expectedVersion);
   });
 
-  it('UT-VER-04: CHANGELOG.md has [0.4.2] section', () => {
+  it('UT-VER-04: CHANGELOG.md has matching version section', () => {
     const changelog = readSrc('CHANGELOG.md');
-    expect(changelog).toContain('[0.4.2]');
+    expect(changelog).toContain(`[${expectedVersion}]`);
   });
 });
 
