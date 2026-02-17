@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - **COEP**: Add `Cross-Origin-Embedder-Policy: credentialless` header
+- **COOP removed**: Remove `Cross-Origin-Opener-Policy: same-origin` (added in v0.4.4) — it severs `window.opener` between OAuth callback popups and the main window, breaking the postMessage-based auto-refresh flow
+
+### Added
+- **RESET_DB**: New `RESET_DB=true` env var to reset database on container start (re-initializes with default admin/admin)
 
 ### Changed
 - **Docker multi-stage build**: Reduce image size from ~4.2GB to ~2.5GB (Chromium-only, no build tools in runtime)
