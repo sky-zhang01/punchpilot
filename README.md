@@ -7,6 +7,9 @@ Smart attendance automation for [freee HR](https://www.freee.co.jp/hr/). Runs as
 ## What it does
 
 - **Auto clock-in/out** on a configurable schedule, skipping weekends and holidays (JP/CN)
+- **Manual trigger** — one-click clock-in, clock-out, break start, and break end from the dashboard
+- **Multi-break support** — tracks unlimited break cycles per day; dashboard and calendar display each break pair dynamically
+- **Real-time punch status** — dashboard shows actual punch times from freee, with live progress tracking
 - **Batch attendance correction** for missed days with one click
 - **Leave requests** — submit, track, and cancel paid holidays, special holidays, overtime, and absences
 - **Batch operations** — bulk leave requests, bulk withdrawal, and bulk approval/rejection
