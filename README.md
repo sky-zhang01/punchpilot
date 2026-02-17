@@ -62,7 +62,7 @@ On first login, use the default credentials (`admin` / `admin`). You'll be promp
                      └────────────────────────────────────┘
 ```
 
-**Tech stack**: Node.js, Express, React, Ant Design, Playwright, SQLite, Docker
+**Tech stack**: Node.js, Express 5, React 19, Ant Design 6, Vite 7, Playwright, SQLite, Docker
 
 ## Batch Attendance Strategy
 
@@ -82,7 +82,8 @@ Once a month, PunchPilot detects which strategy works for your company and cache
 - **Encryption**: AES-256-GCM for all stored credentials (freee password, OAuth tokens); key derived via scrypt
 - **Key isolation**: Encryption key in Docker named volume, physically separate from data bind mount
 - **Auth hardening**: bcrypt password hashing, forced password change on first login, session tokens via CSPRNG, login rate limiting (10/15min)
-- **Security headers**: CSP, HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff
+- **Security headers**: CSP (with form-action, base-uri), HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff, Permissions-Policy, COOP, CORP
+- **Static caching**: Hashed assets (1 year immutable), favicon (1 day), index.html (no-cache)
 - **Non-root**: Container drops privileges via `PUID`/`PGID` env vars (default 1000, set to 568 for TrueNAS)
 - **No external calls**: All data stays between you and freee's servers
 - **Sanitized logs**: No tokens, passwords, or PII in server logs or client error responses

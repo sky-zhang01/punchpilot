@@ -62,7 +62,7 @@ open http://localhost:8681
                      └─────────────────────────────────────┘
 ```
 
-**技術スタック**：Node.js、Express、React、Ant Design、Playwright、SQLite、Docker
+**技術スタック**：Node.js、Express 5、React 19、Ant Design 6、Vite 7、Playwright、SQLite、Docker
 
 ## 一括勤怠修正の戦略
 
@@ -82,7 +82,8 @@ open http://localhost:8681
 - **暗号化**：すべての認証情報（freee パスワード、OAuth トークン）を AES-256-GCM で暗号化；鍵は scrypt で導出
 - **鍵の分離**：暗号化キーは Docker 名前付きボリュームに格納し、データのバインドマウントと物理的に分離
 - **認証強化**：bcrypt パスワードハッシュ、初回ログイン時パスワード変更強制、CSPRNG セッショントークン、ログインレート制限（10回/15分）
-- **セキュリティヘッダー**：CSP、HSTS、X-Frame-Options DENY、X-Content-Type-Options nosniff
+- **セキュリティヘッダー**：CSP（form-action、base-uri 含む）、HSTS、X-Frame-Options DENY、X-Content-Type-Options nosniff、Permissions-Policy、COOP、CORP
+- **静的キャッシュ**：ハッシュ化資産（1年イミュータブル）、favicon（1日）、index.html（キャッシュなし）
 - **非 root 実行**：`PUID`/`PGID` 環境変数で権限降格して実行（デフォルト 1000、TrueNAS は 568）
 - **外部通信なし**：すべてのデータはユーザーと freee サーバー間のみで通信
 - **ログの無害化**：サーバーログやクライアントエラーレスポンスにトークン、パスワード、個人情報を含まない
