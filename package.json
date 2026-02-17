@@ -1,6 +1,6 @@
 {
   "name": "punchpilot",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Smart attendance automation for freee HR - auto clock-in/out with Web GUI and intelligent scheduling",
   "main": "server/server.js",
   "type": "module",

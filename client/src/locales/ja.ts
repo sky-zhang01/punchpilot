@@ -73,10 +73,12 @@ const ja = {
     skipped: 'スキップ項目',
     credentialWarning: '勤怠サービスの認証情報が未設定です。設定画面で設定するか、テスト用にモックモードを有効にしてください。',
     nextAction: '次のアクション：{{action}}（{{time}}）',
+    nextActionRandom: '次のアクション：{{action}}（ランダム {{start}}~{{end}}）',
     allDone: '本日の打刻はすべて完了しました',
     autoOff: '自動打刻がOFFです。設定画面でONにするか、下のボタンで手動実行してください。',
     todayLog: '本日のログ',
     noActions: '本日の実行履歴はありません',
+    punchProgress: '本日の打刻進捗',
   },
 
   // Startup Analysis (user-friendly messages)
@@ -132,6 +134,8 @@ const ja = {
     manual: '手動',
     scheduled: 'スケジュール',
     batch: '一括',
+    unknown: '不明',
+    detected: '検出済',
   },
 
   // Manual Trigger
@@ -302,10 +306,12 @@ const ja = {
     legendSelected: '選択中',
     legendFreee: 'freee記録',
     legendMissing: '打刻漏れ',
+    refresh: '更新',
     break: '休憩',
     sun: '日',
     sat: '土',
     workMins: '勤務時間',
+    inProgress: '出勤中',
     monthlySummaryTitle: '月次サマリー',
     summaryWorkDays: '労働日数',
     summaryTotalWork: '総勤務時間',

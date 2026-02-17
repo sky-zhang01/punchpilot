@@ -303,8 +303,9 @@ class FreeeBot {
     await this.page.waitForTimeout(3000);
 
     // Wait for the form to render (SPA React rendering) — retry with exponential backoff
-    // Note: freee updated their selector from #approval-request-date-input to #approval-request-fields-date
-    const dateInput = this.page.locator('#approval-request-fields-date');
+    // freee uses #approval-request-date-input for the date field (role="combobox" text input).
+    // Try both selectors for forward-compatibility in case freee changes the ID again.
+    const dateInput = this.page.locator('#approval-request-date-input, #approval-request-fields-date').first();
     let formLoaded = false;
     for (let attempt = 0; attempt < 5; attempt++) {
       if ((await dateInput.count()) > 0) {

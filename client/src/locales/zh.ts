@@ -73,10 +73,12 @@ const zh = {
     skipped: '已跳过的步骤',
     credentialWarning: '考勤服务凭据未配置。请前往设置进行配置，或启用模拟模式进行测试。',
     nextAction: '下一步：{{action}} 于 {{time}}',
+    nextActionRandom: '下一步：{{action}}（随机窗口 {{start}}~{{end}}）',
     allDone: '今日打卡已全部完成',
     autoOff: '自动打卡已关闭。请在设置中开启，或使用下方手动触发。',
     todayLog: '今日日志',
     noActions: '今日暂无执行记录',
+    punchProgress: '今日打卡进度',
   },
 
   // Startup Analysis (user-friendly messages)
@@ -132,6 +134,8 @@ const zh = {
     manual: '手动',
     scheduled: '计划',
     batch: '批量',
+    unknown: '未知',
+    detected: '已检测',
   },
 
   // Manual Trigger
@@ -302,10 +306,12 @@ const zh = {
     legendSelected: '已选',
     legendFreee: 'freee 记录',
     legendMissing: '缺勤未打卡',
+    refresh: '刷新',
     break: '休息',
     sun: '日',
     sat: '六',
     workMins: '工作时间',
+    inProgress: '出勤中',
     monthlySummaryTitle: '月度统计',
     summaryWorkDays: '工作天数',
     summaryTotalWork: '总工作时长',
