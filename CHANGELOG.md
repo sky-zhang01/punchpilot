@@ -8,7 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.5] - 2026-02-18
 
 ### Security
-- **CSP nonce**: Replace `style-src 'unsafe-inline'` with per-request nonce for antd CSS-in-JS
 - **COEP**: Add `Cross-Origin-Embedder-Policy: credentialless` header
 
 ### Changed
