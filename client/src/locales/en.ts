@@ -93,6 +93,7 @@ const en = {
     windowPassed: '{{action}} was skipped - the scheduled window has passed.',
     lateStart: 'Based on service start time, some scheduled actions were skipped.',
     unknown: 'Current attendance state could not be determined.',
+    retrying: 'Retrying {{attempt}}/{{max}}...',
   },
 
   // Actions
