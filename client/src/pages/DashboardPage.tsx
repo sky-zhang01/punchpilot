@@ -115,8 +115,18 @@ const DashboardPage: React.FC = () => {
   // Browser mode disabled — only check OAuth credentials
   const hasCredentials = oauthConfigured;
 
-  // Build the state tag color from startup_analysis.state
-  const detectedState = statusData?.startup_analysis?.state || 'unknown';
+  // Derive actual state: prefer freee time_clocks data, fall back to startup_analysis
+  const punchTimesRaw: PunchTime[] = statusData?.today_punch_times || [];
+  const derivedState = (() => {
+    if (punchTimesRaw.length > 0) {
+      const lastType = punchTimesRaw[punchTimesRaw.length - 1].type;
+      if (lastType === 'checkout') return 'checked_out';
+      if (lastType === 'break_start') return 'on_break';
+      if (lastType === 'break_end' || lastType === 'checkin') return 'working';
+    }
+    return statusData?.startup_analysis?.state || 'unknown';
+  })();
+  const detectedState = derivedState;
   const stateColor = STATE_COLORS[detectedState] || STATE_COLORS.unknown;
 
   // Table columns for today's log
@@ -263,7 +273,7 @@ const DashboardPage: React.FC = () => {
         const isHoliday = statusData.is_holiday;
         const isDisabled = detectedState === 'disabled';
         const skippedSet = new Set<string>(statusData.skipped_actions || []);
-        const punchTimes: PunchTime[] = statusData.today_punch_times || [];
+        const punchTimes: PunchTime[] = punchTimesRaw;
 
         if (isHoliday || isDisabled) {
           return (
