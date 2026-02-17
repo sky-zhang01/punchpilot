@@ -5,18 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.4] - 2026-02-17
+## [0.4.4] - 2026-02-18
 
 ### Changed
-- Upgrade React 18→19 + @types/react 18→19 + @types/react-dom 18→19
-- Upgrade express 4→5 (path-to-regexp v8, async error catching)
-- Upgrade antd 5→6 + @ant-design/icons 5→6 (CSS Variables default, semantic DOM, React 19 native)
+- Upgrade Express 4→5, React 18→19, Ant Design 5→6, Vite 6→7, vitest 2→4, and all sub-dependencies
 - Upgrade react-router-dom 6 → react-router 7 (package consolidation)
-- Upgrade i18next 23→25 + react-i18next 15→16
-- Upgrade node-cron 3→4
-- Upgrade better-sqlite3 11→12
-- Upgrade vite 6→7 + @vitejs/plugin-react 4→5
-- Align client vitest v2→v4 to match root
+
+### Security
+- Add `form-action 'self'` and `base-uri 'self'` to CSP
+- Add `Permissions-Policy` header (disable geolocation, camera, microphone, USB, payment)
+- Add `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Resource-Policy: same-origin`
+- Static asset caching: hashed files 1 year immutable, favicon 1 day, index.html no-cache
+
+### Fixed
+- API token auto-recovery on 401 (handles token invalidation after Docker rebuild)
+- Scheduler retries state detection up to 3 times on unknown state instead of permanently skipping
+- Dashboard analysis reason now displays in user's locale instead of raw English
 
 ## [0.4.3] - 2026-02-17
 
