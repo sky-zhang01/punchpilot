@@ -115,9 +115,13 @@ class Scheduler {
   }
 
   /**
-   * Smart startup: detect state and decide which actions to run
+   * Smart startup: detect state and decide which actions to run.
+   * If state is unknown, retries up to 3 times with 30s delay (token refresh may resolve it).
    */
-  async smartSchedule() {
+  async smartSchedule(retryCount = 0) {
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY_MS = 30_000; // 30 seconds
+
     const currentState = await detectCurrentState();
     const plan = determineActionsForToday(currentState, this.todaySchedule);
 
@@ -130,6 +134,22 @@ class Scheduler {
     };
 
     console.log(`[Scheduler] State: ${currentState} -> ${plan.reason}`);
+
+    // If state is unknown and we haven't exhausted retries, schedule a retry.
+    // This handles transient failures like expired tokens that auto-refresh on next attempt.
+    if (currentState === FREEE_STATE.UNKNOWN && retryCount < MAX_RETRIES) {
+      const attempt = retryCount + 1;
+      console.log(`[Scheduler] Unknown state — retry ${attempt}/${MAX_RETRIES} in ${RETRY_DELAY_MS / 1000}s`);
+      this.startupAnalysis.retrying = true;
+      this.startupAnalysis.retryAttempt = attempt;
+      this.startupAnalysis.retryMax = MAX_RETRIES;
+      this.timers._smartRetry = setTimeout(async () => {
+        this.skippedActions.clear();
+        this.clearTodayTimers();
+        await this.smartSchedule(attempt);
+      }, RETRY_DELAY_MS);
+      return;
+    }
 
     // Mark skipped actions
     for (const act of plan.skip) {

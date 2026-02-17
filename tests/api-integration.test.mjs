@@ -79,6 +79,34 @@ describe('Security Headers', () => {
     const res = await request(app).get('/api/auth/status');
     expect(res.headers['referrer-policy']).toBe('strict-origin-when-cross-origin');
   });
+
+  it('UT-SEC-08: CSP includes form-action self', async () => {
+    const res = await request(app).get('/api/auth/status');
+    expect(res.headers['content-security-policy']).toContain("form-action 'self'");
+  });
+
+  it('UT-SEC-09: CSP includes base-uri self', async () => {
+    const res = await request(app).get('/api/auth/status');
+    expect(res.headers['content-security-policy']).toContain("base-uri 'self'");
+  });
+
+  it('UT-SEC-10: returns Permissions-Policy header', async () => {
+    const res = await request(app).get('/api/auth/status');
+    const pp = res.headers['permissions-policy'];
+    expect(pp).toBeDefined();
+    expect(pp).toContain('geolocation=()');
+    expect(pp).toContain('camera=()');
+  });
+
+  it('UT-SEC-11: returns Cross-Origin-Opener-Policy: same-origin', async () => {
+    const res = await request(app).get('/api/auth/status');
+    expect(res.headers['cross-origin-opener-policy']).toBe('same-origin');
+  });
+
+  it('UT-SEC-12: returns Cross-Origin-Resource-Policy: same-origin', async () => {
+    const res = await request(app).get('/api/auth/status');
+    expect(res.headers['cross-origin-resource-policy']).toBe('same-origin');
+  });
 });
 
 describe('HSTS Header', () => {
