@@ -29,7 +29,10 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'");
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'");
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), usb=(), payment=()');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   if (req.protocol === 'https') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
@@ -55,7 +58,7 @@ const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 const RATE_LIMIT_MAX = 10; // max 10 attempts per window
 
 function loginRateLimiter(req, res, next) {
-  const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
   const now = Date.now();
   const entry = loginAttempts.get(ip);
 
@@ -128,11 +131,23 @@ app.use('/screenshots', express.static(screenshotsDir));
 
 // Serve React SPA (built files)
 const clientDist = path.resolve(__dirname, '..', 'client', 'dist');
-app.use(express.static(clientDist));
 
-// SPA fallback - serve index.html for all non-API routes
-app.get('*', (req, res) => {
+// Hashed assets (JS/CSS) — long-term cache (Vite content-hash in filenames)
+app.use('/assets', express.static(path.join(clientDist, 'assets'), {
+  maxAge: '1y',
+  immutable: true,
+}));
+
+// Other static files (favicon, images) — short-term cache
+app.use(express.static(clientDist, {
+  maxAge: '1d',
+  index: false,
+}));
+
+// SPA fallback - serve index.html for all non-API routes (no cache)
+app.get('/{*splat}', (req, res) => {
   if (!req.path.startsWith('/api/') && !req.path.startsWith('/screenshots/')) {
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.sendFile(path.join(clientDist, 'index.html'));
   } else {
     res.status(404).json({ error: 'Not found' });

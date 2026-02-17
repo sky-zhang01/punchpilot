@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - 2026-02-18
+
+### Changed
+- Upgrade Express 4→5, React 18→19, Ant Design 5→6, Vite 6→7, vitest 2→4, and all sub-dependencies
+- Upgrade react-router-dom 6 → react-router 7 (package consolidation)
+
+### Security
+- Add `form-action 'self'` and `base-uri 'self'` to CSP
+- Add `Permissions-Policy` header (disable geolocation, camera, microphone, USB, payment)
+- Add `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Resource-Policy: same-origin`
+- Static asset caching: hashed files 1 year immutable, favicon 1 day, index.html no-cache
+
+### Fixed
+- API token auto-recovery on 401 (handles token invalidation after Docker rebuild)
+- Scheduler retries state detection up to 3 times on unknown state instead of permanently skipping
+- Dashboard analysis reason now displays in user's locale instead of raw English
+
 ## [0.4.3] - 2026-02-17
 
 ### Added

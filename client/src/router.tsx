@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router';
 import { useAppSelector, useAppDispatch } from './store/hooks';
 import { checkAuthStatus } from './store/authSlice';
 import { Spin } from 'antd';

@@ -50,6 +50,19 @@ const STATE_LABEL_MAP: Record<string, string> = {
   unknown: 'manualTrigger.stateUnknown',
 };
 
+// Map state keys to localized analysis reason i18n keys.
+// The backend returns English reason strings; the frontend uses these
+// i18n keys instead so that the dashboard displays in the user's locale.
+const STATE_REASON_MAP: Record<string, string> = {
+  not_checked_in: 'analysis.notCheckedIn',
+  working: 'analysis.working',
+  on_break: 'analysis.onBreak',
+  checked_out: 'analysis.checkedOut',
+  holiday: 'analysis.holiday',
+  disabled: 'analysis.disabled',
+  unknown: 'analysis.unknown',
+};
+
 // Color mapping for log entry status
 const LOG_STATUS_COLORS: Record<string, string> = {
   success: '#52c41a',
@@ -214,10 +227,18 @@ const DashboardPage: React.FC = () => {
               </Col>
             </Row>
 
-            {/* Analysis reason */}
-            {statusData.startup_analysis?.reason && (
+            {/* Analysis reason — use localized i18n string based on state */}
+            {statusData.startup_analysis?.state && (
               <Text type="secondary" style={{ display: 'block' }}>
-                {statusData.startup_analysis.reason}
+                {t(STATE_REASON_MAP[statusData.startup_analysis.state] || 'analysis.unknown')}
+                {statusData.startup_analysis.retrying && (
+                  <Text type="warning" style={{ marginLeft: 8 }}>
+                    ({t('analysis.retrying', {
+                      attempt: statusData.startup_analysis.retryAttempt,
+                      max: statusData.startup_analysis.retryMax,
+                    })})
+                  </Text>
+                )}
               </Text>
             )}
 
