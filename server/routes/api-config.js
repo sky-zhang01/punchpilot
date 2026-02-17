@@ -603,6 +603,15 @@ router.put('/oauth-select-company', async (req, res) => {
 
   console.log(`[OAuth] Selected company: ${selected.name} (ID: ${cid})`);
 
+  // Re-initialize scheduler so it re-detects state for the new company
+  // Without this, startup_analysis retains the previous company's cached state
+  try {
+    await scheduler.initialize();
+    console.log('[OAuth] Scheduler re-initialized for new company');
+  } catch (e) {
+    console.warn('[OAuth] Scheduler re-init failed:', e.message);
+  }
+
   res.json({
     success: true,
     company_id: cid,

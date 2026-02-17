@@ -51,7 +51,8 @@ router.get('/', async (req, res) => {
   const credentialsOk = hasCredentials();
   const freeeConfigured = getSetting('freee_configured') === '1';
   const todaySchedule = scheduler.getTodaySchedule();
-  const todayLogs = getLogsByDate(today);
+  const currentCompanyId = getSetting('oauth_company_id') || '';
+  const todayLogs = getLogsByDate(today, currentCompanyId);
   const configs = getAllConfig();
   const isHoliday = await isHolidayOrWeekend();
   const startupAnalysis = scheduler.getStartupAnalysis();
