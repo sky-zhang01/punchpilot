@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Form, Input, Button, Typography, Alert, Dropdown, Space } from 'antd';
 import { GlobalOutlined, LoadingOutlined, WarningOutlined } from '@ant-design/icons';

@@ -1,6 +1,6 @@
 {
   "name": "punchpilot",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Smart attendance automation for freee HR - auto clock-in/out with Web GUI and intelligent scheduling",
   "main": "server/server.js",
   "type": "module",
@@ -16,12 +16,12 @@
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^11.7.0",
+    "better-sqlite3": "^12.6.2",
     "chalk": "^5.6.2",
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.3.1",
-    "express": "^4.21.0",
-    "node-cron": "^3.0.3",
+    "express": "^5.2.1",
+    "node-cron": "^4.2.1",
     "playwright": "^1.58.2"
   },
   "keywords": [
