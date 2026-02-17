@@ -62,7 +62,7 @@ open http://localhost:8681
                      └────────────────────────────────────┘
 ```
 
-**技术栈**：Node.js、Express、React、Ant Design、Playwright、SQLite、Docker
+**技术栈**：Node.js、Express 5、React 19、Ant Design 6、Vite 7、Playwright、SQLite、Docker
 
 ## 批量补卡策略
 
@@ -82,7 +82,8 @@ open http://localhost:8681
 - **加密存储**：所有凭证（freee 密码、OAuth 令牌）均使用 AES-256-GCM 加密；密钥通过 scrypt 派生
 - **密钥隔离**：加密密钥存储在 Docker 命名卷中，与数据绑定挂载物理分离
 - **认证加固**：bcrypt 密码哈希、首次登录强制改密、CSPRNG 会话令牌、登录频率限制（10次/15分钟）
-- **安全头**：CSP、HSTS、X-Frame-Options DENY、X-Content-Type-Options nosniff
+- **安全头**：CSP（含 form-action、base-uri）、HSTS、X-Frame-Options DENY、X-Content-Type-Options nosniff、Permissions-Policy、COOP、CORP
+- **静态缓存**：哈希资源（1年不可变）、favicon（1天）、index.html（不缓存）
 - **非 root 运行**：通过 `PUID`/`PGID` 环境变量降权运行（默认 1000，TrueNAS 设为 568）
 - **无外部调用**：所有数据仅在你和 freee 服务器之间传输
 - **日志脱敏**：服务端日志和客户端错误响应中不包含令牌、密码或个人信息
