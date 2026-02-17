@@ -132,6 +132,7 @@ router.get('/', (req, res) => {
   const freeeUsername = decrypt(getSetting('freee_username_encrypted') || '') || '';
   const connectionMode = getSetting('connection_mode') || 'api';
   const oauthConfigured = getSetting('oauth_configured') === '1';
+  const oauthCompanyId = getSetting('oauth_company_id') || '';
   const holidaySkipCountries = getSetting('holiday_skip_countries') || 'jp';
 
   res.json({
@@ -141,6 +142,7 @@ router.get('/', (req, res) => {
     freee_username: freeeUsername,
     connection_mode: connectionMode,
     oauth_configured: oauthConfigured,
+    oauth_company_id: oauthCompanyId,
     holiday_skip_countries: holidaySkipCountries,
     schedules: configs,
   });

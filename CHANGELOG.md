@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Docker multi-stage build**: Reduce image size from ~4.2GB to ~2.5GB (Chromium-only, no build tools in runtime)
 
+### Fixed
+- **Dashboard stale status after company switch**: Switching OAuth company in Settings now immediately refreshes Dashboard status, punch progress, and logs for the new company (previously showed stale data from the previous company until the next 30-second poll)
+
 ## [0.4.4] - 2026-02-18
 
 ### Changed
