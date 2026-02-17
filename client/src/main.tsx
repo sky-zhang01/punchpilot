@@ -51,9 +51,13 @@ const AppWithTheme: React.FC = () => {
     return () => { i18n.off('languageChanged', handleLangChange); };
   }, []);
 
+  // Read CSP nonce from server-injected meta tag for antd's CSS-in-JS
+  const cspNonce = document.querySelector<HTMLMetaElement>('meta[name="csp-nonce"]')?.content || undefined;
+
   return (
     <ConfigProvider
       locale={antdLocale}
+      csp={cspNonce ? { nonce: cspNonce } : undefined}
       theme={{
         algorithm: isDark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         token: {
