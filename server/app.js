@@ -55,7 +55,7 @@ const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 const RATE_LIMIT_MAX = 10; // max 10 attempts per window
 
 function loginRateLimiter(req, res, next) {
-  const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
   const now = Date.now();
   const entry = loginAttempts.get(ip);
 
@@ -131,7 +131,7 @@ const clientDist = path.resolve(__dirname, '..', 'client', 'dist');
 app.use(express.static(clientDist));
 
 // SPA fallback - serve index.html for all non-API routes
-app.get('*', (req, res) => {
+app.get('/{*splat}', (req, res) => {
   if (!req.path.startsWith('/api/') && !req.path.startsWith('/screenshots/')) {
     res.sendFile(path.join(clientDist, 'index.html'));
   } else {

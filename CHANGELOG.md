@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - 2026-02-17
+
+### Changed
+- Upgrade React 18→19 + @types/react 18→19 + @types/react-dom 18→19
+- Upgrade express 4→5 (path-to-regexp v8, async error catching)
+- Upgrade antd 5→6 + @ant-design/icons 5→6 (CSS Variables default, semantic DOM, React 19 native)
+- Upgrade react-router-dom 6 → react-router 7 (package consolidation)
+- Upgrade i18next 23→25 + react-i18next 15→16
+- Upgrade node-cron 3→4
+- Upgrade better-sqlite3 11→12
+- Upgrade vite 6→7 + @vitejs/plugin-react 4→5
+- Align client vitest v2→v4 to match root
+
 ## [0.4.3] - 2026-02-17
 
 ### Added

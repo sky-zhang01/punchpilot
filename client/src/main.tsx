@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import { Provider } from 'react-redux';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter } from 'react-router';
 import { ConfigProvider, App as AntdApp, theme as antdTheme } from 'antd';
 import type { Locale } from 'antd/es/locale';
 import enUS from 'antd/es/locale/en_US';
