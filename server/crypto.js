@@ -82,7 +82,7 @@ function getEncryptionKey() {
     const secret = getAppSecret();
     // Static salt is acceptable: the secret is already 256-bit random per-installation.
     // Explicit scrypt params: N=16384, r=8, p=1 (OWASP recommended minimum).
-    _cachedKey = crypto.scryptSync(secret, 'punchpilot-salt-v2', 32, { N: 16384, r: 8, p: 1 });
+    _cachedKey = crypto.scryptSync(secret, 'punchpilot-salt', 32, { N: 16384, r: 8, p: 1 });
   }
   return _cachedKey;
 }

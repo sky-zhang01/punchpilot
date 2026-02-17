@@ -19,6 +19,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import api from '../api';
+import { snakeToCamel } from '../utils/i18n-helpers';
 
 const { RangePicker } = DatePicker;
 const { Text } = Typography;
@@ -139,7 +140,7 @@ const LogsPage: React.FC = () => {
           approval_submitted: 'approvalSubmitted',
           monthly_closing: 'monthlyClosing',
         };
-        const i18nKey = i18nKeyMap[val] || val?.replace('_', '');
+        const i18nKey = i18nKeyMap[val] || snakeToCamel(val || '');
         return (
           <Tag color={tagConfig.color}>
             {t(`actions.${i18nKey}`)}
@@ -327,7 +328,7 @@ const LogsPage: React.FC = () => {
                   approval_submitted: 'approvalSubmitted',
                   monthly_closing: 'monthlyClosing',
                 };
-                return t(`actions.${keyMap[detailLog.action_type] || detailLog.action_type?.replace('_', '')}`);
+                return t(`actions.${keyMap[detailLog.action_type] || snakeToCamel(detailLog.action_type || '')}`);
               })()}
             </Text>
             <Text>

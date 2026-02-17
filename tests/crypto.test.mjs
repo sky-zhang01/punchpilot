@@ -112,8 +112,8 @@ describe('key storage paths', () => {
     expect(cryptoSrc).toContain("const OLD_SECRET_FILE = path.resolve(__dirname, '..', 'data', '.app-secret')");
   });
 
-  it('uses punchpilot-salt-v2 for key derivation', () => {
-    expect(cryptoSrc).toContain("'punchpilot-salt-v2'");
+  it('uses punchpilot-salt for key derivation', () => {
+    expect(cryptoSrc).toContain("'punchpilot-salt'");
   });
 });
 
@@ -142,8 +142,8 @@ describe('migration logic', () => {
     expect(cryptoSrc).toContain("setSetting('freee_username', '')");
   });
 
-  it('uses punchpilot-salt-v2 for key derivation', () => {
-    expect(cryptoSrc).toContain("'punchpilot-salt-v2'");
+  it('uses punchpilot-salt for key derivation with no legacy code', () => {
+    expect(cryptoSrc).toContain("'punchpilot-salt'");
     expect(cryptoSrc).not.toContain('decryptWithLegacyKey');
   });
 

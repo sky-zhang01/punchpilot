@@ -73,10 +73,12 @@ const en = {
     skipped: 'Skipped steps',
     credentialWarning: 'Attendance service credentials not configured. Go to Settings to configure, or enable Mock Mode for testing.',
     nextAction: 'Next: {{action}} at {{time}}',
+    nextActionRandom: 'Next: {{action}} (random window {{start}}~{{end}})',
     allDone: 'All done for today',
     autoOff: 'Auto scheduling is OFF. Enable it in Settings or use manual triggers below.',
     todayLog: "Today's Log",
     noActions: 'No actions yet today',
+    punchProgress: "Today's Progress",
   },
 
   // Startup Analysis (user-friendly messages)
@@ -132,6 +134,8 @@ const en = {
     manual: 'manual',
     scheduled: 'scheduled',
     batch: 'batch',
+    unknown: 'unknown',
+    detected: 'detected',
   },
 
   // Manual Trigger
@@ -302,10 +306,12 @@ const en = {
     legendSelected: 'Selected',
     legendFreee: 'freee record',
     legendMissing: 'Missing Punch',
+    refresh: 'Refresh',
     break: 'Break',
     sun: 'Sun',
     sat: 'Sat',
     workMins: 'Work time',
+    inProgress: 'In progress',
     monthlySummaryTitle: 'Monthly Summary',
     summaryWorkDays: 'Work Days',
     summaryTotalWork: 'Total Work Time',

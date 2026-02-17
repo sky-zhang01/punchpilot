@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-02-17
+
+### Added
+- **Multi-break support**: Dashboard progress bar dynamically shows multiple break cycles (break_start/break_end pairs) from freee time_clocks data
+- **Calendar multi-break display**: Calendar today cell renders all break pairs with numbering when >1 break exists
+- **Real-time freee punch times**: Dashboard and Calendar display actual punch times from `getTodayTimeClocks()` API
+- **Dynamic step derivation**: Progress bar steps built from freee data at runtime instead of hardcoded 4-step array
+
+### Fixed
+- **Dashboard progress bar mock mode**: Added fallback logic using execution logs + state inference when freee time_clocks unavailable
+- **Skip/evidence interaction**: Scheduler skips correctly become stale after manual intervention (no false "all done" display)
+- **Defensive time sort**: `getTodayTimeClocks()` now sorts by datetime to guarantee chronological order
+
 ## [0.4.2] - 2026-02-12
 
 ### Fixed
