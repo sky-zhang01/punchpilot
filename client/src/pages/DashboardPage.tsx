@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Card,
@@ -94,11 +94,23 @@ const DashboardPage: React.FC = () => {
     autoEnabled,
     debugMode,
     oauthConfigured,
+    oauthCompanyId,
   } = useAppSelector((state) => state.config);
 
   const loadStatus = useCallback(() => {
     dispatch(fetchStatus());
   }, [dispatch]);
+
+  // Re-fetch status immediately when the active company changes (e.g. user switches
+  // companies in Settings). Without this, Dashboard shows stale data from the previous
+  // company until the next 30-second polling cycle.
+  const prevCompanyIdRef = useRef(oauthCompanyId);
+  useEffect(() => {
+    if (prevCompanyIdRef.current !== oauthCompanyId) {
+      prevCompanyIdRef.current = oauthCompanyId;
+      loadStatus();
+    }
+  }, [oauthCompanyId, loadStatus]);
 
   // Fetch status and config on mount, visibility-aware auto-refresh every 30 seconds.
   // Pauses polling when the browser tab is hidden to save resources (Plan E optimization).
