@@ -69,10 +69,24 @@ describe('Security Headers', () => {
     expect(res.headers['x-frame-options']).toBe('DENY');
   });
 
-  it('returns Content-Security-Policy', async () => {
+  it('returns Content-Security-Policy with per-request nonce', async () => {
     const res = await request(app).get('/api/auth/status');
-    expect(res.headers['content-security-policy']).toBeDefined();
-    expect(res.headers['content-security-policy']).toContain("default-src 'self'");
+    const csp = res.headers['content-security-policy'];
+    expect(csp).toBeDefined();
+    expect(csp).toContain("default-src 'self'");
+    // CSP must contain a nonce (not unsafe-inline)
+    expect(csp).toMatch(/nonce-[A-Za-z0-9+/=]+/);
+    expect(csp).not.toContain('unsafe-inline');
+  });
+
+  it('UT-SEC-13: CSP nonce is unique per request', async () => {
+    const res1 = await request(app).get('/api/auth/status');
+    const res2 = await request(app).get('/api/auth/status');
+    const nonce1 = res1.headers['content-security-policy'].match(/nonce-([A-Za-z0-9+/=]+)/)?.[1];
+    const nonce2 = res2.headers['content-security-policy'].match(/nonce-([A-Za-z0-9+/=]+)/)?.[1];
+    expect(nonce1).toBeDefined();
+    expect(nonce2).toBeDefined();
+    expect(nonce1).not.toBe(nonce2);
   });
 
   it('returns Referrer-Policy', async () => {
@@ -106,6 +120,11 @@ describe('Security Headers', () => {
   it('UT-SEC-12: returns Cross-Origin-Resource-Policy: same-origin', async () => {
     const res = await request(app).get('/api/auth/status');
     expect(res.headers['cross-origin-resource-policy']).toBe('same-origin');
+  });
+
+  it('UT-SEC-14: returns Cross-Origin-Embedder-Policy: credentialless', async () => {
+    const res = await request(app).get('/api/auth/status');
+    expect(res.headers['cross-origin-embedder-policy']).toBe('credentialless');
   });
 });
 

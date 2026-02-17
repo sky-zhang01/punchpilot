@@ -1,5 +1,7 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
+import crypto from 'crypto';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { authMiddleware } from './auth.js';
@@ -24,14 +26,19 @@ app.set('trust proxy', 1);
 // Hide framework identity
 app.disable('x-powered-by');
 
-// Security headers middleware
+// Security headers middleware — per-request CSP nonce for antd's CSS-in-JS
 app.use((req, res, next) => {
+  // Generate a unique nonce for each request (128-bit, base64)
+  const nonce = crypto.randomBytes(16).toString('base64');
+  res.locals.cspNonce = nonce;
+
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'");
+  res.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'`);
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), usb=(), payment=()');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   if (req.protocol === 'https') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -144,11 +151,22 @@ app.use(express.static(clientDist, {
   index: false,
 }));
 
-// SPA fallback - serve index.html for all non-API routes (no cache)
+// Pre-read index.html template (with __CSP_NONCE__ placeholder) at startup
+let indexHtmlTemplate = '';
+try {
+  indexHtmlTemplate = fs.readFileSync(path.join(clientDist, 'index.html'), 'utf-8');
+} catch {
+  // Template will be empty during tests (no client build); that's fine
+}
+
+// SPA fallback - inject per-request CSP nonce into index.html (no cache)
 app.get('/{*splat}', (req, res) => {
   if (!req.path.startsWith('/api/') && !req.path.startsWith('/screenshots/')) {
+    const nonce = res.locals.cspNonce || '';
+    const html = indexHtmlTemplate.replaceAll('__CSP_NONCE__', nonce);
     res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.sendFile(path.join(clientDist, 'index.html'));
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
   } else {
     res.status(404).json({ error: 'Not found' });
   }
