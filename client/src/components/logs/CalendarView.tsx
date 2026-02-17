@@ -1,14 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Calendar, Badge, Tag, Typography, Space, Tooltip, Checkbox, Popover, Button } from 'antd';
+import { ReloadOutlined } from '@ant-design/icons';
 import type { BadgeProps } from 'antd';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import api from '../../api';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import { fetchAttendance, fetchApprovalRequests, withdrawApprovalRequest, toggleDateSelection } from '../../store/attendanceSlice';
+import { fetchStatus } from '../../store/statusSlice';
 import type { AttendanceRecord, ApprovalRequest } from '../../store/attendanceSlice';
 import { notifySuccess, notifyError } from '../../utils/notify';
+import { snakeToCamel } from '../../utils/i18n-helpers';
 
 const { Text } = Typography;
 
@@ -49,6 +52,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({
   const dispatch = useAppDispatch();
   const { connectionMode, oauthConfigured, schedules, holidaySkipCountries } = useAppSelector((state) => state.config);
   const { records: attendanceRecords, selectedDates, approvalRequests } = useAppSelector((state) => state.attendance);
+  const { data: statusData } = useAppSelector((state) => state.status);
 
   const [currentDate, setCurrentDate] = useState<Dayjs>(dayjs());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -56,6 +60,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({
   const [holidayMap, setHolidayMap] = useState<Record<string, HolidayInfo[]>>({});
   const [workdayMap, setWorkdayMap] = useState<Record<string, WorkdayInfo>>({});
   const [maxHolidayYear, setMaxHolidayYear] = useState<number>(dayjs().year() + 1);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Countries selected for auto-punch skip — only these get holiday background colors
   const skipSet = new Set((holidaySkipCountries || 'jp').split(',').map(c => c.trim()).filter(Boolean));
@@ -134,15 +139,36 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalData, fetchLogs, fetchHolidays, fetchAttendanceData, refreshKey]);
 
-  // Auto-refresh attendance data every 60s so Calendar reflects auto-punch results
+  // Manual refresh handler — replaces the old 60s auto-polling (Plan E optimization).
+  // Users can click the refresh button; operation-triggered refreshes use refreshKey prop.
+  const handleManualRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        fetchAttendanceData(),
+        !externalData ? fetchLogs() : Promise.resolve(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchAttendanceData, fetchLogs, externalData]);
+
+  // Visibility-aware refresh: when the browser tab becomes visible, refresh attendance data
+  // and status (for today's punch activity detection) so the calendar shows the latest state.
   useEffect(() => {
-    if (!oauthConfigured) return;
-    const interval = setInterval(() => {
-      fetchAttendanceData();
-      if (!externalData) fetchLogs();
-    }, 60000);
-    return () => clearInterval(interval);
-  }, [oauthConfigured, fetchAttendanceData, fetchLogs, externalData]);
+    // Fetch status once on mount so todayHasPunchActivity() has data
+    dispatch(fetchStatus());
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchAttendanceData();
+        dispatch(fetchStatus());
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [fetchAttendanceData, dispatch]);
 
   // Determine calendar valid range based on actual holiday data availability
   useEffect(() => {
@@ -209,6 +235,20 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     return now.hour() > h || (now.hour() === h && now.minute() >= m);
   }, [schedules]);
 
+  // Check if today has any punch activity (from status store's detected state or local logs).
+  // freee work_records.clock_in may be null even when time_clocks already has records,
+  // so we also check the scheduler's detected state from the /api/status endpoint.
+  const todayHasPunchActivity = (): boolean => {
+    const state = statusData?.startup_analysis?.state;
+    if (state && state !== 'not_checked_in' && state !== 'unknown' && state !== 'holiday' && state !== 'disabled') {
+      return true; // freee time_clocks indicate punch activity (working, on_break, checked_out)
+    }
+    // Also check if any successful punch log exists for today (checkin/break_start/break_end/checkout)
+    const punchTypes = new Set(['checkin', 'break_start', 'break_end', 'checkout']);
+    const todayLogs = statusData?.today_logs || [];
+    return todayLogs.some((log: any) => punchTypes.has(log.action_type) && log.status === 'success');
+  };
+
   // Check if a date is a missing punch day (workday with no clock-in, not absence, not holiday, no pending/approved approval)
   // Includes today if past check-in window time and no records
   const isMissingPunch = (dateKey: string, attendance: AttendanceRecord | undefined): boolean => {
@@ -219,6 +259,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     // Skip if there's a pending or approved approval request for this date
     const approval = approvalRequests[dateKey];
     if (approval && (approval.status === 'in_progress' || approval.status === 'approved')) return false;
+    // For today: also check real-time punch activity from time_clocks / local logs.
+    // freee work_records.clock_in can be null even when the user has already punched via time_clocks.
+    if (dateKey === today && todayHasPunchActivity()) return false;
     return (
       attendance.day_pattern === 'normal_day' &&
       !attendance.clock_in &&
@@ -526,10 +569,53 @@ const CalendarView: React.FC<CalendarViewProps> = ({
           </Tooltip>
         )}
 
+        {/* Today's real-time punch times from freee time_clocks (when work_records not yet updated) */}
+        {dateKey === dayjs().format('YYYY-MM-DD') && !attendance?.clock_in && (() => {
+          const pts: { type: string; time: string }[] = statusData?.today_punch_times || [];
+          if (pts.length === 0) return null;
+          const clockIn = pts.find(p => p.type === 'checkin')?.time;
+          const clockOut = pts.find(p => p.type === 'checkout')?.time;
+          // Build break pairs from chronological time_clocks data
+          const breakPairs: { start?: string; end?: string }[] = [];
+          for (const pt of pts) {
+            if (pt.type === 'break_start') {
+              breakPairs.push({ start: pt.time });
+            } else if (pt.type === 'break_end' && breakPairs.length > 0) {
+              const last = breakPairs[breakPairs.length - 1];
+              if (!last.end) last.end = pt.time;
+            }
+          }
+          return (
+            <>
+              {clockIn && (
+                <div style={{ fontSize: 10, lineHeight: '14px', color: '#52c41a', fontWeight: 500 }}>
+                  {clockIn} - {clockOut || t('calendar.inProgress')}
+                </div>
+              )}
+              {breakPairs.map((bp, i) => (
+                <div key={i} style={{ fontSize: 9, lineHeight: '12px', color: '#8c8c8c' }}>
+                  {t('calendar.break')}{breakPairs.length > 1 ? ` ${i + 1}` : ''}: {bp.start} - {bp.end || '--:--'}
+                </div>
+              ))}
+            </>
+          );
+        })()}
+
         {/* Approval request time display (when no freee attendance record exists) */}
         {approval && !attendance?.clock_in && approval.work_records?.[0] && (
           <div style={{ fontSize: 10, lineHeight: '14px', color: '#faad14', fontWeight: 500 }}>
             {formatTime(approval.work_records[0].clock_in_at)} - {formatTime(approval.work_records[0].clock_out_at)}
+          </div>
+        )}
+
+        {/* Approval break time display (when no freee attendance record exists) */}
+        {approval && !attendance?.clock_in && approval.break_records && approval.break_records.length > 0 && (
+          <div style={{ fontSize: 9, lineHeight: '12px', color: '#d4a574' }}>
+            {approval.break_records.map((br: { clock_in_at: string | null; clock_out_at: string | null }, i: number) => (
+              <div key={i}>
+                {t('calendar.break')}: {formatTime(br.clock_in_at)} - {formatTime(br.clock_out_at)}
+              </div>
+            ))}
           </div>
         )}
 
@@ -556,7 +642,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
             {dayLogs.map((log: any, idx: number) => {
               const badgeStatus = STATUS_BADGE_MAP[log.status] || 'default';
-              const actionLabel = t(`actions.${log.action_type?.replace('_', '')}`);
+              const actionLabel = t(`actions.${snakeToCamel(log.action_type || '')}`);
               return (
                 <Badge
                   key={idx}
@@ -661,7 +747,18 @@ const CalendarView: React.FC<CalendarViewProps> = ({
 
   return (
     <div>
-      {legend}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
+        <div style={{ flex: 1 }}>{legend}</div>
+        <Tooltip title={t('calendar.refresh')}>
+          <Button
+            type="text"
+            icon={<ReloadOutlined spin={refreshing} />}
+            onClick={handleManualRefresh}
+            loading={refreshing}
+            size="small"
+          />
+        </Tooltip>
+      </div>
       <Calendar
         value={currentDate}
         onPanelChange={handlePanelChange}

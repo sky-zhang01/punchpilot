@@ -224,6 +224,57 @@ export class FreeeApiClient {
     };
   }
 
+  // Map freee clock_type back to our internal action types
+  static CLOCK_TYPE_TO_ACTION = {
+    clock_in: 'checkin',
+    clock_out: 'checkout',
+    break_begin: 'break_start',
+    break_end: 'break_end',
+  };
+
+  /**
+   * Fetch today's time_clocks records from freee.
+   * Returns an array of { type, datetime } sorted chronologically.
+   * Each entry has:
+   *   - type: 'checkin' | 'checkout' | 'break_start' | 'break_end'
+   *   - time: 'HH:MM' (local time extracted from datetime)
+   *   - datetime: full ISO datetime string from freee
+   */
+  async getTodayTimeClocks() {
+    await this.ensureUserInfo();
+    const today = todayStringInTz(); // YYYY-MM-DD
+
+    // Fetch recent time_clocks (limit to enough to cover today)
+    const data = await this.apiRequest(
+      'GET',
+      `/employees/${this.employeeId}/time_clocks?company_id=${this.companyId}&limit=100`
+    );
+
+    const records = Array.isArray(data) ? data : [];
+    const todayClocks = [];
+
+    for (const rec of records) {
+      // Each record: { id, type, date, datetime, original_datetime, note }
+      if (rec.date !== today) continue;
+
+      const action = FreeeApiClient.CLOCK_TYPE_TO_ACTION[rec.type];
+      if (!action) continue;
+
+      // Extract HH:MM from datetime (ISO format: 2026-02-17T09:51:00.000+09:00)
+      let time = '';
+      if (rec.datetime) {
+        const match = rec.datetime.match(/T(\d{2}:\d{2})/);
+        time = match ? match[1] : '';
+      }
+
+      todayClocks.push({ type: action, time, datetime: rec.datetime || '' });
+    }
+
+    // Ensure chronological order (defensive — freee may return newest-first)
+    todayClocks.sort((a, b) => a.datetime.localeCompare(b.datetime));
+    return todayClocks;
+  }
+
   /**
    * Verify the API connection by refreshing the token and calling /users/me.
    * Returns user info on success.

@@ -579,6 +579,19 @@ router.post('/batch', async (req, res) => {
       if (i > 0 && i % 10 === 0) {
         try { await client.ensureValidToken(); } catch (e) { log.warn(`Token refresh at entry ${i}: ${e.message}`); }
       }
+
+      // Pre-check: skip entries where freee already has a clock_in record
+      try {
+        const existingRecord = await client.apiRequest('GET', `/employees/${employeeId}/work_records/${entry.date}?company_id=${companyId}`);
+        if (existingRecord?.clock_in_at) {
+          results.push({ date: entry.date, success: true, method: 'skipped', reason: 'Already has clock_in in freee' });
+          log.info(`[${entry.date}] Skipped: already has clock_in in freee`);
+          continue;
+        }
+      } catch (e) {
+        log.warn(`[${entry.date}] Pre-check failed (proceeding): ${e.message}`);
+      }
+
       let succeeded = false;
       const editable = entry.is_editable !== undefined ? entry.is_editable : true;
 
@@ -646,6 +659,25 @@ router.post('/batch', async (req, res) => {
     }
 
     // === Strategy 4: Playwright Web fallback ===
+    // Pre-check web fallback entries: skip any that already have clock_in in freee
+    if (webFallbackEntries.length > 0) {
+      const filteredWebEntries = [];
+      for (const entry of webFallbackEntries) {
+        try {
+          const existingRecord = await client.apiRequest('GET', `/employees/${employeeId}/work_records/${entry.date}?company_id=${companyId}`);
+          if (existingRecord?.clock_in_at) {
+            results.push({ date: entry.date, success: true, method: 'skipped', reason: 'Already has clock_in in freee' });
+            log.info(`[${entry.date}] Web fallback skipped: already has clock_in in freee`);
+            continue;
+          }
+        } catch (e) {
+          log.warn(`[${entry.date}] Web fallback pre-check failed (proceeding): ${e.message}`);
+        }
+        filteredWebEntries.push(entry);
+      }
+      webFallbackEntries = filteredWebEntries;
+    }
+
     // For entries where all API strategies failed, try submitting via freee Web form
     if (webFallbackEntries.length > 0 && hasWebCredentials()) {
       log.info(`Strategy 4: Attempting ${webFallbackEntries.length} entries via freee Web (Playwright)...`);
