@@ -132,6 +132,7 @@ router.get('/', (req, res) => {
   const freeeUsername = decrypt(getSetting('freee_username_encrypted') || '') || '';
   const connectionMode = getSetting('connection_mode') || 'api';
   const oauthConfigured = getSetting('oauth_configured') === '1';
+  const oauthCompanyId = getSetting('oauth_company_id') || '';
   const holidaySkipCountries = getSetting('holiday_skip_countries') || 'jp';
 
   res.json({
@@ -141,6 +142,7 @@ router.get('/', (req, res) => {
     freee_username: freeeUsername,
     connection_mode: connectionMode,
     oauth_configured: oauthConfigured,
+    oauth_company_id: oauthCompanyId,
     holiday_skip_countries: holidaySkipCountries,
     schedules: configs,
   });
@@ -600,6 +602,15 @@ router.put('/oauth-select-company', async (req, res) => {
   }
 
   console.log(`[OAuth] Selected company: ${selected.name} (ID: ${cid})`);
+
+  // Re-initialize scheduler so it re-detects state for the new company
+  // Without this, startup_analysis retains the previous company's cached state
+  try {
+    await scheduler.initialize();
+    console.log('[OAuth] Scheduler re-initialized for new company');
+  } catch (e) {
+    console.warn('[OAuth] Scheduler re-init failed:', e.message);
+  }
 
   res.json({
     success: true,

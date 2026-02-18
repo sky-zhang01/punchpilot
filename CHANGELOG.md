@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - 2026-02-18
+
+### Security
+- **COEP**: Add `Cross-Origin-Embedder-Policy: credentialless` header
+- **COOP removed**: Remove `Cross-Origin-Opener-Policy: same-origin` (added in v0.4.4) — it severs `window.opener` between OAuth callback popups and the main window, breaking the postMessage-based auto-refresh flow
+
+### Added
+- **RESET_DB**: New `RESET_DB=true` env var to reset database on container start (re-initializes with default admin/admin)
+
+### Changed
+- **Smart action planning**: Redesign `determineActionsForToday()` to independently evaluate each action based on current state, punch times, and scheduled times — replaces rigid switch/case logic
+- **Japanese Labor Standards Act compliance**: Break scheduling now respects Art. 34 — skip break when expected work ≤6h (threshold: 361min), schedule when >6h
+- **Two-tier retry**: Unknown state retry upgraded from simple 3×30s to two-tier: rapid (3×30s) + pre-checkin fallback (15min before checkin window)
+- **Docker multi-stage build**: Reduce image size from ~4.2GB to ~2.5GB (Chromium-only, no build tools in runtime)
+
+### Fixed
+- **Dashboard stale status after company switch**: Switching OAuth company in Settings now immediately refreshes Dashboard status, punch progress, and logs for the new company — scheduler re-initializes to detect new company's state, and execution logs are filtered by active company (previously showed stale data from the previous company)
+- **Dashboard derivedState**: Authoritative state now derived from freee punch times (not just detectCurrentState), fixing stale "next action" display after checkout
+- **ManualTrigger consistency**: ManualTrigger reads from Redux store instead of separate API call, ensuring state consistency with Dashboard status card
+- **Plan refresh after action**: `refreshPlanForCurrentState()` re-evaluates and cancels timers for now-invalid actions after any successful punch
+
 ## [0.4.4] - 2026-02-18
 
 ### Changed

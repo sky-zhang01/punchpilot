@@ -51,24 +51,51 @@ router.get('/', async (req, res) => {
   const credentialsOk = hasCredentials();
   const freeeConfigured = getSetting('freee_configured') === '1';
   const todaySchedule = scheduler.getTodaySchedule();
-  const todayLogs = getLogsByDate(today);
+  const currentCompanyId = getSetting('oauth_company_id') || '';
+  const todayLogs = getLogsByDate(today, currentCompanyId);
   const configs = getAllConfig();
   const isHoliday = await isHolidayOrWeekend();
   const startupAnalysis = scheduler.getStartupAnalysis();
   const skippedActions = scheduler.getSkippedActions();
 
-  // Determine next action (only from non-skipped scheduled actions)
+  // Fetch today's actual punch times from freee time_clocks API
+  // This gives us real timestamps (e.g., checkin at 09:51) that work_records may not yet reflect
+  let todayPunchTimes = [];
+  if (credentialsOk && !debugMode) {
+    try {
+      const client = new FreeeApiClient();
+      todayPunchTimes = await client.getTodayTimeClocks();
+    } catch (e) {
+      console.warn('[Status] Failed to fetch today time_clocks:', e.message?.substring(0, 100));
+    }
+  }
+
+  // Derive actual state from punch times (same logic as frontend DashboardPage).
+  // This is the single source of truth for "what state are we actually in".
+  let derivedState = startupAnalysis?.state || 'unknown';
+  if (todayPunchTimes.length > 0) {
+    const lastType = todayPunchTimes[todayPunchTimes.length - 1].type;
+    if (lastType === 'checkout') derivedState = 'checked_out';
+    else if (lastType === 'break_start') derivedState = 'on_break';
+    else if (lastType === 'break_end' || lastType === 'checkin') derivedState = 'working';
+  }
+
+  // Determine next action — only from non-skipped scheduled actions that are still
+  // in the future AND valid for the derived state.
   const { hours, minutes } = nowInTz();
   const currentMinutes = hours * 60 + minutes;
   let nextAction = null;
 
-  for (const [actionType, timeStr] of Object.entries(todaySchedule)) {
-    if (skippedActions.includes(actionType)) continue;
-    const [h, m] = timeStr.split(':').map(Number);
-    const actionMinutes = h * 60 + m;
-    if (actionMinutes > currentMinutes) {
-      if (!nextAction || actionMinutes < nextAction.minutes) {
-        nextAction = { action_type: actionType, time: timeStr, minutes: actionMinutes };
+  // If already checked out or holiday, no next actions
+  if (derivedState !== 'checked_out' && derivedState !== 'holiday') {
+    for (const [actionType, timeStr] of Object.entries(todaySchedule)) {
+      if (skippedActions.includes(actionType)) continue;
+      const [h, m] = timeStr.split(':').map(Number);
+      const actionMinutes = h * 60 + m;
+      if (actionMinutes > currentMinutes) {
+        if (!nextAction || actionMinutes < nextAction.minutes) {
+          nextAction = { action_type: actionType, time: timeStr, minutes: actionMinutes };
+        }
       }
     }
   }
@@ -83,18 +110,6 @@ router.get('/', async (req, res) => {
         nextAction.window_start = cfg.window_start;
         nextAction.window_end = cfg.window_end;
       }
-    }
-  }
-
-  // Fetch today's actual punch times from freee time_clocks API
-  // This gives us real timestamps (e.g., checkin at 09:51) that work_records may not yet reflect
-  let todayPunchTimes = [];
-  if (credentialsOk && !debugMode) {
-    try {
-      const client = new FreeeApiClient();
-      todayPunchTimes = await client.getTodayTimeClocks();
-    } catch (e) {
-      console.warn('[Status] Failed to fetch today time_clocks:', e.message?.substring(0, 100));
     }
   }
 
