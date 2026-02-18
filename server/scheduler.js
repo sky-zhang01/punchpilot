@@ -9,7 +9,8 @@ import {
   cleanOldSchedules,
   cleanExpiredLeaveStrategyCache,
 } from './db.js';
-import { executeAction, detectCurrentState, determineActionsForToday, FREEE_STATE } from './automation.js';
+import { executeAction, detectCurrentState, determineActionsForToday, hasCredentials, isDebugMode, FREEE_STATE } from './automation.js';
+import { FreeeApiClient } from './freee-api.js';
 import { isHolidayOrWeekend, getTodayString } from './holiday.js';
 import { msUntilTimeInTz, getTimezone } from './timezone.js';
 
@@ -116,14 +117,24 @@ class Scheduler {
 
   /**
    * Smart startup: detect state and decide which actions to run.
-   * If state is unknown, retries up to 3 times with 30s delay (token refresh may resolve it).
+   *
+   * Retry strategy (two-tier):
+   *   Tier 1 — Rapid retry: 3 attempts × 30s (handles transient token refresh failures)
+   *   Tier 2 — Pre-checkin fallback: if still unknown after Tier 1, schedule ONE retry
+   *            15 minutes before the checkin window. This handles cases where the API
+   *            is down at 00:01 but recovers by morning (e.g., overnight token expiry,
+   *            freee maintenance windows).
+   *
+   * This ensures we never permanently give up before the user's actual work day starts.
    */
   async smartSchedule(retryCount = 0) {
     const MAX_RETRIES = 3;
     const RETRY_DELAY_MS = 30_000; // 30 seconds
+    const PRE_CHECKIN_BUFFER_MIN = 15; // retry 15min before checkin window
 
     const currentState = await detectCurrentState();
-    const plan = determineActionsForToday(currentState, this.todaySchedule);
+    const punchTimes = await this._fetchTodayPunchTimes();
+    const plan = determineActionsForToday(currentState, this.todaySchedule, punchTimes);
 
     this.startupAnalysis = {
       state: currentState,
@@ -135,11 +146,10 @@ class Scheduler {
 
     console.log(`[Scheduler] State: ${currentState} -> ${plan.reason}`);
 
-    // If state is unknown and we haven't exhausted retries, schedule a retry.
-    // This handles transient failures like expired tokens that auto-refresh on next attempt.
+    // --- Tier 1: Rapid retry (3×30s) ---
     if (currentState === FREEE_STATE.UNKNOWN && retryCount < MAX_RETRIES) {
       const attempt = retryCount + 1;
-      console.log(`[Scheduler] Unknown state — retry ${attempt}/${MAX_RETRIES} in ${RETRY_DELAY_MS / 1000}s`);
+      console.log(`[Scheduler] Unknown state — rapid retry ${attempt}/${MAX_RETRIES} in ${RETRY_DELAY_MS / 1000}s`);
       this.startupAnalysis.retrying = true;
       this.startupAnalysis.retryAttempt = attempt;
       this.startupAnalysis.retryMax = MAX_RETRIES;
@@ -149,6 +159,35 @@ class Scheduler {
         await this.smartSchedule(attempt);
       }, RETRY_DELAY_MS);
       return;
+    }
+
+    // --- Tier 2: Pre-checkin fallback ---
+    // If still unknown after all rapid retries AND checkin time is in the future,
+    // schedule one final retry 15min before checkin so we don't miss the entire day.
+    if (currentState === FREEE_STATE.UNKNOWN && retryCount >= MAX_RETRIES) {
+      const checkinTime = this.todaySchedule.checkin;
+      if (checkinTime) {
+        const msUntilCheckin = msUntilTimeInTz(checkinTime);
+        const fallbackMs = msUntilCheckin - PRE_CHECKIN_BUFFER_MIN * 60 * 1000;
+
+        if (fallbackMs > 60_000) { // at least 1 min in the future
+          const fallbackMin = Math.round(fallbackMs / 60_000);
+          console.log(`[Scheduler] All rapid retries failed. Scheduling pre-checkin fallback in ${fallbackMin}min (${PRE_CHECKIN_BUFFER_MIN}min before ${checkinTime})`);
+          this.startupAnalysis.preCheckinFallback = true;
+          this.startupAnalysis.fallbackTime = checkinTime;
+          this.startupAnalysis.reason = `Unknown state — will retry ${PRE_CHECKIN_BUFFER_MIN}min before checkin (${checkinTime})`;
+          this.timers._preCheckinRetry = setTimeout(async () => {
+            console.log(`[Scheduler] Pre-checkin fallback triggered (${PRE_CHECKIN_BUFFER_MIN}min before ${checkinTime})`);
+            this.skippedActions.clear();
+            this.clearTodayTimers();
+            // Pass MAX_RETRIES + 1 so we don't loop back into Tier 2 again
+            await this.smartSchedule(MAX_RETRIES + 1);
+          }, fallbackMs);
+          return;
+        }
+        // Fallback time already passed — fall through to normal scheduling
+        console.log(`[Scheduler] Pre-checkin fallback time already passed, proceeding with current state`);
+      }
     }
 
     // Mark skipped actions
@@ -218,19 +257,9 @@ class Scheduler {
 
     markDailyScheduleExecuted(today, actionType);
 
-    // Refresh detected state after successful action so Dashboard/API reflect the new state
+    // After any successful action, re-evaluate the plan so Dashboard reflects reality.
     if (result.status === 'success') {
-      try {
-        const updatedState = await detectCurrentState();
-        this.startupAnalysis = {
-          ...this.startupAnalysis,
-          state: updatedState,
-          reason: `Updated after ${actionType}`,
-        };
-        console.log(`[Scheduler] State refreshed to: ${updatedState}`);
-      } catch (e) {
-        console.warn(`[Scheduler] Failed to refresh state after ${actionType}:`, e.message);
-      }
+      await this.refreshPlanForCurrentState(`scheduled ${actionType}`);
     }
 
     console.log(`[Scheduler] ${actionType} -> ${result.status}`);
@@ -251,22 +280,70 @@ class Scheduler {
       duration_ms: result.durationMs,
     });
 
-    // Refresh detected state after successful manual action
+    // After any successful action, re-evaluate the plan so Dashboard reflects reality.
+    // This cancels timers for actions that are no longer valid (e.g., break_start after checkout)
+    // and updates skippedActions/startupAnalysis.
     if (result.status === 'success') {
-      try {
-        const updatedState = await detectCurrentState();
-        this.startupAnalysis = {
-          ...this.startupAnalysis,
-          state: updatedState,
-          reason: `Updated after manual ${actionType}`,
-        };
-        console.log(`[Scheduler] State refreshed to: ${updatedState}`);
-      } catch (e) {
-        console.warn(`[Scheduler] Failed to refresh state after manual ${actionType}:`, e.message);
-      }
+      await this.refreshPlanForCurrentState(`manual ${actionType}`);
     }
 
     return result;
+  }
+
+  /**
+   * Re-detect state and re-evaluate the plan after an action completes.
+   * This ensures:
+   * - startupAnalysis.state reflects the real current state
+   * - skippedActions is updated (e.g., after checkout, skip break_start/break_end)
+   * - Future timers for now-invalid actions are cancelled
+   * - next_action in Dashboard stays consistent with the actual state
+   */
+  async refreshPlanForCurrentState(trigger) {
+    try {
+      const updatedState = await detectCurrentState();
+      const punchTimes = await this._fetchTodayPunchTimes();
+      const plan = determineActionsForToday(updatedState, this.todaySchedule, punchTimes);
+
+      this.startupAnalysis = {
+        ...this.startupAnalysis,
+        state: updatedState,
+        reason: `Updated after ${trigger}`,
+        execute: plan.execute,
+        skip: plan.skip,
+      };
+
+      // Update skippedActions: merge newly-skipped actions
+      for (const act of plan.skip) {
+        if (!this.skippedActions.has(act)) {
+          this.skippedActions.add(act);
+          // Cancel timer for this action if it was scheduled
+          if (this.timers[act]) {
+            clearTimeout(this.timers[act]);
+            delete this.timers[act];
+            console.log(`[Scheduler] Cancelled timer for ${act} (now skipped after ${trigger})`);
+          }
+        }
+      }
+
+      console.log(`[Scheduler] Plan refreshed after ${trigger}: state=${updatedState}, skip=[${plan.skip}], execute=[${plan.execute}]`);
+    } catch (e) {
+      console.warn(`[Scheduler] Failed to refresh plan after ${trigger}:`, e.message);
+    }
+  }
+
+  /**
+   * Fetch today's punch times from freee time_clocks API.
+   * Returns [] if credentials unavailable, debug mode, or API error.
+   */
+  async _fetchTodayPunchTimes() {
+    if (!hasCredentials() || isDebugMode()) return [];
+    try {
+      const client = new FreeeApiClient();
+      return await client.getTodayTimeClocks();
+    } catch (e) {
+      console.warn('[Scheduler] Failed to fetch punch times:', e.message?.substring(0, 100));
+      return [];
+    }
   }
 
   getTodaySchedule() {

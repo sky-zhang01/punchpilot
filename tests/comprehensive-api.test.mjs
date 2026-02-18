@@ -650,27 +650,27 @@ describe('Web Automation Fallback Logic', () => {
     expect(isDebugMode()).toBe(true);
   });
 
-  it('determineActionsForToday generates correct plan for NOT_CHECKED_IN', async () => {
+  it('determineActionsForToday generates correct plan for not_checked_in', async () => {
     const { determineActionsForToday } = await import('../server/automation.js');
     const schedule = {
-      checkin: { enabled: true, time: '09:00' },
-      break_start: { enabled: true, time: '12:00' },
-      break_end: { enabled: true, time: '13:00' },
-      checkout: { enabled: true, time: '18:00' }
+      checkin: '09:00',
+      break_start: '12:00',
+      break_end: '13:00',
+      checkout: '18:00'
     };
-    const result = determineActionsForToday('NOT_CHECKED_IN', schedule);
+    const result = determineActionsForToday('not_checked_in', schedule);
     expect(result).toHaveProperty('execute');
     expect(result).toHaveProperty('skip');
     expect(Array.isArray(result.execute)).toBe(true);
   });
 
-  it('determineActionsForToday generates correct plan for CHECKED_OUT', async () => {
+  it('determineActionsForToday generates correct plan for checked_out', async () => {
     const { determineActionsForToday } = await import('../server/automation.js');
     const schedule = {
-      checkin: { enabled: true, time: '09:00' },
-      checkout: { enabled: true, time: '18:00' }
+      checkin: '09:00',
+      checkout: '18:00'
     };
-    const result = determineActionsForToday('CHECKED_OUT', schedule);
+    const result = determineActionsForToday('checked_out', schedule);
     // When checked out, everything should be skipped
     expect(result.execute.length).toBe(0);
   });
