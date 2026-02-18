@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card, Button, Tag, Badge, Space, Typography, Modal, Spin } from 'antd';
 import {
@@ -88,6 +88,20 @@ const actions: ActionConfig[] = [
   },
 ];
 
+/**
+ * Derive the attendance state from today's punch times (freee time_clocks).
+ * Same logic as DashboardPage — single source of truth.
+ */
+function derivePunchState(punchTimes: Array<{ type: string }>, fallbackState?: string): string {
+  if (punchTimes && punchTimes.length > 0) {
+    const lastType = punchTimes[punchTimes.length - 1].type;
+    if (lastType === 'checkout') return 'checked_out';
+    if (lastType === 'break_start') return 'on_break';
+    if (lastType === 'break_end' || lastType === 'checkin') return 'working';
+  }
+  return fallbackState || 'unknown';
+}
+
 interface ManualTriggerProps {
   onActionComplete?: () => void;
 }
@@ -95,25 +109,18 @@ interface ManualTriggerProps {
 const ManualTrigger: React.FC<ManualTriggerProps> = ({ onActionComplete }) => {
   const { t } = useTranslation();
   const dispatch = useAppDispatch();
-  const [freeeState, setFreeeState] = useState('unknown');
-  const [detecting, setDetecting] = useState(false);
+  const { data: statusData, loading: statusLoading } = useAppSelector((state) => state.status);
   const [executing, setExecuting] = useState<string | null>(null);
 
-  const detectState = useCallback(async () => {
-    setDetecting(true);
-    try {
-      const res = await api.getFreeeState();
-      setFreeeState(res.data.state || 'unknown');
-    } catch {
-      setFreeeState('unknown');
-    } finally {
-      setDetecting(false);
-    }
-  }, []);
+  // Derive state from the same Redux status data that the Dashboard status card uses.
+  // This ensures ManualTrigger shows the same state as the status card — single source of truth.
+  const punchTimes = statusData?.today_punch_times || [];
+  const schedulerState = statusData?.startup_analysis?.state;
+  const freeeState = derivePunchState(punchTimes, schedulerState);
 
-  useEffect(() => {
-    detectState();
-  }, [detectState]);
+  const refreshStatus = useCallback(() => {
+    dispatch(fetchStatus());
+  }, [dispatch]);
 
   // Execute the action after confirmation
   const executeAction = async (action: ActionConfig) => {
@@ -134,7 +141,7 @@ const ManualTrigger: React.FC<ManualTriggerProps> = ({ onActionComplete }) => {
         );
       }
 
-      await detectState();
+      // Refresh status from server — this updates punch_times, startup_analysis, etc.
       dispatch(fetchStatus());
       onActionComplete?.();
     } catch (err: any) {
@@ -166,6 +173,7 @@ const ManualTrigger: React.FC<ManualTriggerProps> = ({ onActionComplete }) => {
     });
   };
 
+  const detecting = statusLoading && !statusData;
   const stateColor = STATE_COLORS[freeeState] || STATE_COLORS.unknown;
   const badgeStatus = BADGE_STATUS[freeeState] || 'error';
   const stateLabelKey = STATE_LABEL_KEYS[freeeState] || STATE_LABEL_KEYS.unknown;
@@ -180,9 +188,9 @@ const ManualTrigger: React.FC<ManualTriggerProps> = ({ onActionComplete }) => {
           </Title>
           <Button
             type="text"
-            icon={detecting ? <Spin size="small" /> : <ReloadOutlined />}
-            onClick={detectState}
-            disabled={detecting}
+            icon={statusLoading ? <Spin size="small" /> : <ReloadOutlined />}
+            onClick={refreshStatus}
+            disabled={statusLoading}
             size="small"
           />
         </div>

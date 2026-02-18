@@ -240,7 +240,12 @@ export function insertLog(log) {
   );
 }
 
-export function getLogsByDate(date) {
+export function getLogsByDate(date, companyId) {
+  if (companyId) {
+    return getDb().prepare(
+      `SELECT * FROM execution_log WHERE date(executed_at) = ? AND company_id = ? ORDER BY executed_at DESC`
+    ).all(date, companyId);
+  }
   return getDb().prepare(
     `SELECT * FROM execution_log WHERE date(executed_at) = ? ORDER BY executed_at DESC`
   ).all(date);

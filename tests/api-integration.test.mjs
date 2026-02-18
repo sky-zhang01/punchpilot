@@ -69,10 +69,15 @@ describe('Security Headers', () => {
     expect(res.headers['x-frame-options']).toBe('DENY');
   });
 
-  it('returns Content-Security-Policy', async () => {
+  it('returns Content-Security-Policy header', async () => {
     const res = await request(app).get('/api/auth/status');
-    expect(res.headers['content-security-policy']).toBeDefined();
-    expect(res.headers['content-security-policy']).toContain("default-src 'self'");
+    const csp = res.headers['content-security-policy'];
+    expect(csp).toBeDefined();
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("script-src 'self'");
+    // style-src requires 'unsafe-inline' because antd 6's @ant-design/cssinjs v2
+    // injects <style> tags at runtime without nonce support
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
   });
 
   it('returns Referrer-Policy', async () => {
@@ -98,14 +103,22 @@ describe('Security Headers', () => {
     expect(pp).toContain('camera=()');
   });
 
-  it('UT-SEC-11: returns Cross-Origin-Opener-Policy: same-origin', async () => {
+  // COOP (Cross-Origin-Opener-Policy) is intentionally omitted — 'same-origin' severs
+  // window.opener between OAuth callback popups and the main window, breaking postMessage
+  // auto-refresh (REQ-OAUTH-01). Clickjacking is mitigated by X-Frame-Options + CSP.
+  it('UT-SEC-11: does NOT set Cross-Origin-Opener-Policy (OAuth popup compatibility)', async () => {
     const res = await request(app).get('/api/auth/status');
-    expect(res.headers['cross-origin-opener-policy']).toBe('same-origin');
+    expect(res.headers['cross-origin-opener-policy']).toBeUndefined();
   });
 
   it('UT-SEC-12: returns Cross-Origin-Resource-Policy: same-origin', async () => {
     const res = await request(app).get('/api/auth/status');
     expect(res.headers['cross-origin-resource-policy']).toBe('same-origin');
+  });
+
+  it('UT-SEC-14: returns Cross-Origin-Embedder-Policy: credentialless', async () => {
+    const res = await request(app).get('/api/auth/status');
+    expect(res.headers['cross-origin-embedder-policy']).toBe('credentialless');
   });
 });
 

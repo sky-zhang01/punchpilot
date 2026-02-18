@@ -19,6 +19,7 @@ interface ConfigState {
   freeeUsername: string;
   connectionMode: string;
   oauthConfigured: boolean;
+  oauthCompanyId: string;
   holidaySkipCountries: string;
   loading: boolean;
 }
@@ -31,6 +32,7 @@ const initialState: ConfigState = {
   freeeUsername: '',
   connectionMode: 'api',
   oauthConfigured: false,
+  oauthCompanyId: '',
   holidaySkipCountries: 'jp',
   loading: false,
 };
@@ -98,6 +100,7 @@ const configSlice = createSlice({
       state.freeeUsername = action.payload.freee_username;
       state.connectionMode = action.payload.connection_mode || 'browser';
       state.oauthConfigured = action.payload.oauth_configured || false;
+      state.oauthCompanyId = action.payload.oauth_company_id || '';
       state.holidaySkipCountries = action.payload.holiday_skip_countries || 'jp';
       state.loading = false;
     });
