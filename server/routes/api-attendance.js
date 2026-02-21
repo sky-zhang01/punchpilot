@@ -447,6 +447,12 @@ router.post('/batch', async (req, res) => {
   if (entries.length > 50) {
     return res.status(400).json({ error: 'Maximum 50 entries per batch request' });
   }
+  // Validate nested array sizes to prevent memory exhaustion
+  for (const entry of entries) {
+    if (entry.break_records && Array.isArray(entry.break_records) && entry.break_records.length > 20) {
+      return res.status(400).json({ error: 'Maximum 20 break records per entry' });
+    }
+  }
 
   const oauth = requireOAuth(res);
   if (!oauth) return;

@@ -207,7 +207,7 @@ export function changePasswordHandler(req, res) {
   deleteAllUserSessions(user.id);
 
   // Create a new session so the user stays logged in
-  const newToken = crypto.randomUUID();
+  const newToken = crypto.randomBytes(32).toString('hex');
   const expiresAt = new Date(
     Date.now() + SESSION_DURATION_HOURS * 60 * 60 * 1000
   ).toISOString();

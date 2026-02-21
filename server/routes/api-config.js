@@ -359,16 +359,16 @@ router.get('/oauth-authorize-url', (req, res) => {
   const redirectUri = process.env.OAUTH_REDIRECT_URI ||
     `${req.protocol}://${req.get('host')}/api/config/oauth-callback`;
 
-  // Generate CSRF state token (RFC 6749 §10.12)
-  const state = crypto.randomBytes(32).toString('hex');
-  setSetting('oauth_state', state);
+  // Generate CSRF state token with timestamp (RFC 6749 §10.12)
+  const statePayload = `${Date.now()}.${crypto.randomBytes(32).toString('hex')}`;
+  setSetting('oauth_state', statePayload);
 
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
     prompt: 'consent',
-    state,
+    state: statePayload,
   });
 
   res.json({ url: `${AUTHORIZE_URL}?${params.toString()}`, redirect_uri: redirectUri });
@@ -389,13 +389,18 @@ router.get('/oauth-callback', async (req, res) => {
     return res.send(callbackHtml('No authorization code received', false));
   }
 
-  // Validate CSRF state token (RFC 6749 §10.12)
+  // Validate CSRF state token (RFC 6749 §10.12) with 10-minute expiration
   const expectedState = getSetting('oauth_state');
   if (!state || !expectedState || state !== expectedState) {
     return res.send(callbackHtml('Invalid state parameter — possible CSRF attack', false));
   }
   // Clear state after validation (single-use)
   setSetting('oauth_state', '');
+  // Enforce 10-minute expiration on state token
+  const stateTimestamp = parseInt(expectedState.split('.')[0], 10);
+  if (isNaN(stateTimestamp) || Date.now() - stateTimestamp > 10 * 60 * 1000) {
+    return res.send(callbackHtml('Authorization expired. Please try again.', false));
+  }
 
   const clientId = getSetting('oauth_client_id');
   const clientSecret = decrypt(getSetting('oauth_client_secret_encrypted'));
@@ -494,8 +499,8 @@ router.get('/oauth-callback', async (req, res) => {
 
     return res.send(callbackHtml('Authorization successful!', true));
   } catch (e) {
-    console.error('[OAuth] Callback error:', e.message);
-    return res.send(callbackHtml(`Error: ${e.message}`, false));
+    console.error('[OAuth] Callback error:', e.message, e.stack);
+    return res.send(callbackHtml('Authorization failed. Please try again.', false));
   }
 });
 

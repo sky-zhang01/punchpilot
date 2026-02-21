@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -154,11 +155,13 @@ export function initDatabase() {
   // Seed default admin user if no users exist
   const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
   if (userCount === 0) {
-    const hash = bcrypt.hashSync('admin', 10);
+    const randomPassword = crypto.randomBytes(12).toString('base64url');
+    const hash = bcrypt.hashSync(randomPassword, 10);
     db.prepare(
       'INSERT INTO users (username, password_hash, must_change_password) VALUES (?, ?, 1)'
     ).run('admin', hash);
-    console.log('[PunchPilot] Created default user: admin / admin (must change on first login)');
+    console.log(`[PunchPilot] Created default user — username: admin / password: ${randomPassword}`);
+    console.log('[PunchPilot] ⚠ You MUST change this password on first login.');
   }
 
   // Migration: fix defaults that may have been polluted by pre-isolation test runs.

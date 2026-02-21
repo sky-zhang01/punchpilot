@@ -117,8 +117,41 @@ app.use('/api/', (req, res, next) => {
   next();
 });
 
+// Rate limiter for password change (reuses same window/limits pattern)
+const passwordAttempts = new Map();
+const PASSWORD_RATE_MAX = 5;
+
+function passwordRateLimiter(req, res, next) {
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  const now = Date.now();
+  const entry = passwordAttempts.get(ip);
+
+  if (entry) {
+    if (now - entry.firstAttempt > RATE_LIMIT_WINDOW_MS) {
+      passwordAttempts.set(ip, { count: 1, firstAttempt: now });
+      return next();
+    }
+    if (entry.count >= PASSWORD_RATE_MAX) {
+      const retryAfter = Math.ceil((entry.firstAttempt + RATE_LIMIT_WINDOW_MS - now) / 1000);
+      res.setHeader('Retry-After', String(retryAfter));
+      log.warn(`Rate limited password change from ${ip} (${entry.count} attempts)`);
+      return res.status(429).json({
+        error: `Too many password change attempts. Try again in ${Math.ceil(retryAfter / 60)} minutes.`,
+      });
+    }
+    entry.count++;
+  } else {
+    passwordAttempts.set(ip, { count: 1, firstAttempt: now });
+  }
+
+  next();
+}
+
 // Apply rate limiter to login endpoint before auth middleware
 app.post('/api/auth/login', loginRateLimiter);
+
+// Apply rate limiter to password change endpoint
+app.put('/api/auth/password', passwordRateLimiter);
 
 // Auth middleware (protects /api/* except auth endpoints)
 app.use(authMiddleware);
@@ -134,7 +167,10 @@ app.use('/api/attendance', attendanceRoutes);
 
 // Serve screenshots (behind auth middleware)
 const screenshotsDir = process.env.SCREENSHOTS_DIR || path.resolve(__dirname, '..', 'screenshots');
-app.use('/screenshots', express.static(screenshotsDir));
+app.use('/screenshots', express.static(screenshotsDir, {
+  dotfiles: 'deny',
+  index: false,
+}));
 
 // Serve React SPA (built files)
 const clientDist = path.resolve(__dirname, '..', 'client', 'dist');
