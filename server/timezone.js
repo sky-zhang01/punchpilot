@@ -59,7 +59,7 @@ export function nowInTz(date = new Date()) {
     hours: parseInt(get("hour")),
     minutes: parseInt(get("minute")),
     seconds: parseInt(get("second")),
-    day: dayMap[get("weekday")] ?? new Date().getDay(),
+    day: dayMap[get("weekday")] ?? date.getDay(),
   };
 }
 
