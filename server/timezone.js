@@ -12,49 +12,54 @@
  *   - All schedule times will be interpreted in Japan time
  */
 
-import { getSetting } from './db.js';
+import { getSetting } from "./db.js";
 
-const DEFAULT_TZ = 'Asia/Tokyo';
+const DEFAULT_TZ = "Asia/Tokyo";
 
 /**
  * Get the configured timezone string.
  * Priority: TZ env > DB setting 'app_timezone' > default Asia/Tokyo
  */
 export function getTimezone() {
-  return process.env.TZ || getSetting('app_timezone') || DEFAULT_TZ;
+  return process.env.TZ || getSetting("app_timezone") || DEFAULT_TZ;
 }
 
 /**
  * Get current time in the configured timezone as a Date-like object.
  * Returns { year, month, date, hours, minutes, seconds, day }
+ *
+ * @param {Date} [date=new Date()] - Date to convert (defaults to now; injectable for testing)
  */
-export function nowInTz() {
+export function nowInTz(date = new Date()) {
   const tz = getTimezone();
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat('en-CA', {
+  const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-    weekday: 'short',
-  }).formatToParts(now);
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    // FIX: Use hourCycle 'h23' (range 0–23) instead of hour12:false.
+    // On Linux/Docker, hour12:false defaults to hourCycle 'h24' (range 1–24),
+    // which returns 24 at midnight. This caused curMin=1484 and false
+    // "Checkin window passed" on container startup at 00:xx JST.
+    hourCycle: "h23",
+    weekday: "short",
+  }).formatToParts(date);
 
-  const get = (type) => parts.find((p) => p.type === type)?.value || '';
+  const get = (type) => parts.find((p) => p.type === type)?.value || "";
 
   const dayMap = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 0 };
 
   return {
-    year: parseInt(get('year')),
-    month: parseInt(get('month')),
-    date: parseInt(get('day')),
-    hours: parseInt(get('hour')),
-    minutes: parseInt(get('minute')),
-    seconds: parseInt(get('second')),
-    day: dayMap[get('weekday')] ?? new Date().getDay(),
+    year: parseInt(get("year")),
+    month: parseInt(get("month")),
+    date: parseInt(get("day")),
+    hours: parseInt(get("hour")),
+    minutes: parseInt(get("minute")),
+    seconds: parseInt(get("second")),
+    day: dayMap[get("weekday")] ?? date.getDay(),
   };
 }
 
@@ -63,7 +68,7 @@ export function nowInTz() {
  */
 export function todayStringInTz() {
   const { year, month, date } = nowInTz();
-  return `${year}-${String(month).padStart(2, '0')}-${String(date).padStart(2, '0')}`;
+  return `${year}-${String(month).padStart(2, "0")}-${String(date).padStart(2, "0")}`;
 }
 
 /**
@@ -71,7 +76,7 @@ export function todayStringInTz() {
  */
 export function currentTimeInTz() {
   const { hours, minutes } = nowInTz();
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
 /**
@@ -87,7 +92,7 @@ export function currentDayInTz() {
  */
 export function msUntilTimeInTz(timeStr) {
   const { hours, minutes, seconds } = nowInTz();
-  const [targetH, targetM] = timeStr.split(':').map(Number);
+  const [targetH, targetM] = timeStr.split(":").map(Number);
 
   const nowMinutesTotal = hours * 60 + minutes;
   const targetMinutesTotal = targetH * 60 + targetM;

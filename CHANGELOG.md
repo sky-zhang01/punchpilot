@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.6] - 2026-02-22
+
+### Fixed
+- **Midnight hour boundary on Linux/Docker**: `Intl.DateTimeFormat` with `hour12: false` defaults to `hourCycle: h24` on Linux (range 1–24), returning `24` at midnight instead of `0`. This caused `curMin = 1484` and falsely triggered "Checkin window passed" at 00:xx JST on container startup. Fix: use `hourCycle: h23` explicitly (range 0–23, midnight = 0).
+- **Regression tests**: Add `tests/timezone.test.mjs` (11 tests) covering midnight boundary, container startup scenario, and `nowInTz()` date injection.
+
 ## [0.4.5] - 2026-02-18
 
 ### Security
