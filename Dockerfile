@@ -1,7 +1,7 @@
 # =============================================================================
 # Stage 1: Builder — compile native addons (better-sqlite3) and build client
 # =============================================================================
-FROM node:20-slim AS builder
+FROM node:25-slim AS builder
 
 WORKDIR /app
 
@@ -26,7 +26,7 @@ RUN cd client && npm run build
 # =============================================================================
 # Stage 2: Runtime — slim image with only Chromium (no Firefox/WebKit)
 # =============================================================================
-FROM node:20-slim
+FROM node:25-slim
 
 LABEL org.opencontainers.image.title="PunchPilot" \
       org.opencontainers.image.description="Smart attendance automation for freee HR" \
