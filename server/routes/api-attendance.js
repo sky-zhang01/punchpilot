@@ -14,6 +14,7 @@ import {
   scrapeEmployeeProfile,
   submitLeaveRequest,
   withdrawApprovalRequestWeb,
+  submitMonthlyAttendanceClosingWeb,
 } from "../automation.js";
 import logger from "../logger.js";
 
@@ -1179,7 +1180,40 @@ router.post("/approval/monthly", async (req, res) => {
 
     res.json({ success: true, result });
   } catch (err) {
-    log.error(`Monthly closing failed: ${err.message}`);
+    log.error(`Monthly closing API failed: ${err.message}`);
+
+    // freee returns 400 when the company's approval flow requires dept/role routing —
+    // the API cannot handle it and instructs us to use the web form instead.
+    const needsWebFallback =
+      err.message?.includes("役職") ||
+      err.message?.includes("部門") ||
+      err.message?.includes("Webから申請");
+
+    if (needsWebFallback && hasWebCredentials()) {
+      log.info(
+        "Monthly closing: API rejected (dept/role routing required), falling back to Playwright web form",
+      );
+      try {
+        const webResult = await submitMonthlyAttendanceClosingWeb(year, month);
+        if (webResult.success) {
+          try {
+            insertLog({
+              action_type: "monthly_closing",
+              scheduled_time: `${year}-${String(month).padStart(2, "0")}-01`,
+              status: "success",
+              trigger_type: "manual",
+            });
+          } catch (logErr) {
+            /* ignore */
+          }
+          return res.json({ success: true, via: "web", result: webResult });
+        }
+        // Web fallback also failed — fall through to error response
+        log.error(`Monthly closing web fallback failed: ${webResult.error}`);
+      } catch (webErr) {
+        log.error(`Monthly closing web fallback threw: ${webErr.message}`);
+      }
+    }
 
     try {
       insertLog({
