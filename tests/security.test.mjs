@@ -345,8 +345,8 @@ describe('automation.js credential handling', () => {
       src.indexOf('function getCredentials()'),
       src.indexOf('/** Get the active connection mode')
     );
-    expect(block).toContain("getSetting('freee_username_encrypted')");
-    expect(block).not.toContain("getSetting('freee_username')");
+    expect(block).toMatch(/getSetting\(["']freee_username_encrypted["']\)/);
+    expect(block).not.toMatch(/getSetting\(["']freee_username["']\)/);
     expect(block).toContain('decrypt(dbUsernameEnc)');
     expect(block).toContain('decrypt(dbPasswordEnc)');
   });
