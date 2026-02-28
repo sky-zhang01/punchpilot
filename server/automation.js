@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import { getSetting } from "./db.js";
 import { decrypt } from "./crypto.js";
 import { FreeeApiClient } from "./freee-api.js";
-import { FREEE_STATE } from "./constants.js";
+import { FREEE_ERROR_MESSAGES, FREEE_STATE } from "./constants.js";
 import { nowInTz } from "./timezone.js";
 
 // Re-export for consumers that import from automation.js
@@ -1258,13 +1258,17 @@ class FreeeBot {
     const finalUrl = this.page.url();
     if (finalUrl.includes("/requests/new")) {
       const bodyText = await this.page
-        .evaluate(() => document.body.innerText.substring(0, 500))
+        .evaluate(() => document.body.innerText.substring(0, 2000))
         .catch(() => "");
 
       // freee blocks duplicate monthly closing submissions with this message.
       // The goal state (a monthly closing request exists) is already achieved,
       // so treat it as success rather than an error.
-      if (bodyText.includes("既に月次勤怠締め申請が行われています")) {
+      if (
+        bodyText.includes(
+          FREEE_ERROR_MESSAGES.MONTHLY_CLOSING_ALREADY_SUBMITTED,
+        )
+      ) {
         console.log(
           chalk.green(
             `[Bot] Monthly closing already exists for ${year}-${month} — treating as success (already_submitted)`,
@@ -1290,6 +1294,7 @@ class FreeeBot {
     );
     return {
       success: true,
+      alreadySubmitted: false,
       screenshotBefore: beforePath,
       screenshotAfter: afterPath,
     };
