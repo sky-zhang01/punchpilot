@@ -251,11 +251,11 @@ describe('v0.4.2: Async Batch Task Implementation', () => {
   });
 
   it('UT-AT-04: GET /batch/status/:taskId endpoint exists', () => {
-    expect(attendanceSrc).toContain("router.get('/batch/status/:taskId'");
+    expect(attendanceSrc).toContain('router.get("/batch/status/:taskId"');
   });
 
   it('UT-AT-05: POST /batch returns task_id immediately', () => {
-    expect(attendanceSrc).toContain("res.json({ task_id: taskId, status: 'running' })");
+    expect(attendanceSrc).toContain('res.json({ task_id: taskId, status: "running" })');
   });
 
   it('UT-AT-06: POST /batch-leave-request returns task_id', () => {
