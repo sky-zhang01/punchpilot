@@ -30,7 +30,7 @@ FROM node:25-slim
 
 LABEL org.opencontainers.image.title="PunchPilot" \
       org.opencontainers.image.description="Smart attendance automation for freee HR" \
-      org.opencontainers.image.version="0.4.8" \
+      org.opencontainers.image.version="0.4.7" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.source="https://github.com/sky-zhang01/punchpilot"
 
