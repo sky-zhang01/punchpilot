@@ -1254,12 +1254,30 @@ class FreeeBot {
     );
     await this.page.screenshot({ path: afterPath });
 
-    // If still on the form page, submission likely failed
+    // If still on the form page, check whether freee blocked it as duplicate
     const finalUrl = this.page.url();
     if (finalUrl.includes("/requests/new")) {
       const bodyText = await this.page
         .evaluate(() => document.body.innerText.substring(0, 500))
         .catch(() => "");
+
+      // freee blocks duplicate monthly closing submissions with this message.
+      // The goal state (a monthly closing request exists) is already achieved,
+      // so treat it as success rather than an error.
+      if (bodyText.includes("既に月次勤怠締め申請が行われています")) {
+        console.log(
+          chalk.green(
+            `[Bot] Monthly closing already exists for ${year}-${month} — treating as success (already_submitted)`,
+          ),
+        );
+        return {
+          success: true,
+          alreadySubmitted: true,
+          screenshotBefore: beforePath,
+          screenshotAfter: afterPath,
+        };
+      }
+
       throw new Error(
         `Monthly closing submission may have failed — still on form page. Content: ${bodyText.substring(0, 200)}`,
       );

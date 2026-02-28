@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Monthly closing Playwright fallback**: When the freee API returns HTTP 400 with "役職、部門を利用する申請はWebから申請してください" (dept/role-based approval routing), the `/approval/monthly` endpoint now automatically falls back to submitting the form via Playwright web automation. New `submitMonthlyAttendanceClosingWeb(year, month)` export in `automation.js`.
 
+### Fixed
+- **Monthly closing duplicate detection**: The Playwright fallback previously threw an error when freee rejected the submission with "対象月は既に月次勤怠締め申請が行われています" (monthly closing already exists). Since the goal state is already achieved, this is now treated as success (`alreadySubmitted: true`) instead of a failure.
+
 ## [0.4.7] - 2026-02-28
 
 ### Fixed
