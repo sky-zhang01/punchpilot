@@ -24,7 +24,7 @@ function readSrc(relPath) {
 describe('no plaintext freee_username reads in production code', () => {
   const prodFiles = [
     'server/routes/api-config.js',
-    'server/automation.js',
+    'server/automation/utils.js',
     'server/freee-api.js',
     'server/scheduler.js',
   ];
@@ -61,7 +61,7 @@ describe('no plaintext freee_username reads in production code', () => {
 describe('no secrets in console.log', () => {
   const files = [
     'server/routes/api-config.js',
-    'server/automation.js',
+    'server/automation/public-api.js',
     'server/server.js',
     'server/scheduler.js',
   ];
@@ -337,8 +337,8 @@ describe('api-config.js credential handling', () => {
   });
 });
 
-describe('automation.js credential handling', () => {
-  const src = readSrc('server/automation.js');
+describe('automation credential handling', () => {
+  const src = readSrc('server/automation/utils.js');
 
   it('getCredentials reads encrypted fields', () => {
     const block = src.substring(

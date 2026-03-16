@@ -405,10 +405,10 @@ console.log('\n\x1b[33m── T8-T9: api-config.js ──\x1b[0m');
   );
 }
 
-// ─── T10: automation.js getCredentials ────────────────────
-console.log('\n\x1b[33m── T10: automation.js ──\x1b[0m');
+// ─── T10: automation credential handling ────────────────────
+console.log('\n\x1b[33m── T10: automation utils ──\x1b[0m');
 {
-  const src = fs.readFileSync(path.join(PROJECT_ROOT, 'server', 'automation.js'), 'utf8');
+  const src = fs.readFileSync(path.join(PROJECT_ROOT, 'server', 'automation', 'utils.js'), 'utf8');
 
   const getCredsBlock = src.substring(
     src.indexOf('function getCredentials()'),
@@ -599,7 +599,7 @@ console.log('\n\x1b[33m── T14: Security audit ──\x1b[0m');
   // in migration/cleanup code
   const filesToCheck = [
     'server/routes/api-config.js',
-    'server/automation.js',
+    'server/automation/utils.js',
     'server/freee-api.js',
     'server/scheduler.js',
   ];

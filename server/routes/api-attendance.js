@@ -19,7 +19,7 @@ import {
   submitLeaveRequest,
   withdrawApprovalRequestWeb,
   submitMonthlyAttendanceClosingWeb,
-} from "../automation.js";
+} from "../automation/index.js";
 import logger from "../logger.js";
 
 const router = Router();

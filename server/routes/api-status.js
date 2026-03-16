@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { getSetting, getLogsByDate, getAllConfig } from '../db.js';
 import { scheduler } from '../scheduler.js';
 import { isHolidayOrWeekend, getTodayString } from '../holiday.js';
-import { hasCredentials, isDebugMode, detectCurrentState, FREEE_STATE, getConnectionMode } from '../automation.js';
+import { hasCredentials, isDebugMode, detectCurrentState, FREEE_STATE, getConnectionMode } from '../automation/index.js';
 import { nowInTz, getTimezone } from '../timezone.js';
 import { FreeeApiClient } from '../freee-api.js';
 

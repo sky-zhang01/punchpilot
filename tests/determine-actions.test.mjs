@@ -23,7 +23,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { determineActionsForToday } from '../server/automation.js';
+import { determineActionsForToday } from '../server/automation/index.js';
 
 const FULL_SCHEDULE = {
   checkin: '09:00',

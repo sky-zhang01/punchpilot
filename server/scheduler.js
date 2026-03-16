@@ -10,7 +10,7 @@ import {
   cleanExpiredLeaveStrategyCache,
   cleanOldAsyncTasks,
 } from './db.js';
-import { executeAction, detectCurrentState, determineActionsForToday, hasCredentials, isDebugMode, FREEE_STATE } from './automation.js';
+import { executeAction, detectCurrentState, determineActionsForToday, hasCredentials, isDebugMode, FREEE_STATE } from './automation/index.js';
 import { FreeeApiClient } from './freee-api.js';
 import { isHolidayOrWeekend, getTodayString } from './holiday.js';
 import { msUntilTimeInTz, getTimezone } from './timezone.js';
