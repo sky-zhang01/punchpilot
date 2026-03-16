@@ -8,6 +8,7 @@ import {
   markDailyScheduleExecuted,
   cleanOldSchedules,
   cleanExpiredLeaveStrategyCache,
+  cleanOldAsyncTasks,
 } from './db.js';
 import { executeAction, detectCurrentState, determineActionsForToday, hasCredentials, isDebugMode, FREEE_STATE } from './automation.js';
 import { FreeeApiClient } from './freee-api.js';
@@ -48,6 +49,7 @@ class Scheduler {
       console.log('[Scheduler] Daily resolution triggered');
       cleanOldSchedules(30);
       cleanExpiredLeaveStrategyCache();
+      cleanOldAsyncTasks(2);
       this.skippedActions.clear();
       this.startupAnalysis = null;
       await this.resolveAndScheduleToday();
@@ -88,12 +90,15 @@ class Scheduler {
           ? randomTimeBetween(cfg.window_start, cfg.window_end)
           : cfg.fixed_time;
 
-        // Lunch constraint
+        // Lunch constraint: break must be 60-90 minutes
         if (cfg.action_type === 'break_end' && breakStartTime) {
           const diff = timeToMinutes(resolvedTime) - timeToMinutes(breakStartTime);
-          if (diff > 60) {
+          if (diff < 60) {
             resolvedTime = minutesToTime(timeToMinutes(breakStartTime) + 60);
-            console.log(`[Scheduler] Clamped break_end to ${resolvedTime} (60min limit)`);
+            console.log(`[Scheduler] Clamped break_end to ${resolvedTime} (min 60min from ${breakStartTime})`);
+          } else if (diff > 90) {
+            resolvedTime = minutesToTime(timeToMinutes(breakStartTime) + 90);
+            console.log(`[Scheduler] Clamped break_end to ${resolvedTime} (max 90min from ${breakStartTime})`);
           }
         }
 

@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
 /* === PunchPilot CSS Custom Properties (Theme Variables) === */
 :root {
   /* Backgrounds */
@@ -25,6 +27,7 @@
 
   /* Brand */
   --pp-color-primary: #1677ff;
+  --pp-font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 
   /* Calendar specific */
   --pp-cal-grid-bg: #e8e8e8;
@@ -114,7 +117,7 @@ html.dark {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', 'Noto Sans JP', sans-serif;
+  font-family: var(--pp-font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background: var(--pp-bg-body);

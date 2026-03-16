@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
-import { Card, Button, Tag, Badge, Space, Typography, Modal, Spin } from 'antd';
+import React, { useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
+import { Card, Button, Tag, Badge, Space, Typography, Modal, Spin } from "antd";
 import {
   LoginOutlined,
   LogoutOutlined,
@@ -8,46 +8,19 @@ import {
   PlayCircleOutlined,
   ReloadOutlined,
   ExclamationCircleOutlined,
-} from '@ant-design/icons';
-import api from '../../api';
-import { fetchStatus } from '../../store/statusSlice';
-import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { notifySuccess, notifyError, notifyWarning } from '../../utils/notify';
+} from "@ant-design/icons";
+import api from "../../api";
+import { fetchStatus } from "../../store/statusSlice";
+import { useAppDispatch, useAppSelector } from "../../store/hooks";
+import { notifySuccess, notifyError, notifyWarning } from "../../utils/notify";
+import {
+  STATE_COLORS,
+  BADGE_STATUS,
+  STATE_LABEL_KEYS,
+  HINT_KEYS,
+} from "../../utils/freeeState";
 
 const { Title, Text } = Typography;
-
-// Color mapping for detected freee state
-const STATE_COLORS: Record<string, string> = {
-  not_checked_in: '#faad14',
-  working: '#52c41a',
-  on_break: '#1677ff',
-  checked_out: '#8c8c8c',
-  unknown: '#ff4d4f',
-};
-
-// Badge status mapping for the state indicator dot
-const BADGE_STATUS: Record<string, 'warning' | 'success' | 'processing' | 'default' | 'error'> = {
-  not_checked_in: 'warning',
-  working: 'success',
-  on_break: 'processing',
-  checked_out: 'default',
-  unknown: 'error',
-};
-
-const STATE_LABEL_KEYS: Record<string, string> = {
-  not_checked_in: 'manualTrigger.stateNotCheckedIn',
-  working: 'manualTrigger.stateWorking',
-  on_break: 'manualTrigger.stateOnBreak',
-  checked_out: 'manualTrigger.stateCheckedOut',
-  unknown: 'manualTrigger.stateUnknown',
-};
-
-const HINT_KEYS: Record<string, string> = {
-  not_checked_in: 'manualTrigger.hintNotCheckedIn',
-  working: 'manualTrigger.hintWorking',
-  on_break: 'manualTrigger.hintOnBreak',
-  checked_out: 'manualTrigger.hintCheckedOut',
-};
 
 interface ActionConfig {
   type: string;
@@ -59,32 +32,32 @@ interface ActionConfig {
 
 const actions: ActionConfig[] = [
   {
-    type: 'checkin',
-    labelKey: 'actions.checkin',
+    type: "checkin",
+    labelKey: "actions.checkin",
     icon: <LoginOutlined />,
-    color: '#52c41a',
-    validStates: ['not_checked_in'],
+    color: "#52c41a",
+    validStates: ["not_checked_in"],
   },
   {
-    type: 'checkout',
-    labelKey: 'actions.checkout',
+    type: "checkout",
+    labelKey: "actions.checkout",
     icon: <LogoutOutlined />,
-    color: '#ff4d4f',
-    validStates: ['working'],
+    color: "#ff4d4f",
+    validStates: ["working"],
   },
   {
-    type: 'break_start',
-    labelKey: 'actions.breakStart',
+    type: "break_start",
+    labelKey: "actions.breakStart",
     icon: <CoffeeOutlined />,
-    color: '#1677ff',
-    validStates: ['working'],
+    color: "#1677ff",
+    validStates: ["working"],
   },
   {
-    type: 'break_end',
-    labelKey: 'actions.breakEnd',
+    type: "break_end",
+    labelKey: "actions.breakEnd",
     icon: <PlayCircleOutlined />,
-    color: '#faad14',
-    validStates: ['on_break'],
+    color: "#faad14",
+    validStates: ["on_break"],
   },
 ];
 
@@ -92,14 +65,17 @@ const actions: ActionConfig[] = [
  * Derive the attendance state from today's punch times (freee time_clocks).
  * Same logic as DashboardPage — single source of truth.
  */
-function derivePunchState(punchTimes: Array<{ type: string }>, fallbackState?: string): string {
+function derivePunchState(
+  punchTimes: Array<{ type: string }>,
+  fallbackState?: string,
+): string {
   if (punchTimes && punchTimes.length > 0) {
     const lastType = punchTimes[punchTimes.length - 1].type;
-    if (lastType === 'checkout') return 'checked_out';
-    if (lastType === 'break_start') return 'on_break';
-    if (lastType === 'break_end' || lastType === 'checkin') return 'working';
+    if (lastType === "checkout") return "checked_out";
+    if (lastType === "break_start") return "on_break";
+    if (lastType === "break_end" || lastType === "checkin") return "working";
   }
-  return fallbackState || 'unknown';
+  return fallbackState || "unknown";
 }
 
 interface ManualTriggerProps {
@@ -109,7 +85,9 @@ interface ManualTriggerProps {
 const ManualTrigger: React.FC<ManualTriggerProps> = ({ onActionComplete }) => {
   const { t } = useTranslation();
   const dispatch = useAppDispatch();
-  const { data: statusData, loading: statusLoading } = useAppSelector((state) => state.status);
+  const { data: statusData, loading: statusLoading } = useAppSelector(
+    (state) => state.status,
+  );
   const [executing, setExecuting] = useState<string | null>(null);
 
   // Derive state from the same Redux status data that the Dashboard status card uses.
@@ -129,15 +107,23 @@ const ManualTrigger: React.FC<ManualTriggerProps> = ({ onActionComplete }) => {
       const res = await api.triggerAction(action.type);
       const data = res.data;
 
-      if (data.status === 'skipped') {
+      if (data.status === "skipped") {
         notifyWarning(
-          t('manualTrigger.skipped', { action: t(action.labelKey), reason: data.reason || '' })
+          t("manualTrigger.skipped", {
+            action: t(action.labelKey),
+            reason: data.reason || "",
+          }),
         );
-      } else if (data.status === 'success') {
-        notifySuccess(t('manualTrigger.success', { action: t(action.labelKey) }));
+      } else if (data.status === "success") {
+        notifySuccess(
+          t("manualTrigger.success", { action: t(action.labelKey) }),
+        );
       } else {
         notifyError(
-          t('manualTrigger.failed', { action: t(action.labelKey), error: data.error || '' })
+          t("manualTrigger.failed", {
+            action: t(action.labelKey),
+            error: data.error || "",
+          }),
         );
       }
 
@@ -145,7 +131,7 @@ const ManualTrigger: React.FC<ManualTriggerProps> = ({ onActionComplete }) => {
       dispatch(fetchStatus());
       onActionComplete?.();
     } catch (err: any) {
-      notifyError(t('manualTrigger.error'));
+      notifyError(t("manualTrigger.error"));
     } finally {
       setExecuting(null);
     }
@@ -157,34 +143,48 @@ const ManualTrigger: React.FC<ManualTriggerProps> = ({ onActionComplete }) => {
     const actionLabel = t(action.labelKey);
 
     // Build the confirmation content with optional state mismatch warning
-    const isStateMismatch = !isValid && freeeState !== 'unknown';
-    const stateLabel = t(STATE_LABEL_KEYS[freeeState] || 'manualTrigger.stateUnknown');
+    const isStateMismatch = !isValid && freeeState !== "unknown";
+    const stateLabel = t(
+      STATE_LABEL_KEYS[freeeState] || "manualTrigger.stateUnknown",
+    );
 
     Modal.confirm({
-      title: t('manualTrigger.confirmTitle'),
+      title: t("manualTrigger.confirmTitle"),
       icon: <ExclamationCircleOutlined />,
       content: isStateMismatch
-        ? t('manualTrigger.stateWarning', { action: actionLabel, state: stateLabel })
-        : t('manualTrigger.confirm', { action: actionLabel }),
-      okText: isStateMismatch ? t('manualTrigger.executeAnyway') : t('manualTrigger.execute'),
-      okType: isStateMismatch ? 'danger' : 'primary',
-      cancelText: t('common.cancel'),
+        ? t("manualTrigger.stateWarning", {
+            action: actionLabel,
+            state: stateLabel,
+          })
+        : t("manualTrigger.confirm", { action: actionLabel }),
+      okText: isStateMismatch
+        ? t("manualTrigger.executeAnyway")
+        : t("manualTrigger.execute"),
+      okType: isStateMismatch ? "danger" : "primary",
+      cancelText: t("common.cancel"),
       onOk: () => executeAction(action),
     });
   };
 
   const detecting = statusLoading && !statusData;
   const stateColor = STATE_COLORS[freeeState] || STATE_COLORS.unknown;
-  const badgeStatus = BADGE_STATUS[freeeState] || 'error';
-  const stateLabelKey = STATE_LABEL_KEYS[freeeState] || STATE_LABEL_KEYS.unknown;
+  const badgeStatus = BADGE_STATUS[freeeState] || "error";
+  const stateLabelKey =
+    STATE_LABEL_KEYS[freeeState] || STATE_LABEL_KEYS.unknown;
   const hintKey = HINT_KEYS[freeeState];
 
   return (
     <Card
       title={
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
           <Title level={5} style={{ margin: 0 }}>
-            {t('manualTrigger.title')}
+            {t("manualTrigger.title")}
           </Title>
           <Button
             type="text"
@@ -197,15 +197,12 @@ const ManualTrigger: React.FC<ManualTriggerProps> = ({ onActionComplete }) => {
       }
     >
       {/* Current state display with Badge and Tag */}
-      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Space align="center">
-          <Text type="secondary">{t('manualTrigger.currentState')}:</Text>
+          <Text type="secondary">{t("manualTrigger.currentState")}:</Text>
           <Badge status={badgeStatus} />
-          <Tag
-            color={stateColor}
-            style={{ fontWeight: 600 }}
-          >
-            {detecting ? t('manualTrigger.detecting') : t(stateLabelKey)}
+          <Tag color={stateColor} style={{ fontWeight: 600 }}>
+            {detecting ? t("manualTrigger.detecting") : t(stateLabelKey)}
           </Tag>
         </Space>
 
@@ -217,16 +214,18 @@ const ManualTrigger: React.FC<ManualTriggerProps> = ({ onActionComplete }) => {
         )}
 
         {/* Action buttons in 2x2 grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div
+          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}
+        >
           {actions.map((action) => {
             const isValid = action.validStates.includes(freeeState);
             const isExecuting = executing === action.type;
-            const isDimmed = !isValid && freeeState !== 'unknown';
+            const isDimmed = !isValid && freeeState !== "unknown";
 
             return (
               <Button
                 key={action.type}
-                type={isValid ? 'primary' : 'default'}
+                type={isValid ? "primary" : "default"}
                 icon={isExecuting ? <Spin size="small" /> : action.icon}
                 disabled={!!executing || detecting}
                 onClick={() => handleActionClick(action)}
@@ -234,6 +233,7 @@ const ManualTrigger: React.FC<ManualTriggerProps> = ({ onActionComplete }) => {
                 block
                 style={{
                   height: 48,
+                  borderRadius: 8,
                   ...(isValid
                     ? {
                         backgroundColor: action.color,

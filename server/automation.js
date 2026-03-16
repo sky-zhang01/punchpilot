@@ -58,6 +58,17 @@ const ACTION_LABELS = {
   break_end: "Break End (休憩終了)",
 };
 
+/** Approval request type map — short name → freee SPA type string */
+const APPROVAL_TYPE_MAP = {
+  PaidHoliday: "ApprovalRequest::PaidHoliday",
+  SpecialHoliday: "ApprovalRequest::SpecialHoliday",
+  Absence: "ApprovalRequest::Absence",
+  HolidayWork: "ApprovalRequest::HolidayWork",
+  OvertimeWork: "ApprovalRequest::OvertimeWork",
+  WorkTime: "ApprovalRequest::WorkTime",
+  MonthlyAttendance: "ApprovalRequest::MonthlyAttendance",
+};
+
 /**
  * Get freee login credentials (GUI config takes priority over env)
  */
@@ -97,7 +108,7 @@ export function isDebugMode() {
 
 // ─── Real Playwright automation ───────────────────────────
 
-class FreeeBot {
+class PunchBot {
   constructor() {
     this.browser = null;
     this.page = null;
@@ -309,6 +320,147 @@ class FreeeBot {
     return { screenshotBefore: beforePath, screenshotAfter: afterPath };
   }
 
+  // ─── DRY Helpers ──────────────────────────────────────────
+
+  /**
+   * Navigate to a freee SPA hash-routed URL.
+   * Goes to the approval_requests base URL first (if not already there),
+   * then navigates to the target hash route.
+   *
+   * @param {string} targetUrl — full URL with hash route
+   * @param {{ finalWaitMs?: number, useLocationHref?: boolean }} options
+   */
+  async navigateToSpaForm(
+    targetUrl,
+    { finalWaitMs = 3000, useLocationHref = false } = {},
+  ) {
+    const currentUrl = this.page.url();
+    const baseUrl = "https://p.secure.freee.co.jp/approval_requests";
+    if (!currentUrl.startsWith(baseUrl)) {
+      await this.page.goto(baseUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 20000,
+      });
+      await this.page.waitForTimeout(3000);
+    }
+    if (useLocationHref) {
+      await this.page.evaluate(
+        (url) => {
+          window.location.href = url;
+        },
+        targetUrl,
+      );
+    } else {
+      await this.page.goto(targetUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 20000,
+      });
+    }
+    await this.page.waitForTimeout(finalWaitMs);
+  }
+
+  /**
+   * Wait for a form/page element with exponential backoff + SPA hash nudge on attempt 3.
+   * Returns true if found, throws with debug screenshot if not.
+   *
+   * @param {() => Promise<boolean>} checkFn — async function returning true when element is found
+   * @param {string} targetUrl — SPA URL (used for hash nudge)
+   * @param {{ maxAttempts?: number, baseDelay?: number, delayIncrement?: number, debugPrefix?: string }} options
+   * @returns {Promise<true>}
+   */
+  async waitForElement(
+    checkFn,
+    targetUrl,
+    {
+      maxAttempts = 5,
+      baseDelay = 2000,
+      delayIncrement = 1500,
+      debugPrefix = "element",
+    } = {},
+  ) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (await checkFn()) return true;
+      const waitMs = baseDelay + attempt * delayIncrement;
+      console.log(
+        chalk.yellow(
+          `[Bot] Not loaded yet, waiting ${waitMs}ms (attempt ${attempt + 1}/${maxAttempts})...`,
+        ),
+      );
+      await this.page.waitForTimeout(waitMs);
+      if (attempt === 2) {
+        await this.page.evaluate(
+          (url) => {
+            window.location.hash = url.split("#")[1];
+          },
+          targetUrl,
+        );
+        await this.page.waitForTimeout(2000);
+      }
+    }
+    // Not found — take debug screenshot and throw
+    const debugPath = path.join(
+      SCREENSHOTS_DIR,
+      `${debugPrefix}-debug-${Date.now()}.png`,
+    );
+    await this.page.screenshot({ path: debugPath }).catch(() => {});
+    console.log(chalk.red(`[Bot] Debug screenshot: ${debugPath}`));
+    const bodySnippet = await this.page
+      .evaluate(() => document.body.innerText.substring(0, 500))
+      .catch(() => "");
+    throw new Error(
+      `Element not found after ${maxAttempts} attempts. Page: ${bodySnippet.substring(0, 200)}`,
+    );
+  }
+
+  /**
+   * Returns { before(), after() } screenshot helpers with consistent naming.
+   * @param {string} prefix — screenshot file prefix
+   * @returns {{ before: () => Promise<string>, after: () => Promise<string> }}
+   */
+  takeScreenshots(prefix) {
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    return {
+      before: async () => {
+        const p = path.join(SCREENSHOTS_DIR, `${prefix}-before-${ts}.png`);
+        await this.page.screenshot({ path: p });
+        return p;
+      },
+      after: async () => {
+        const p = path.join(SCREENSHOTS_DIR, `${prefix}-after-${ts}.png`);
+        await this.page.screenshot({ path: p });
+        return p;
+      },
+    };
+  }
+
+  /**
+   * Check page body for freee error indicators after form submission.
+   * @param {{ extraIndicators?: string[] }} options
+   * @returns {Promise<{ success: boolean, error?: string, bodyText: string }>}
+   */
+  async checkSubmitResult({ extraIndicators = [] } = {}) {
+    const bodyText = await this.page.evaluate(() =>
+      document.body.innerText.substring(0, 2000),
+    );
+    const indicators = [
+      "エラー",
+      "入力してください",
+      "申請できませんでした",
+      "指定してください",
+      "修正してください",
+      ...extraIndicators,
+    ];
+    const found = indicators.find((ind) => bodyText.includes(ind));
+    if (found) {
+      const pattern = indicators.map((i) => `${i}.{0,100}`).join("|");
+      const errorDetail =
+        bodyText.match(new RegExp(`(${pattern})`))?.[0] ||
+        "Unknown form error";
+      return { success: false, error: errorDetail, bodyText };
+    }
+    return { success: true, bodyText };
+  }
+
   /**
    * Submit a work time correction via freee Web form (勤務時間修正申請).
    * This navigates directly to the correction form URL with the target date,
@@ -323,66 +475,17 @@ class FreeeBot {
     const formUrl = `https://p.secure.freee.co.jp/approval_requests#/requests/new?type=ApprovalRequest::WorkTime&target_date=${date}`;
     console.log(chalk.blue(`[Bot] Navigating to correction form: ${formUrl}`));
 
-    // freee uses SPA hash routing — navigate to the base path first, then handle hash
-    const currentUrl = this.page.url();
-    const baseUrl = "https://p.secure.freee.co.jp/approval_requests";
-    if (!currentUrl.startsWith(baseUrl)) {
-      // Full navigation needed — go to base URL first
-      await this.page.goto(baseUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 20000,
-      });
-      await this.page.waitForTimeout(3000);
-    }
-    // Navigate to the hash route (SPA internal routing)
-    await this.page.goto(formUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 20000,
-    });
-    await this.page.waitForTimeout(3000);
+    await this.navigateToSpaForm(formUrl);
 
-    // Wait for the form to render (SPA React rendering) — retry with exponential backoff
-    // freee uses #approval-request-date-input for the date field (role="combobox" text input).
-    // Try both selectors for forward-compatibility in case freee changes the ID again.
+    // Wait for the form to render — try both selectors for forward-compatibility
     const dateInput = this.page
       .locator("#approval-request-date-input, #approval-request-fields-date")
       .first();
-    let formLoaded = false;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      if ((await dateInput.count()) > 0) {
-        formLoaded = true;
-        break;
-      }
-      const waitMs = 2000 + attempt * 1500; // 2s, 3.5s, 5s, 6.5s, 8s
-      console.log(
-        chalk.yellow(
-          `[Bot] Form not loaded yet, waiting ${waitMs}ms (attempt ${attempt + 1}/5)...`,
-        ),
-      );
-      await this.page.waitForTimeout(waitMs);
-      // Try re-navigating the hash on later attempts (SPA may need a nudge)
-      if (attempt === 2) {
-        await this.page.evaluate((url) => {
-          window.location.hash = url.split("#")[1];
-        }, formUrl);
-        await this.page.waitForTimeout(2000);
-      }
-    }
-    if (!formLoaded) {
-      // Take a debug screenshot before failing
-      const debugPath = path.join(
-        SCREENSHOTS_DIR,
-        `web-correction-debug-${date}-${Date.now()}.png`,
-      );
-      await this.page.screenshot({ path: debugPath }).catch(() => {});
-      console.log(chalk.red(`[Bot] Debug screenshot: ${debugPath}`));
-      const bodySnippet = await this.page
-        .evaluate(() => document.body.innerText.substring(0, 500))
-        .catch(() => "");
-      throw new Error(
-        `Correction form did not load — date input not found after 5 attempts. Page content: ${bodySnippet.substring(0, 200)}`,
-      );
-    }
+    await this.waitForElement(
+      async () => (await dateInput.count()) > 0,
+      formUrl,
+      { debugPrefix: `web-correction-${date}` },
+    );
     const dateValue = await dateInput.inputValue();
     if (dateValue !== date) {
       console.log(
@@ -627,13 +730,8 @@ class FreeeBot {
       );
     }
 
-    // Screenshot before submit
-    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const beforePath = path.join(
-      SCREENSHOTS_DIR,
-      `web-correction-${date}-before-${ts}.png`,
-    );
-    await this.page.screenshot({ path: beforePath });
+    const screenshots = this.takeScreenshots(`web-correction-${date}`);
+    const beforePath = await screenshots.before();
 
     // Click submit button
     console.log(chalk.blue(`[Bot] Submitting correction for ${date}...`));
@@ -646,46 +744,25 @@ class FreeeBot {
     await submitBtn.click();
     await this.page.waitForTimeout(5000);
 
-    // Screenshot after submit
-    const afterPath = path.join(
-      SCREENSHOTS_DIR,
-      `web-correction-${date}-after-${ts}.png`,
-    );
-    await this.page.screenshot({ path: afterPath });
+    const afterPath = await screenshots.after();
 
-    // Check for success — after successful submit, the page navigates to the request list
-    // or shows a success message
-    const postSubmitUrl = this.page.url();
-    const bodyText = await this.page.evaluate(() =>
-      document.body.innerText.substring(0, 2000),
-    );
-
-    // Check for error indicators
-    if (
-      bodyText.includes("エラー") ||
-      bodyText.includes("入力してください") ||
-      bodyText.includes("申請できませんでした") ||
-      bodyText.includes("指定してください") ||
-      bodyText.includes("修正してください")
-    ) {
-      const errorDetail =
-        bodyText.match(
-          /(エラー.{0,100}|入力してください.{0,50}|申請できませんでした.{0,80}|承認者を指定してください.{0,30})/,
-        )?.[0] || "Unknown form error";
+    // Check for errors
+    const result = await this.checkSubmitResult();
+    if (!result.success) {
       console.log(
-        chalk.red(`[Bot] Correction form error for ${date}: ${errorDetail}`),
+        chalk.red(`[Bot] Correction form error for ${date}: ${result.error}`),
       );
       return {
         success: false,
-        error: errorDetail,
+        error: result.error,
         screenshotBefore: beforePath,
         screenshotAfter: afterPath,
       };
     }
 
-    // If we're still on the same form URL, something may have gone wrong
+    // If we're still on the same form URL, check for validation errors
+    const postSubmitUrl = this.page.url();
     if (postSubmitUrl.includes("requests/new")) {
-      // Check if there's a validation error shown
       const hasError = await this.page
         .locator('.vb-message--error, [role="alert"]')
         .count();
@@ -803,71 +880,22 @@ class FreeeBot {
    * @returns {{ success: boolean, error?: string }}
    */
   async submitLeaveRequest(type, date, options = {}) {
-    const typeMap = {
-      PaidHoliday: "ApprovalRequest::PaidHoliday",
-      SpecialHoliday: "ApprovalRequest::SpecialHoliday",
-      Absence: "ApprovalRequest::Absence",
-      HolidayWork: "ApprovalRequest::HolidayWork",
-      OvertimeWork: "ApprovalRequest::OvertimeWork",
-    };
-
-    const freeeType = typeMap[type] || `ApprovalRequest::${type}`;
+    const freeeType =
+      APPROVAL_TYPE_MAP[type] || `ApprovalRequest::${type}`;
     const formUrl = `https://p.secure.freee.co.jp/approval_requests#/requests/new?type=${freeeType}&target_date=${date}`;
     console.log(
       chalk.blue(`[Bot] Navigating to leave request form: ${formUrl}`),
     );
 
-    // freee uses SPA hash routing — navigate to the base path first, then handle hash
-    const currentUrl = this.page.url();
-    const baseUrl = "https://p.secure.freee.co.jp/approval_requests";
-    if (!currentUrl.startsWith(baseUrl)) {
-      await this.page.goto(baseUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 20000,
-      });
-      await this.page.waitForTimeout(3000);
-    }
-    await this.page.goto(formUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 20000,
-    });
-    await this.page.waitForTimeout(4000);
+    await this.navigateToSpaForm(formUrl, { finalWaitMs: 4000 });
 
-    // Verify the form loaded (freee updated selector from #approval-request-date-input)
+    // Wait for date input to appear
     const dateInput = this.page.locator("#approval-request-fields-date");
-    let formLoaded = false;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      if ((await dateInput.count()) > 0) {
-        formLoaded = true;
-        break;
-      }
-      const waitMs = 2000 + attempt * 1500;
-      console.log(
-        chalk.yellow(
-          `[Bot] Leave form not loaded yet, waiting ${waitMs}ms (attempt ${attempt + 1}/5)...`,
-        ),
-      );
-      await this.page.waitForTimeout(waitMs);
-      if (attempt === 2) {
-        await this.page.evaluate((url) => {
-          window.location.hash = url.split("#")[1];
-        }, formUrl);
-        await this.page.waitForTimeout(2000);
-      }
-    }
-    if (!formLoaded) {
-      const debugPath = path.join(
-        SCREENSHOTS_DIR,
-        `leave-debug-${type}-${date}-${Date.now()}.png`,
-      );
-      await this.page.screenshot({ path: debugPath }).catch(() => {});
-      const bodySnippet = await this.page
-        .evaluate(() => document.body.innerText.substring(0, 500))
-        .catch(() => "");
-      throw new Error(
-        `Leave form did not load — date input not found after 5 attempts. Page content: ${bodySnippet.substring(0, 200)}`,
-      );
-    }
+    await this.waitForElement(
+      async () => (await dateInput.count()) > 0,
+      formUrl,
+      { debugPrefix: `leave-${type}-${date}` },
+    );
 
     // Fill time fields if provided (for OvertimeWork, PaidHoliday half/hour)
     if (options.startTime) {
@@ -935,13 +963,8 @@ class FreeeBot {
       }
     }
 
-    // Screenshot before submit
-    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const beforePath = path.join(
-      SCREENSHOTS_DIR,
-      `leave-${type}-${date}-before-${ts}.png`,
-    );
-    await this.page.screenshot({ path: beforePath });
+    const screenshots = this.takeScreenshots(`leave-${type}-${date}`);
+    await screenshots.before();
 
     // Submit
     console.log(chalk.blue(`[Bot] Submitting ${type} leave for ${date}...`));
@@ -954,22 +977,12 @@ class FreeeBot {
     await submitBtn.click();
     await this.page.waitForTimeout(5000);
 
-    // Screenshot after submit
-    const afterPath = path.join(
-      SCREENSHOTS_DIR,
-      `leave-${type}-${date}-after-${ts}.png`,
-    );
-    await this.page.screenshot({ path: afterPath });
+    await screenshots.after();
 
     // Check for errors
-    const bodyText = await this.page.evaluate(() =>
-      document.body.innerText.substring(0, 2000),
-    );
-    if (bodyText.includes("エラー") || bodyText.includes("入力してください")) {
-      const errorDetail =
-        bodyText.match(/(エラー.{0,100}|入力してください.{0,50})/)?.[0] ||
-        "Unknown form error";
-      return { success: false, error: errorDetail };
+    const result = await this.checkSubmitResult();
+    if (!result.success) {
+      return { success: false, error: result.error };
     }
 
     console.log(
@@ -987,95 +1000,41 @@ class FreeeBot {
    * @returns {{ success: boolean, error?: string }}
    */
   async withdrawApprovalRequest(type, requestId) {
-    // Map type to freee URL type format
-    const typeMap = {
-      PaidHoliday: "ApprovalRequest::PaidHoliday",
-      SpecialHoliday: "ApprovalRequest::SpecialHoliday",
-      Absence: "ApprovalRequest::Absence",
-      HolidayWork: "ApprovalRequest::HolidayWork",
-      OvertimeWork: "ApprovalRequest::OvertimeWork",
-      WorkTime: "ApprovalRequest::WorkTime",
-      MonthlyAttendance: "ApprovalRequest::MonthlyAttendance",
-    };
-
-    const freeeType = typeMap[type] || `ApprovalRequest::${type}`;
-    // freee SPA URL format: #requests/{id}?type=ApprovalRequest::Type
+    const freeeType =
+      APPROVAL_TYPE_MAP[type] || `ApprovalRequest::${type}`;
     const detailUrl = `https://p.secure.freee.co.jp/approval_requests#requests/${requestId}?type=${encodeURIComponent(freeeType)}`;
     console.log(
       chalk.blue(`[Bot] Navigating to approval request detail: ${detailUrl}`),
     );
 
-    // Navigate to the approval requests base first (SPA needs to load)
-    const currentUrl = this.page.url();
-    const baseUrl = "https://p.secure.freee.co.jp/approval_requests";
-    if (!currentUrl.startsWith(baseUrl)) {
-      await this.page.goto(baseUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 20000,
-      });
-      await this.page.waitForTimeout(3000);
-    }
-    // Navigate to detail via hash change
-    await this.page.evaluate((url) => {
-      window.location.href = url;
-    }, detailUrl);
-    await this.page.waitForTimeout(4000);
+    await this.navigateToSpaForm(detailUrl, {
+      finalWaitMs: 4000,
+      useLocationHref: true,
+    });
 
-    // Wait for the detail page to load — look for the withdraw button or request info
-    let pageLoaded = false;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const bodyText = await this.page
-        .evaluate(() => document.body.innerText.substring(0, 3000))
-        .catch(() => "");
-      // Check if the request detail is shown
-      if (
-        bodyText.includes("取り下げ") ||
-        bodyText.includes("取下げ") ||
-        bodyText.includes("申請中") ||
-        bodyText.includes("承認待ち")
-      ) {
-        pageLoaded = true;
-        break;
-      }
-      const waitMs = 2000 + attempt * 1500;
-      console.log(
-        chalk.yellow(
-          `[Bot] Request detail not loaded yet, waiting ${waitMs}ms (attempt ${attempt + 1}/5)...`,
-        ),
-      );
-      await this.page.waitForTimeout(waitMs);
-      if (attempt === 2) {
-        await this.page.evaluate((url) => {
-          window.location.hash = url.split("#")[1];
-        }, detailUrl);
-        await this.page.waitForTimeout(2000);
-      }
-    }
-
-    if (!pageLoaded) {
-      const debugPath = path.join(
-        SCREENSHOTS_DIR,
-        `withdraw-debug-${type}-${requestId}-${Date.now()}.png`,
-      );
-      await this.page.screenshot({ path: debugPath }).catch(() => {});
-      const bodySnippet = await this.page
-        .evaluate(() => document.body.innerText.substring(0, 500))
-        .catch(() => "");
-      throw new Error(
-        `Request detail page did not load. Page: ${bodySnippet.substring(0, 200)}`,
-      );
-    }
-
-    // Screenshot before withdraw
-    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const beforePath = path.join(
-      SCREENSHOTS_DIR,
-      `withdraw-${type}-${requestId}-before-${ts}.png`,
+    // Wait for detail page — look for withdraw button text or request status
+    await this.waitForElement(
+      async () => {
+        const bodyText = await this.page
+          .evaluate(() => document.body.innerText.substring(0, 3000))
+          .catch(() => "");
+        return (
+          bodyText.includes("取り下げ") ||
+          bodyText.includes("取下げ") ||
+          bodyText.includes("申請中") ||
+          bodyText.includes("承認待ち")
+        );
+      },
+      detailUrl,
+      { debugPrefix: `withdraw-${type}-${requestId}` },
     );
-    await this.page.screenshot({ path: beforePath });
+
+    const screenshots = this.takeScreenshots(
+      `withdraw-${type}-${requestId}`,
+    );
+    const beforePath = await screenshots.before();
 
     // Find and click the 取下げ button
-    // freee may render it as "取り下げ" or "取下げ" depending on the page version
     let withdrawBtn = this.page
       .locator("button")
       .filter({ hasText: "取り下げ" });
@@ -1083,7 +1042,6 @@ class FreeeBot {
       withdrawBtn = this.page.locator("button").filter({ hasText: "取下げ" });
     }
     if ((await withdrawBtn.count()) === 0) {
-      // Try broader search — might be a link or anchor
       withdrawBtn = this.page
         .locator("a, button")
         .filter({ hasText: /取り?下げ/ });
@@ -1109,7 +1067,7 @@ class FreeeBot {
     await withdrawBtn.first().click();
     await this.page.waitForTimeout(2000);
 
-    // Handle confirmation dialog (freee shows a confirmation modal/dialog)
+    // Handle confirmation dialog
     const confirmBtn = this.page
       .locator("button")
       .filter({ hasText: /^(OK|はい|確認|取り下げ(する|る)?|取下げ)$/ });
@@ -1119,30 +1077,17 @@ class FreeeBot {
       await this.page.waitForTimeout(3000);
     }
 
-    // Screenshot after withdraw
-    const afterPath = path.join(
-      SCREENSHOTS_DIR,
-      `withdraw-${type}-${requestId}-after-${ts}.png`,
-    );
-    await this.page.screenshot({ path: afterPath });
+    const afterPath = await screenshots.after();
 
-    // Check for success
-    const postText = await this.page
-      .evaluate(() => document.body.innerText.substring(0, 2000))
-      .catch(() => "");
-    if (
-      postText.includes("エラー") ||
-      postText.includes("取り下げできません") ||
-      postText.includes("削除できない")
-    ) {
-      const errorDetail =
-        postText.match(
-          /(エラー.{0,100}|取り下げできません.{0,80}|削除できない.{0,80})/,
-        )?.[0] || "Unknown withdrawal error";
-      console.log(chalk.red(`[Bot] Withdrawal failed: ${errorDetail}`));
+    // Check for errors (withdraw-specific indicators)
+    const result = await this.checkSubmitResult({
+      extraIndicators: ["取り下げできません", "削除できない"],
+    });
+    if (!result.success) {
+      console.log(chalk.red(`[Bot] Withdrawal failed: ${result.error}`));
       return {
         success: false,
-        error: errorDetail,
+        error: result.error,
         screenshotBefore: beforePath,
         screenshotAfter: afterPath,
       };
@@ -1178,67 +1123,22 @@ class FreeeBot {
       chalk.blue(`[Bot] Navigating to monthly closing form: ${formUrl}`),
     );
 
-    // SPA hash routing — navigate to base URL first if on a different domain
-    const currentUrl = this.page.url();
-    const baseUrl = "https://p.secure.freee.co.jp/approval_requests";
-    if (!currentUrl.startsWith(baseUrl)) {
-      await this.page.goto(baseUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 20000,
-      });
-      await this.page.waitForTimeout(3000);
-    }
-    await this.page.goto(formUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 20000,
-    });
-    await this.page.waitForTimeout(3000);
+    await this.navigateToSpaForm(formUrl);
 
     // Wait for the "申請" submit button to appear (form is pre-populated from URL params)
     const submitBtn = this.page
       .locator("button.vb-button--appearancePrimary")
       .filter({ hasText: "申請" });
-    let formLoaded = false;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      if ((await submitBtn.count()) > 0) {
-        formLoaded = true;
-        break;
-      }
-      const waitMs = 2000 + attempt * 1500; // 2s, 3.5s, 5s, 6.5s, 8s
-      console.log(
-        chalk.yellow(
-          `[Bot] Monthly form not ready, waiting ${waitMs}ms (attempt ${attempt + 1}/5)...`,
-        ),
-      );
-      await this.page.waitForTimeout(waitMs);
-      // Nudge the SPA hash router on later attempts
-      if (attempt === 2) {
-        await this.page.evaluate((url) => {
-          window.location.hash = url.split("#")[1];
-        }, formUrl);
-        await this.page.waitForTimeout(2000);
-      }
-    }
-    if (!formLoaded) {
-      const debugPath = path.join(
-        SCREENSHOTS_DIR,
-        `monthly-closing-debug-${year}-${month}-${Date.now()}.png`,
-      );
-      await this.page.screenshot({ path: debugPath }).catch(() => {});
-      console.log(chalk.red(`[Bot] Debug screenshot: ${debugPath}`));
-      const bodySnippet = await this.page
-        .evaluate(() => document.body.innerText.substring(0, 500))
-        .catch(() => "");
-      throw new Error(
-        `Monthly closing form did not load — submit button not found. Page: ${bodySnippet.substring(0, 200)}`,
-      );
-    }
-
-    const beforePath = path.join(
-      SCREENSHOTS_DIR,
-      `monthly-closing-before-${year}-${month}-${Date.now()}.png`,
+    await this.waitForElement(
+      async () => (await submitBtn.count()) > 0,
+      formUrl,
+      { debugPrefix: `monthly-closing-${year}-${month}` },
     );
-    await this.page.screenshot({ path: beforePath });
+
+    const screenshots = this.takeScreenshots(
+      `monthly-closing-${year}-${month}`,
+    );
+    const beforePath = await screenshots.before();
 
     console.log(
       chalk.blue(
@@ -1248,11 +1148,7 @@ class FreeeBot {
     await submitBtn.click();
     await this.page.waitForTimeout(3000);
 
-    const afterPath = path.join(
-      SCREENSHOTS_DIR,
-      `monthly-closing-after-${year}-${month}-${Date.now()}.png`,
-    );
-    await this.page.screenshot({ path: afterPath });
+    const afterPath = await screenshots.after();
 
     // If still on the form page, check whether freee blocked it as duplicate
     const finalUrl = this.page.url();
@@ -1261,9 +1157,6 @@ class FreeeBot {
         .evaluate(() => document.body.innerText.substring(0, 2000))
         .catch(() => "");
 
-      // freee blocks duplicate monthly closing submissions with this message.
-      // The goal state (a monthly closing request exists) is already achieved,
-      // so treat it as success rather than an error.
       if (
         bodyText.includes(
           FREEE_ERROR_MESSAGES.MONTHLY_CLOSING_ALREADY_SUBMITTED,
@@ -1298,6 +1191,40 @@ class FreeeBot {
       screenshotBefore: beforePath,
       screenshotAfter: afterPath,
     };
+  }
+}
+
+// ─── Bot lifecycle wrapper ────────────────────────────────
+
+/**
+ * Wraps the acquireLock → PunchBot → init → login → actionFn → cleanup → releaseLock lifecycle.
+ * Handles login error code propagation (WEB_LOGIN_FAILED, WEB_CREDENTIALS_NOT_CONFIGURED).
+ *
+ * @param {(bot: PunchBot) => Promise<T>} actionFn — receives an initialized, logged-in bot
+ * @returns {Promise<T>}
+ */
+async function withPunchBot(actionFn) {
+  await acquireLock();
+  const bot = new PunchBot();
+  try {
+    await bot.init();
+    try {
+      await bot.login();
+    } catch (loginErr) {
+      if (
+        loginErr.code === "WEB_LOGIN_FAILED" ||
+        loginErr.code === "WEB_CREDENTIALS_NOT_CONFIGURED"
+      ) {
+        const err = new Error(`Web login failed: ${loginErr.message}`);
+        err.code = loginErr.code;
+        throw err;
+      }
+      throw loginErr;
+    }
+    return await actionFn(bot);
+  } finally {
+    await bot.cleanup();
+    releaseLock();
   }
 }
 
@@ -1398,18 +1325,11 @@ export async function detectCurrentState() {
   }
 
   // Browser mode — Playwright with mutex
-  await acquireLock();
-  const bot = new FreeeBot();
   try {
-    await bot.init();
-    await bot.login();
-    return await bot.detectState();
+    return await withPunchBot((bot) => bot.detectState());
   } catch (e) {
     console.error(chalk.red(`[Bot] detectState failed: ${e.message}`));
     return FREEE_STATE.UNKNOWN;
-  } finally {
-    await bot.cleanup();
-    releaseLock();
   }
 }
 
@@ -1471,63 +1391,70 @@ export async function executeAction(actionType) {
   }
 
   // Browser mode — Playwright with mutex
-  await acquireLock();
   const start = Date.now();
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const bot = new FreeeBot();
 
   try {
-    await bot.init();
-    await bot.login();
+    return await withPunchBot(async (bot) => {
+      // Pre-flight state check
+      const state = await bot.detectState();
+      const valid = isActionValidForState(actionType, state);
+      if (!valid.ok) {
+        console.log(
+          chalk.yellow(`[Bot] Skipping ${actionType}: ${valid.reason}`),
+        );
+        return {
+          status: "skipped",
+          screenshotBefore: null,
+          screenshotAfter: null,
+          durationMs: Date.now() - start,
+          error: valid.reason,
+          detectedState: state,
+        };
+      }
 
-    // Pre-flight state check
-    const state = await bot.detectState();
-    const valid = isActionValidForState(actionType, state);
-    if (!valid.ok) {
-      console.log(
-        chalk.yellow(`[Bot] Skipping ${actionType}: ${valid.reason}`),
-      );
-      return {
-        status: "skipped",
-        screenshotBefore: null,
-        screenshotAfter: null,
-        durationMs: Date.now() - start,
-        error: valid.reason,
-        detectedState: state,
-      };
-    }
-
-    const result = await bot.clickAction(actionType, ts);
-    console.log(chalk.green(`[Bot] ${ACTION_LABELS[actionType]} completed`));
-    return {
-      status: "success",
-      ...result,
-      durationMs: Date.now() - start,
-      error: null,
-      detectedState: state,
-    };
+      try {
+        const result = await bot.clickAction(actionType, ts);
+        console.log(
+          chalk.green(`[Bot] ${ACTION_LABELS[actionType]} completed`),
+        );
+        return {
+          status: "success",
+          ...result,
+          durationMs: Date.now() - start,
+          error: null,
+          detectedState: state,
+        };
+      } catch (clickError) {
+        // Try to capture error screenshot while bot is still alive
+        let screenshotAfter = null;
+        try {
+          if (bot.page) {
+            screenshotAfter = path.join(
+              SCREENSHOTS_DIR,
+              `error-${actionType}-${ts}.png`,
+            );
+            await bot.page.screenshot({ path: screenshotAfter });
+          }
+        } catch {}
+        return {
+          status: "failure",
+          screenshotBefore: null,
+          screenshotAfter,
+          durationMs: Date.now() - start,
+          error: clickError.message,
+        };
+      }
+    });
   } catch (error) {
     console.error(chalk.red(`[Bot] ${actionType} failed: ${error.message}`));
-    let screenshotAfter = null;
-    try {
-      if (bot.page) {
-        screenshotAfter = path.join(
-          SCREENSHOTS_DIR,
-          `error-${actionType}-${ts}.png`,
-        );
-        await bot.page.screenshot({ path: screenshotAfter });
-      }
-    } catch {}
     return {
       status: "failure",
       screenshotBefore: null,
-      screenshotAfter,
+      screenshotAfter: null,
       durationMs: Date.now() - start,
       error: error.message,
     };
-  } finally {
-    await bot.cleanup();
-    releaseLock();
   }
 }
 
@@ -1594,129 +1521,104 @@ export async function submitWebCorrections(entries, reason) {
     }));
   }
 
-  await acquireLock();
-  const bot = new FreeeBot();
   const results = [];
 
   try {
-    await bot.init();
+    await withPunchBot(async (bot) => {
+      for (const entry of entries) {
+        try {
+          const parseTime = (isoStr) => {
+            if (!isoStr) return null;
+            const match = isoStr.match(/T(\d{2}):(\d{2})/);
+            return match
+              ? { hour: parseInt(match[1], 10), min: parseInt(match[2], 10) }
+              : null;
+          };
 
-    // Attempt login — catch credential-specific failures
-    try {
-      await bot.login();
-    } catch (loginErr) {
-      if (
-        loginErr.code === "WEB_LOGIN_FAILED" ||
-        loginErr.code === "WEB_CREDENTIALS_NOT_CONFIGURED"
-      ) {
-        // Return a distinguishable error code for all entries
-        console.error(
-          chalk.red(
-            `[Bot] Login failed (${loginErr.code}): ${loginErr.message}`,
-          ),
-        );
-        await bot.cleanup();
-        releaseLock();
-        return entries.map((e) => ({
-          date: e.date,
-          success: false,
-          error: "web_credentials_invalid",
-          method: "web_correction",
-        }));
-      }
-      throw loginErr; // Re-throw non-credential errors
-    }
+          const clockIn = parseTime(entry.clock_in_at);
+          const clockOut = parseTime(entry.clock_out_at);
 
-    for (const entry of entries) {
-      try {
-        // Parse times from ISO 8601 strings (e.g. "2026-02-03T10:00:00+09:00")
-        const parseTime = (isoStr) => {
-          if (!isoStr) return null;
-          const match = isoStr.match(/T(\d{2}):(\d{2})/);
-          return match
-            ? { hour: parseInt(match[1], 10), min: parseInt(match[2], 10) }
-            : null;
-        };
+          if (!clockIn || !clockOut) {
+            results.push({
+              date: entry.date,
+              success: false,
+              error: "Missing clock_in or clock_out time",
+              method: "web_correction",
+            });
+            continue;
+          }
 
-        const clockIn = parseTime(entry.clock_in_at);
-        const clockOut = parseTime(entry.clock_out_at);
+          const times = {
+            clockInHour: clockIn.hour,
+            clockInMin: clockIn.min,
+            clockOutHour: clockOut.hour,
+            clockOutMin: clockOut.min,
+          };
 
-        if (!clockIn || !clockOut) {
+          if (entry.break_records && entry.break_records.length > 0) {
+            const br = entry.break_records[0];
+            const bStart = parseTime(br.clock_in_at);
+            const bEnd = parseTime(br.clock_out_at);
+            if (bStart && bEnd) {
+              times.breakStartHour = bStart.hour;
+              times.breakStartMin = bStart.min;
+              times.breakEndHour = bEnd.hour;
+              times.breakEndMin = bEnd.min;
+            }
+          }
+
+          const result = await bot.submitWorkTimeCorrection(
+            entry.date,
+            times,
+            reason || "打刻漏れのため修正",
+          );
+          results.push({
+            date: entry.date,
+            success: result.success,
+            error: result.error || null,
+            method: "web_correction",
+          });
+
+          await new Promise((r) => setTimeout(r, 1000));
+        } catch (err) {
+          console.error(
+            chalk.red(
+              `[Bot] Web correction failed for ${entry.date}: ${err.message}`,
+            ),
+          );
           results.push({
             date: entry.date,
             success: false,
-            error: "Missing clock_in or clock_out time",
+            error: err.message,
             method: "web_correction",
           });
-          continue;
         }
-
-        const times = {
-          clockInHour: clockIn.hour,
-          clockInMin: clockIn.min,
-          clockOutHour: clockOut.hour,
-          clockOutMin: clockOut.min,
-        };
-
-        // Add break times if present
-        if (entry.break_records && entry.break_records.length > 0) {
-          const br = entry.break_records[0];
-          const bStart = parseTime(br.clock_in_at);
-          const bEnd = parseTime(br.clock_out_at);
-          if (bStart && bEnd) {
-            times.breakStartHour = bStart.hour;
-            times.breakStartMin = bStart.min;
-            times.breakEndHour = bEnd.hour;
-            times.breakEndMin = bEnd.min;
-          }
-        }
-
-        const result = await bot.submitWorkTimeCorrection(
-          entry.date,
-          times,
-          reason || "打刻漏れのため修正",
-        );
-        results.push({
-          date: entry.date,
-          success: result.success,
-          error: result.error || null,
-          method: "web_correction",
-        });
-
-        // Short delay between submissions to avoid being rate-limited
-        await new Promise((r) => setTimeout(r, 1000));
-      } catch (err) {
-        console.error(
-          chalk.red(
-            `[Bot] Web correction failed for ${entry.date}: ${err.message}`,
-          ),
-        );
-        results.push({
-          date: entry.date,
-          success: false,
-          error: err.message,
-          method: "web_correction",
-        });
       }
-    }
+    });
   } catch (err) {
-    console.error(
-      chalk.red(`[Bot] Web correction session failed: ${err.message}`),
-    );
-    // Return failures for any remaining entries
+    // Login failures or session-level errors
+    const errorCode =
+      err.code === "WEB_LOGIN_FAILED" ||
+      err.code === "WEB_CREDENTIALS_NOT_CONFIGURED"
+        ? "web_credentials_invalid"
+        : err.message;
+    if (errorCode === "web_credentials_invalid") {
+      console.error(chalk.red(`[Bot] Login failed: ${err.message}`));
+    } else {
+      console.error(
+        chalk.red(`[Bot] Web correction session failed: ${err.message}`),
+      );
+    }
     for (const entry of entries) {
       if (!results.find((r) => r.date === entry.date)) {
         results.push({
           date: entry.date,
           success: false,
-          error: err.message,
+          error: errorCode,
           method: "web_correction",
         });
       }
     }
-  } finally {
-    await bot.cleanup();
-    releaseLock();
   }
 
   return results;
@@ -1739,16 +1641,7 @@ export async function scrapeEmployeeProfile(employeeId) {
     throw new Error("freee Web credentials not configured");
   }
 
-  await acquireLock();
-  const bot = new FreeeBot();
-  try {
-    await bot.init();
-    await bot.login();
-    return await bot.scrapeEmployeeInfo(employeeId);
-  } finally {
-    await bot.cleanup();
-    releaseLock();
-  }
+  return withPunchBot((bot) => bot.scrapeEmployeeInfo(employeeId));
 }
 
 /**
@@ -1764,16 +1657,7 @@ export async function submitLeaveRequest(type, date, options = {}) {
     throw new Error("freee Web credentials not configured");
   }
 
-  await acquireLock();
-  const bot = new FreeeBot();
-  try {
-    await bot.init();
-    await bot.login();
-    return await bot.submitLeaveRequest(type, date, options);
-  } finally {
-    await bot.cleanup();
-    releaseLock();
-  }
+  return withPunchBot((bot) => bot.submitLeaveRequest(type, date, options));
 }
 
 /**
@@ -1791,34 +1675,23 @@ export async function withdrawApprovalRequestWeb(type, requestId) {
     return { success: false, error: "web_credentials_required" };
   }
 
-  await acquireLock();
-  const bot = new FreeeBot();
   try {
-    await bot.init();
-
-    try {
-      await bot.login();
-    } catch (loginErr) {
-      if (
-        loginErr.code === "WEB_LOGIN_FAILED" ||
-        loginErr.code === "WEB_CREDENTIALS_NOT_CONFIGURED"
-      ) {
-        return { success: false, error: "web_credentials_invalid" };
-      }
-      throw loginErr;
-    }
-
-    return await bot.withdrawApprovalRequest(type, requestId);
+    return await withPunchBot((bot) =>
+      bot.withdrawApprovalRequest(type, requestId),
+    );
   } catch (err) {
+    if (
+      err.code === "WEB_LOGIN_FAILED" ||
+      err.code === "WEB_CREDENTIALS_NOT_CONFIGURED"
+    ) {
+      return { success: false, error: "web_credentials_invalid" };
+    }
     console.error(
       chalk.red(
         `[Bot] Web withdrawal failed for ${type}-${requestId}: ${err.message}`,
       ),
     );
     return { success: false, error: err.message };
-  } finally {
-    await bot.cleanup();
-    releaseLock();
   }
 }
 
@@ -1837,34 +1710,23 @@ export async function submitMonthlyAttendanceClosingWeb(year, month) {
     return { success: false, error: "web_credentials_required" };
   }
 
-  await acquireLock();
-  const bot = new FreeeBot();
   try {
-    await bot.init();
-
-    try {
-      await bot.login();
-    } catch (loginErr) {
-      if (
-        loginErr.code === "WEB_LOGIN_FAILED" ||
-        loginErr.code === "WEB_CREDENTIALS_NOT_CONFIGURED"
-      ) {
-        return { success: false, error: "web_credentials_invalid" };
-      }
-      throw loginErr;
-    }
-
-    return await bot.submitMonthlyClosingWeb(year, month);
+    return await withPunchBot((bot) =>
+      bot.submitMonthlyClosingWeb(year, month),
+    );
   } catch (err) {
+    if (
+      err.code === "WEB_LOGIN_FAILED" ||
+      err.code === "WEB_CREDENTIALS_NOT_CONFIGURED"
+    ) {
+      return { success: false, error: "web_credentials_invalid" };
+    }
     console.error(
       chalk.red(
         `[Bot] Monthly closing web submission failed for ${year}-${month}: ${err.message}`,
       ),
     );
     return { success: false, error: err.message };
-  } finally {
-    await bot.cleanup();
-    releaseLock();
   }
 }
 
@@ -2007,8 +1869,8 @@ export function determineActionsForToday(
     const actualBreakStartMin = breakStartRecord
       ? toMin(breakStartRecord.time)
       : null;
-    if (actualBreakStartMin != null && curMin - actualBreakStartMin > 60) {
-      // Break exceeded 60 minutes → end immediately
+    if (actualBreakStartMin != null && curMin - actualBreakStartMin > 90) {
+      // Break exceeded 90 minutes → end immediately
       result.immediateActions.push("break_end");
     } else {
       result.execute.push("break_end");

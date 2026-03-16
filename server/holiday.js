@@ -7,20 +7,44 @@ import { todayStringInTz, currentDayInTz } from './timezone.js';
 const JP_API_URL = 'https://holidays-jp.github.io/api/v1/date.json';
 const CN_API_URL = (year) => `https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/${year}.json`;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /**
- * Fetch national holidays for a country+year, with daily caching.
+ * Compute smart TTL based on country and year relative to current date.
+ * JP holidays are stable once published; CN holidays change more often
+ * (especially late in the year when next year's schedule is announced).
+ */
+export function computeTtlMs(country, year) {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const month = now.getMonth() + 1; // 1-12
+
+  if (country === 'jp') {
+    if (year <= currentYear) return 30 * DAY_MS;
+    // Next year
+    if (month >= 10) return 7 * DAY_MS;   // Oct-Dec: check weekly
+    return 60 * DAY_MS;                    // Jan-Sep: check infrequently
+  }
+  // CN
+  if (year <= currentYear) return 14 * DAY_MS;
+  // Next year
+  if (month >= 10) return 3 * DAY_MS;     // Oct-Dec: check frequently
+  return 30 * DAY_MS;                      // Jan-Sep: monthly
+}
+
+/**
+ * Fetch national holidays for a country+year, with smart TTL caching.
  * Returns: { "YYYY-MM-DD": "Holiday Name", ... }
  */
 export async function fetchNationalHolidays(country = 'jp', year = null) {
   // Resolve year for cache key
   const resolvedYear = year || new Date().getFullYear();
   const cacheKey = `holiday_cache_${country}_${resolvedYear}`;
-  const cacheDateKey = `holiday_cache_date_${country}_${resolvedYear}`;
-  const cacheDate = getSetting(cacheDateKey);
-  const today = todayStringInTz();
+  const expiryKey = `holiday_cache_expires_${country}_${resolvedYear}`;
+  const expiresAt = parseInt(getSetting(expiryKey) || '0', 10);
 
-  // Return cached data if still valid (same day)
-  if (cacheDate === today) {
+  // Return cached data if still valid
+  if (Date.now() < expiresAt) {
     try {
       const cached = getSetting(cacheKey);
       if (cached) return JSON.parse(cached);
@@ -31,9 +55,9 @@ export async function fetchNationalHolidays(country = 'jp', year = null) {
 
   try {
     if (country === 'jp') {
-      return await fetchJpHolidays(resolvedYear, cacheKey, cacheDateKey, today);
+      return await fetchJpHolidays(resolvedYear, cacheKey, expiryKey, country);
     } else if (country === 'cn') {
-      return await fetchCnHolidays(resolvedYear, cacheKey, cacheDateKey, today);
+      return await fetchCnHolidays(resolvedYear, cacheKey, expiryKey, country);
     }
     return {};
   } catch (error) {
@@ -50,7 +74,7 @@ export async function fetchNationalHolidays(country = 'jp', year = null) {
  * Fetch Japanese holidays: { "YYYY-MM-DD": "名前", ... }
  * JP API returns ALL years in a single file, we filter by year.
  */
-async function fetchJpHolidays(year, cacheKey, cacheDateKey, today) {
+async function fetchJpHolidays(year, cacheKey, expiryKey, country) {
   const response = await fetch(JP_API_URL);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const allData = await response.json();
@@ -64,9 +88,10 @@ async function fetchJpHolidays(year, cacheKey, cacheDateKey, today) {
     }
   }
 
-  setSetting(cacheDateKey, today);
+  const ttlMs = computeTtlMs(country, year);
+  setSetting(expiryKey, String(Date.now() + ttlMs));
   setSetting(cacheKey, JSON.stringify(data));
-  console.log(`[Holiday] Fetched ${Object.keys(data).length} JP national holidays for ${year}`);
+  console.log(`[Holiday] Fetched ${Object.keys(data).length} JP national holidays for ${year} (TTL: ${Math.round(ttlMs / DAY_MS)}d)`);
   return data;
 }
 
@@ -76,7 +101,7 @@ async function fetchJpHolidays(year, cacheKey, cacheDateKey, today) {
  * We convert to: { "YYYY-MM-DD": "名前", ... } (same as JP format, only off-days)
  * Also caches 调休 workdays (isOffDay=false) separately for weekend override logic.
  */
-async function fetchCnHolidays(year, cacheKey, cacheDateKey, today) {
+async function fetchCnHolidays(year, cacheKey, expiryKey, country) {
   const url = CN_API_URL(year);
   const response = await fetch(url);
   if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
@@ -94,12 +119,13 @@ async function fetchCnHolidays(year, cacheKey, cacheDateKey, today) {
     }
   }
 
-  setSetting(cacheDateKey, today);
+  const ttlMs = computeTtlMs(country, year);
+  setSetting(expiryKey, String(Date.now() + ttlMs));
   setSetting(cacheKey, JSON.stringify(data));
   // Cache workdays separately
   const workdayCacheKey = `holiday_cache_cn_workdays_${year}`;
   setSetting(workdayCacheKey, JSON.stringify(workdays));
-  console.log(`[Holiday] Fetched ${Object.keys(data).length} CN holidays + ${Object.keys(workdays).length} 调休 workdays for ${year}`);
+  console.log(`[Holiday] Fetched ${Object.keys(data).length} CN holidays + ${Object.keys(workdays).length} 调休 workdays for ${year} (TTL: ${Math.round(ttlMs / DAY_MS)}d)`);
   return data;
 }
 
@@ -168,6 +194,16 @@ export async function isHolidayOrWeekend(dateStr) {
   const customs = getCustomHolidays();
   if (customs.some((h) => h.date === ds)) return true;
 
+  // Proactive next-year prefetch during Oct-Dec
+  const currentYear = new Date().getFullYear();
+  const month = new Date().getMonth() + 1;
+  if (month >= 10) {
+    const nextYear = currentYear + 1;
+    for (const country of skipCountries) {
+      fetchNationalHolidays(country, nextYear).catch(() => {});
+    }
+  }
+
   return false;
 }
 
@@ -205,12 +241,11 @@ export async function getHolidaysForMonth(year, month, country = 'jp') {
  */
 export async function getAvailableYears(country = 'jp') {
   const cacheKey = `holiday_available_years_${country}`;
-  const cacheDateKey = `holiday_available_years_date_${country}`;
-  const cacheDate = getSetting(cacheDateKey);
-  const today = todayStringInTz();
+  const expiryKey = `holiday_available_years_expires_${country}`;
+  const expiresAt = parseInt(getSetting(expiryKey) || '0', 10);
 
-  // Return cached data if still valid (same day)
-  if (cacheDate === today) {
+  // Return cached data if still valid (7-day TTL)
+  if (Date.now() < expiresAt) {
     try {
       const cached = getSetting(cacheKey);
       if (cached) return JSON.parse(cached);
@@ -263,8 +298,8 @@ export async function getAvailableYears(country = 'jp') {
         .sort((a, b) => a - b);
     }
 
-    // Cache the result
-    setSetting(cacheDateKey, today);
+    // Cache the result (7-day TTL)
+    setSetting(expiryKey, String(Date.now() + 7 * DAY_MS));
     setSetting(cacheKey, JSON.stringify(years));
     console.log(`[Holiday] Available years for ${country}: ${years.join(', ')}`);
     return years;
