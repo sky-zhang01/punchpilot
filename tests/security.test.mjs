@@ -235,37 +235,40 @@ describe('Reverse Proxy Support (v0.4.2)', () => {
 });
 
 describe('v0.4.2: Async Batch Task Implementation', () => {
-  const attendanceSrc = readSrc('server/routes/api-attendance.js');
+  const utilsSrc = readSrc('server/routes/attendance/utils.js');
+  const batchSrc = readSrc('server/routes/attendance/batch.js');
+  const leaveSrc = readSrc('server/routes/attendance/leave.js');
+  const batchOpsSrc = readSrc('server/routes/attendance/batch-operations.js');
   const apiTsSrc = readSrc('client/src/api.ts');
 
-  it('UT-AT-01: api-attendance.js has asyncTasks Map', () => {
-    expect(attendanceSrc).toContain('const asyncTasks = new Map()');
+  it('UT-AT-01: attendance utils has asyncTasks Map', () => {
+    expect(utilsSrc).toContain('const asyncTasks = new Map()');
   });
 
   it('UT-AT-02: Task ID uses crypto.randomUUID()', () => {
-    expect(attendanceSrc).toContain('crypto.randomUUID()');
+    expect(utilsSrc).toContain('crypto.randomUUID()');
   });
 
   it('UT-AT-03: Task TTL is 30 minutes', () => {
-    expect(attendanceSrc).toContain('30 * 60 * 1000');
+    expect(utilsSrc).toContain('30 * 60 * 1000');
   });
 
   it('UT-AT-04: GET /batch/status/:taskId endpoint exists', () => {
-    expect(attendanceSrc).toContain('router.get("/batch/status/:taskId"');
+    expect(batchSrc).toContain('router.get("/batch/status/:taskId"');
   });
 
   it('UT-AT-05: POST /batch returns task_id immediately', () => {
-    expect(attendanceSrc).toContain('res.json({ task_id: taskId, status: "running" })');
+    expect(batchSrc).toContain('res.json({ task_id: taskId, status: "running" })');
   });
 
   it('UT-AT-06: POST /batch-leave-request returns task_id', () => {
     // Same async pattern used for leave requests
-    const batchLeaveBlock = attendanceSrc.substring(attendanceSrc.indexOf("'/batch-leave-request'"));
+    const batchLeaveBlock = leaveSrc.substring(leaveSrc.indexOf('"/batch-leave-request"'));
     expect(batchLeaveBlock).toContain('task_id');
   });
 
   it('UT-AT-07: POST /batch-withdraw returns task_id', () => {
-    const batchWithdrawBlock = attendanceSrc.substring(attendanceSrc.indexOf("'/batch-withdraw'"));
+    const batchWithdrawBlock = batchOpsSrc.substring(batchOpsSrc.indexOf('"/batch-withdraw"'));
     expect(batchWithdrawBlock).toContain('task_id');
   });
 
