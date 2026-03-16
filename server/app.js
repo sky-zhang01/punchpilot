@@ -9,7 +9,7 @@ import scheduleRoutes from './routes/api-schedule.js';
 import logRoutes from './routes/api-logs.js';
 import holidayRoutes from './routes/api-holidays.js';
 import statusRoutes from './routes/api-status.js';
-import attendanceRoutes from './routes/api-attendance.js';
+import attendanceRoutes from './routes/attendance/index.js';
 import logger from './logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
