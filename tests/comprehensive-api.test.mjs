@@ -632,7 +632,7 @@ describe('Connection Mode', () => {
 
 describe('Web Automation Fallback Logic', () => {
   it('automation module exports expected functions', async () => {
-    const automation = await import('../server/automation.js');
+    const automation = await import('../server/automation/index.js');
     expect(typeof automation.detectCurrentState).toBe('function');
     expect(typeof automation.executeAction).toBe('function');
     expect(typeof automation.determineActionsForToday).toBe('function');
@@ -646,12 +646,12 @@ describe('Web Automation Fallback Logic', () => {
   });
 
   it('isDebugMode returns true when mock mode enabled', async () => {
-    const { isDebugMode } = await import('../server/automation.js');
+    const { isDebugMode } = await import('../server/automation/index.js');
     expect(isDebugMode()).toBe(true);
   });
 
   it('determineActionsForToday generates correct plan for not_checked_in', async () => {
-    const { determineActionsForToday } = await import('../server/automation.js');
+    const { determineActionsForToday } = await import('../server/automation/index.js');
     const schedule = {
       checkin: '09:00',
       break_start: '12:00',
@@ -665,7 +665,7 @@ describe('Web Automation Fallback Logic', () => {
   });
 
   it('determineActionsForToday generates correct plan for checked_out', async () => {
-    const { determineActionsForToday } = await import('../server/automation.js');
+    const { determineActionsForToday } = await import('../server/automation/index.js');
     const schedule = {
       checkin: '09:00',
       checkout: '18:00'
