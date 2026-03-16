@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.9] - 2026-03-17
+
+### Fixed
+- **Lunch break constraint**: Break duration now enforced to 60–90 minutes. Previously only capped at max 60min but allowed breaks shorter than 60min when random scheduling resolved close together.
+- **DB migration safety**: Replaced silent try/catch column detection with explicit `PRAGMA table_info` checks. Real errors (I/O, corruption) are no longer swallowed.
+
+### Improved
+- **Holiday smart caching**: Replaced daily API polling with TTL-based caching (JP 30d / CN 14d for current year; shorter TTLs during Oct–Dec for next-year data). Proactive prefetch of next year's data during Q4.
+- **Async task store persistence**: Batch operation tasks now persist to SQLite. Surviving container restarts, with interrupted tasks clearly marked. Enhanced 404 messages for expired/missing tasks.
+- **DRY refactoring**: Extracted 6 helper methods in PunchBot (SPA navigation, form wait loop, screenshot capture, error detection, lifecycle wrapper, approval type constants).
+- **UI polish**: Updated font stack (Plus Jakarta Sans), refined dashboard and login page styling.
+
+### Changed
+- **PunchBot rename**: Internal `FreeeBot` class renamed to `PunchBot` to better reflect the project identity.
+
 ## [0.4.8] - 2026-02-28
 
 ### Added

@@ -92,27 +92,34 @@ export function initDatabase() {
       best_strategy TEXT DEFAULT 'direct',
       detected_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
+
+    CREATE TABLE IF NOT EXISTS async_tasks (
+      id TEXT PRIMARY KEY,
+      task_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      completed_at TEXT,
+      result_summary TEXT,
+      error_text TEXT
+    );
   `);
 
+  // Mark any tasks that were "running" when the server last stopped as "interrupted"
+  db.prepare("UPDATE async_tasks SET status = 'interrupted', completed_at = datetime('now','localtime') WHERE status = 'running'").run();
+
   // Add user_id column to sessions if it doesn't exist (migration for existing DBs)
-  try {
-    db.prepare('SELECT user_id FROM sessions LIMIT 1').get();
-  } catch {
-    try {
-      db.exec('ALTER TABLE sessions ADD COLUMN user_id INTEGER');
-      console.log('[PunchPilot] Migrated sessions table: added user_id column');
-    } catch {}
+  const sessionCols = db.prepare('PRAGMA table_info(sessions)').all();
+  if (!sessionCols.some(c => c.name === 'user_id')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN user_id INTEGER');
+    console.log('[PunchPilot] Migrated sessions table: added user_id column');
   }
 
   // Add company_id and company_name columns to execution_log (migration)
-  try {
-    db.prepare('SELECT company_id FROM execution_log LIMIT 1').get();
-  } catch {
-    try {
-      db.exec('ALTER TABLE execution_log ADD COLUMN company_id TEXT');
-      db.exec('ALTER TABLE execution_log ADD COLUMN company_name TEXT');
-      console.log('[PunchPilot] Migrated execution_log table: added company_id, company_name columns');
-    } catch {}
+  const logCols = db.prepare('PRAGMA table_info(execution_log)').all();
+  if (!logCols.some(c => c.name === 'company_id')) {
+    db.exec('ALTER TABLE execution_log ADD COLUMN company_id TEXT');
+    db.exec('ALTER TABLE execution_log ADD COLUMN company_name TEXT');
+    console.log('[PunchPilot] Migrated execution_log table: added company_id, company_name columns');
   }
 
   // Seed default config
@@ -462,4 +469,26 @@ export function cleanOldSchedules(daysToKeep = 7) {
   return getDb().prepare(
     `DELETE FROM daily_schedule WHERE date < date('now','localtime','-' || ? || ' days')`
   ).run(String(daysToKeep));
+}
+
+// --- Async task helpers ---
+
+export function createAsyncTask(id, taskType) {
+  return getDb().prepare('INSERT INTO async_tasks (id, task_type) VALUES (?, ?)').run(id, taskType);
+}
+
+export function updateAsyncTask(id, status, resultSummary, errorText) {
+  return getDb().prepare(
+    "UPDATE async_tasks SET status = ?, completed_at = datetime('now','localtime'), result_summary = ?, error_text = ? WHERE id = ?"
+  ).run(status, resultSummary || null, errorText || null, id);
+}
+
+export function getAsyncTask(id) {
+  return getDb().prepare('SELECT * FROM async_tasks WHERE id = ?').get(id);
+}
+
+export function cleanOldAsyncTasks(hoursToKeep = 2) {
+  return getDb().prepare(
+    "DELETE FROM async_tasks WHERE created_at < datetime('now','localtime','-' || ? || ' hours')"
+  ).run(String(hoursToKeep));
 }

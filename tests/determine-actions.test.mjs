@@ -128,15 +128,15 @@ describe('determineActionsForToday - Smart Action Planning', () => {
     expect(result.immediateActions).toEqual([]);
   });
 
-  // UC8: On break, overtime >60min → immediate break_end
-  it('UC8: triggers immediate break_end when break exceeds 60 minutes', () => {
+  // UC8: On break, overtime >90min → immediate break_end
+  it('UC8: triggers immediate break_end when break exceeds 90 minutes', () => {
     const result = determineActionsForToday(
       'on_break',
       FULL_SCHEDULE,
       [{ type: 'checkin', time: '09:00' }, { type: 'break_start', time: '11:00' }],
-      '12:30'
+      '12:31'
     );
-    // Break started at 11:00, now 12:30 → 90min > 60min
+    // Break started at 11:00, now 12:31 → 91min > 90min
     expect(result.immediateActions).toEqual(['break_end']);
     expect(result.execute).toEqual(['checkout']);
     expect(result.skip).toEqual(['checkin', 'break_start']);

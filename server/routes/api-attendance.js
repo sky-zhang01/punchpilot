@@ -6,6 +6,10 @@ import {
   getStrategyCache,
   setStrategyCache,
   insertLog,
+  createAsyncTask,
+  updateAsyncTask,
+  getAsyncTask,
+  cleanOldAsyncTasks,
 } from "../db.js";
 import { FreeeApiClient } from "../freee-api.js";
 import {
@@ -29,28 +33,48 @@ const log = logger.child("Attendance");
 const asyncTasks = new Map();
 const TASK_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
-function createTask() {
+function createTask(taskType = "batch") {
   const id = crypto.randomUUID();
   asyncTasks.set(id, { status: "running", createdAt: Date.now() });
+  try { createAsyncTask(id, taskType); } catch { /* SQLite write failure is non-fatal */ }
   return id;
 }
 
 function updateTask(id, data) {
   const task = asyncTasks.get(id);
   if (task) Object.assign(task, data);
+  // Persist final statuses to SQLite for crash recovery
+  if (data.status === "completed" || data.status === "failed") {
+    const summary = data.succeeded != null ? `${data.succeeded} succeeded, ${data.failed} failed` : null;
+    try { updateAsyncTask(id, data.status, summary, data.error || null); } catch { /* non-fatal */ }
+  }
 }
 
 function getTask(id) {
-  return asyncTasks.get(id) || null;
+  const memTask = asyncTasks.get(id);
+  if (memTask) return memTask;
+  // Fall back to SQLite (survives server restarts)
+  try {
+    const dbTask = getAsyncTask(id);
+    if (dbTask) return {
+      status: dbTask.status,
+      createdAt: dbTask.created_at,
+      completedAt: dbTask.completed_at,
+      resultSummary: dbTask.result_summary,
+      error: dbTask.error_text,
+    };
+  } catch { /* SQLite read failure is non-fatal */ }
+  return null;
 }
 
-// Periodically clean expired tasks
+// Periodically clean expired tasks (in-memory + SQLite)
 setInterval(
   () => {
     const now = Date.now();
     for (const [id, task] of asyncTasks) {
       if (now - task.createdAt > TASK_TTL_MS) asyncTasks.delete(id);
     }
+    try { cleanOldAsyncTasks(2); } catch { /* non-fatal */ }
   },
   5 * 60 * 1000,
 );
@@ -516,7 +540,12 @@ router.put("/records/:date", async (req, res) => {
  */
 router.get("/batch/status/:taskId", (req, res) => {
   const task = getTask(req.params.taskId);
-  if (!task) return res.status(404).json({ error: "Task not found" });
+  if (!task) {
+    return res.status(404).json({
+      error: "Task not found. It may have expired or the server was restarted. Check the execution logs for results.",
+      code: "TASK_NOT_FOUND",
+    });
+  }
   res.json(task);
 });
 
@@ -539,7 +568,7 @@ router.post("/batch", async (req, res) => {
   const { companyId, employeeId } = oauth;
 
   // Return task_id immediately, process in background
-  const taskId = createTask();
+  const taskId = createTask("batch_punch");
   res.json({ task_id: taskId, status: "running" });
 
   // Background processing (runs after response is sent)
@@ -2344,7 +2373,7 @@ router.post("/batch-leave-request", async (req, res) => {
   log.info(`Batch leave request: type=${type}, ${dates.length} dates`);
 
   // Return task_id immediately, process in background
-  const taskId = createTask();
+  const taskId = createTask("batch_leave");
   res.json({ task_id: taskId, status: "running" });
 
   (async () => {
@@ -2590,7 +2619,7 @@ router.post("/batch-withdraw", async (req, res) => {
   log.info(`Batch withdraw: ${requests.length} requests`);
 
   // Return task_id immediately, process in background
-  const taskId = createTask();
+  const taskId = createTask("batch_withdraw");
   res.json({ task_id: taskId, status: "running" });
 
   (async () => {
