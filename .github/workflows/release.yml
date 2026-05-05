@@ -15,6 +15,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Public release privacy gate
+        env:
+          PUBLIC_RELEASE_FORBIDDEN_HOSTS: ${{ secrets.PUBLIC_RELEASE_FORBIDDEN_HOSTS }}
+        run: python3 scripts/ci/public-release-privacy-gate.py --root . --repo-name "$GITHUB_REPOSITORY" --require-forbidden-hosts
+
       - name: Extract version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
