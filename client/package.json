@@ -14,7 +14,7 @@
     "@ant-design/icons": "^6.1.1",
     "@reduxjs/toolkit": "^2.3.0",
     "antd": "^6.3.5",
-    "axios": "^1.14.0",
+    "axios": "^1.15.2",
     "dayjs": "^1.11.0",
     "i18next": "^26.0.3",
     "react": "^19.2.4",
@@ -32,7 +32,7 @@
     "@vitejs/plugin-react": "^6.0.1",
     "jsdom": "^29.0.1",
     "typescript": "^6.0.2",
-    "vite": "^8.0.3",
+    "vite": "^8.0.11",
     "vitest": "^4.1.2"
   }
 }
