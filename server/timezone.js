@@ -21,7 +21,13 @@ const DEFAULT_TZ = "Asia/Tokyo";
  * Priority: TZ env > DB setting 'app_timezone' > default Asia/Tokyo
  */
 export function getTimezone() {
-  return process.env.TZ || getSetting("app_timezone") || DEFAULT_TZ;
+  if (process.env.TZ) return process.env.TZ;
+
+  try {
+    return getSetting("app_timezone") || DEFAULT_TZ;
+  } catch {
+    return DEFAULT_TZ;
+  }
 }
 
 /**
