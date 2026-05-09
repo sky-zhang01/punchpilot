@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 import fs from 'fs';
 import path from 'path';
 
-const SCREENSHOTS_DIR = path.resolve(process.cwd(), 'screenshots');
+const SCREENSHOTS_DIR = process.env.SCREENSHOTS_DIR || path.join(process.cwd(), 'artifacts', 'screenshots');
 fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
 
 const FREEE_EMAIL = process.env.FREEE_EMAIL;
