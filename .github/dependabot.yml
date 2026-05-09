@@ -10,6 +10,11 @@ updates:
     cooldown:
       semver-major-days: 14
       semver-minor-days: 3
+    ignore:
+      # Keep Node type definitions aligned with the Node 24 runtime used by CI and Docker.
+      - dependency-name: "@types/node"
+        update-types:
+          - version-update:semver-major
     groups:
       security-updates:
         applies-to: security-updates
@@ -46,6 +51,11 @@ updates:
     cooldown:
       semver-major-days: 14
       semver-minor-days: 3
+    ignore:
+      # Keep Node type definitions aligned with the Node 24 runtime used by CI and Docker.
+      - dependency-name: "@types/node"
+        update-types:
+          - version-update:semver-major
     groups:
       security-updates:
         applies-to: security-updates
