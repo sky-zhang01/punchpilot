@@ -10,7 +10,6 @@ updates:
     cooldown:
       semver-major-days: 14
       semver-minor-days: 3
-      semver-patch-days: 0
     groups:
       security-updates:
         applies-to: security-updates
@@ -47,7 +46,6 @@ updates:
     cooldown:
       semver-major-days: 14
       semver-minor-days: 3
-      semver-patch-days: 0
     groups:
       security-updates:
         applies-to: security-updates
