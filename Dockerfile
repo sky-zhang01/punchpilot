@@ -1,32 +1,38 @@
 # =============================================================================
 # Stage 1: Builder — compile native addons (better-sqlite3) and build client
 # =============================================================================
-FROM node:25-slim AS builder
+FROM node:24-slim AS builder
 
 WORKDIR /app
 
 # Install build tools needed for better-sqlite3 native compilation
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+# hadolint ignore=DL3008
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     build-essential \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Server dependencies (with native addons compiled here)
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 # Client dependencies
 COPY client/package*.json ./client/
-RUN cd client && npm install
+WORKDIR /app/client
+RUN npm ci
 
 # Copy source and build client
+WORKDIR /app
 COPY . .
-RUN cd client && npm run build
+WORKDIR /app/client
+RUN npm run build
+
+WORKDIR /app
 
 # =============================================================================
 # Stage 2: Runtime — slim image with only Chromium (no Firefox/WebKit)
 # =============================================================================
-FROM node:25-slim
+FROM node:24-slim
 
 LABEL org.opencontainers.image.title="PunchPilot" \
       org.opencontainers.image.description="Smart attendance automation for freee HR" \
@@ -40,7 +46,8 @@ ENV TZ=Asia/Tokyo
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # Install gosu (privilege dropping) + CJK fonts
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+# hadolint ignore=DL3008
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     gosu \
     fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
@@ -55,15 +62,13 @@ COPY --from=builder /app/client/dist ./client/dist
 # Copy server source files
 COPY server/ ./server/
 COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
 
 # Install Chromium + its system dependencies in one step
 # --with-deps lets Playwright install the correct packages for the current distro
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN npx playwright install --with-deps chromium
-
-# Create writable directories
-RUN mkdir -p /app/data /app/logs /app/screenshots /app/keystore
+RUN chmod +x /docker-entrypoint.sh \
+    && npx playwright install --with-deps chromium \
+    && mkdir -p /app/data /app/logs /app/screenshots /app/keystore
 
 EXPOSE 8681
 
