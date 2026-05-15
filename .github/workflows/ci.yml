@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -58,7 +59,7 @@ jobs:
   docker-build:
     name: Docker Build Check (Multi-Arch)
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v6
       - name: Set up QEMU
