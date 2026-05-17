@@ -7,10 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.11] - 2026-05-17
 
-### Security
-- Removed a legacy internal company-name match from the exploratory test-data helper.
-- Prevented local exploratory screenshots and runtime evidence artifacts from being accidentally committed.
-- Disabled automatic Docker Buildx build-record artifact uploads in CI and release workflows.
+### Changed
+- Disabled Docker Buildx build-record uploads in CI and release workflows.
+- Updated repository ignore rules for local runtime output.
+- Refined auxiliary test helper selectors.
 
 ## [0.4.10] - 2026-05-17
 
@@ -115,7 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Dashboard progress bar mock mode**: Added fallback logic using execution logs + state inference when freee time_clocks unavailable
-- **Skip/evidence interaction**: Scheduler skips correctly become stale after manual intervention (no false "all done" display)
+- **Skip status interaction**: Scheduler skips correctly become stale after manual intervention (no false "all done" display)
 - **Defensive time sort**: `getTodayTimeClocks()` now sorts by datetime to guarantee chronological order
 
 ## [0.4.2] - 2026-02-12
