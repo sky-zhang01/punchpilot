@@ -52,7 +52,7 @@ const BrowserAccountCard: React.FC = () => {
       // Auto-verify after save — user sees "Verifying..." state
       setVerifying(true);
       try {
-        const res = await api.verifyCredentials();
+        const res = await api.verifyWebCredentials();
         if (res.data.valid) {
           notifySuccess(t('settings.verifySuccess'));
         } else {
@@ -80,7 +80,7 @@ const BrowserAccountCard: React.FC = () => {
   const handleVerify = async () => {
     setVerifying(true);
     try {
-      const res = await api.verifyCredentials();
+      const res = await api.verifyWebCredentials();
       if (res.data.valid) {
         notifySuccess(t('settings.verifySuccess'));
       } else {

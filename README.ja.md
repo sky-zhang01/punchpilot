@@ -15,6 +15,7 @@
 - **一括操作** — 休暇一括申請、一括取下げ、一括承認/差戻し
 - **4段階スマートフォールバック**：直接API > 承認申請 > 打刻 > Webフォーム（Playwright）
 - **月次キャッシュ** — 失敗した方式を自動スキップ、毎月初に再検出
+- **OAuth 認可ガード** — 認可の期限切れや失効時は自動打刻を停止し、再認可が必要な状態を明示
 - **承認ワークフロー** — 勤務時間修正申請の提出・追跡・取下げ；管理者による一括承認/差戻し
 - **祝日カレンダー** — 日本の国民の祝日と中国の祝日（振替出勤日対応）
 - **Web ダッシュボード** — カレンダー表示、実行ログ、リアルタイムステータス
@@ -62,7 +63,7 @@ open http://localhost:8681
                      └─────────────────────────────────────┘
 ```
 
-**技術スタック**：Node.js、Express 5、React 19、Ant Design 6、Vite 7、Playwright、SQLite、Docker
+**技術スタック**：Node.js、Express 5、React 19、Ant Design 6、Vite 8、Playwright、SQLite、Docker
 
 ## 一括勤怠修正の戦略
 
@@ -82,7 +83,8 @@ open http://localhost:8681
 - **暗号化**：すべての認証情報（freee パスワード、OAuth トークン）を AES-256-GCM で暗号化；鍵は scrypt で導出
 - **鍵の分離**：暗号化キーは Docker 名前付きボリュームに格納し、データのバインドマウントと物理的に分離
 - **認証強化**：bcrypt パスワードハッシュ、初回ログイン時パスワード変更強制、CSPRNG セッショントークン、ログインレート制限（10回/15分）
-- **セキュリティヘッダー**：CSP（form-action、base-uri 含む）、HSTS、X-Frame-Options DENY、X-Content-Type-Options nosniff、Permissions-Policy、COOP、CORP
+- **セキュリティヘッダー**：CSP（form-action、base-uri 含む）、HSTS、X-Frame-Options DENY、X-Content-Type-Options nosniff、Permissions-Policy、COEP、CORP
+- **OAuth fail-closed 動作**：認可の期限切れや失効時はスケジュール実行を停止し、ダッシュボードとログに再認可状態を表示
 - **静的キャッシュ**：ハッシュ化資産（1年イミュータブル）、favicon（1日）、index.html（キャッシュなし）
 - **非 root 実行**：`PUID`/`PGID` 環境変数で権限降格して実行（デフォルト 1000、TrueNAS は 568）
 - **外部通信なし**：すべてのデータはユーザーと freee サーバー間のみで通信
@@ -135,6 +137,12 @@ npm run dev
 
 # テストを実行
 npm test
+
+# カバレッジと E2E smoke を実行
+npm run test:coverage
+npm --prefix client run test:coverage
+npm --prefix client run build
+npm run test:e2e
 
 # クライアントをビルド
 cd client && npx vite build

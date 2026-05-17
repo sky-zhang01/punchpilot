@@ -12,6 +12,12 @@ import { todayStringInTz } from './timezone.js';
 
 const API_BASE = 'https://api.freee.co.jp/hr/api/v1';
 const TOKEN_URL = 'https://accounts.secure.freee.co.jp/public_api/token';
+const FETCH_TIMEOUT_MS = 30_000;
+
+export const FREEE_AUTH_ERROR_CODES = {
+  AUTH_REQUIRED: 'AUTH_REQUIRED',
+  AUTH_TRANSIENT: 'AUTH_TRANSIENT',
+};
 
 // Map internal action types to freee API clock types
 const ACTION_TO_CLOCK_TYPE = {
@@ -20,6 +26,53 @@ const ACTION_TO_CLOCK_TYPE = {
   break_start: 'break_begin',
   break_end: 'break_end',
 };
+
+function createAuthError(message, code, cause = null) {
+  const err = new Error(message);
+  err.code = code;
+  if (cause) err.cause = cause;
+  return err;
+}
+
+function safeErrorBodyForMessage(body) {
+  try {
+    const parsed = JSON.parse(body);
+    return parsed?.errors?.[0]?.messages?.[0] || parsed?.message || 'request failed';
+  } catch {
+    return 'request failed';
+  }
+}
+
+function nowString() {
+  return new Date().toISOString();
+}
+
+export function isOAuthAuthBroken() {
+  return getSetting('oauth_auth_broken') === '1';
+}
+
+export function markOAuthAuthBroken(reason) {
+  setSetting('oauth_auth_broken', '1');
+  setSetting('oauth_auth_broken_since', nowString());
+  setSetting('oauth_auth_broken_reason', reason || 'OAuth authorization requires re-authorization.');
+}
+
+export function clearOAuthAuthBroken() {
+  setSetting('oauth_auth_broken', '0');
+  setSetting('oauth_auth_broken_since', '');
+  setSetting('oauth_auth_broken_reason', '');
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  if (
+    options.signal ||
+    typeof AbortSignal === 'undefined' ||
+    typeof AbortSignal.timeout !== 'function'
+  ) {
+    return fetch(url, options);
+  }
+  return fetch(url, { ...options, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+}
 
 export class FreeeApiClient {
   constructor() {
@@ -32,6 +85,11 @@ export class FreeeApiClient {
    * Call this before every API request.
    */
   async ensureValidToken() {
+    if (isOAuthAuthBroken()) {
+      const reason = getSetting('oauth_auth_broken_reason') || 'OAuth authorization requires re-authorization.';
+      throw createAuthError(reason, FREEE_AUTH_ERROR_CODES.AUTH_REQUIRED);
+    }
+
     const expiresAt = parseInt(getSetting('oauth_token_expires_at') || '0', 10);
     const now = Math.floor(Date.now() / 1000);
 
@@ -44,31 +102,46 @@ export class FreeeApiClient {
 
     const refreshToken = decrypt(getSetting('oauth_refresh_token_encrypted'));
     if (!refreshToken) {
-      throw new Error('No refresh token available. Please re-authorize in Settings.');
+      const message = 'No refresh token available. Please re-authorize in Settings.';
+      markOAuthAuthBroken(message);
+      throw createAuthError(message, FREEE_AUTH_ERROR_CODES.AUTH_REQUIRED);
     }
 
     const clientId = getSetting('oauth_client_id');
     const clientSecret = decrypt(getSetting('oauth_client_secret_encrypted'));
 
     if (!clientId || !clientSecret) {
-      throw new Error('OAuth app credentials not configured. Go to Settings → API Configuration.');
+      const message = 'OAuth app credentials not configured. Go to Settings -> API Configuration.';
+      markOAuthAuthBroken(message);
+      throw createAuthError(message, FREEE_AUTH_ERROR_CODES.AUTH_REQUIRED);
     }
 
-    const response = await fetch(TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'refresh_token',
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: refreshToken,
-      }),
-    });
+    let response;
+    try {
+      response = await fetchWithTimeout(TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: refreshToken,
+        }),
+      });
+    } catch (e) {
+      const message = `Token refresh request failed: ${e.message || 'network error'}`;
+      throw createAuthError(message, FREEE_AUTH_ERROR_CODES.AUTH_TRANSIENT, e);
+    }
 
     if (!response.ok) {
       const errBody = await response.text();
-      console.error(chalk.red(`[API] Token refresh failed: ${response.status} ${errBody.substring(0, 200)}`));
-      throw new Error(`Token refresh failed (${response.status}). Please re-authorize in Settings.`);
+      console.error(chalk.red(`[API] Token refresh failed: ${response.status}`));
+      const message = `Token refresh failed (${response.status}). Please re-authorize in Settings.`;
+      if (response.status >= 400 && response.status < 500) {
+        markOAuthAuthBroken(message);
+        throw createAuthError(message, FREEE_AUTH_ERROR_CODES.AUTH_REQUIRED);
+      }
+      throw createAuthError(message, FREEE_AUTH_ERROR_CODES.AUTH_TRANSIENT);
     }
 
     const data = await response.json();
@@ -77,6 +150,7 @@ export class FreeeApiClient {
     setSetting('oauth_access_token_encrypted', encrypt(data.access_token));
     setSetting('oauth_refresh_token_encrypted', encrypt(data.refresh_token));
     setSetting('oauth_token_expires_at', String(Math.floor(Date.now() / 1000) + data.expires_in));
+    clearOAuthAuthBroken();
 
     console.log(chalk.green(`[API] Token refreshed, expires in ${data.expires_in}s`));
     return data.access_token;
@@ -104,11 +178,11 @@ export class FreeeApiClient {
     const url = `${API_BASE}${path}`;
     console.log(chalk.blue(`[API] ${method} ${url}`));
 
-    const response = await fetch(url, options);
+    const response = await fetchWithTimeout(url, options);
 
     if (!response.ok) {
       const errBody = await response.text();
-      console.error(chalk.red(`[API] ${method} ${path} → ${response.status}: ${errBody.substring(0, 300)}`));
+      console.error(chalk.red(`[API] ${method} ${path} → ${response.status}`));
 
       // On 401 (first attempt only): force token refresh and retry once.
       // This handles cases where the stored token is invalidated server-side
@@ -120,14 +194,13 @@ export class FreeeApiClient {
         return this.apiRequest(method, path, body, true);
       }
 
-      // Parse freee error structure for better error messages
-      let msg = errBody;
-      try {
-        const errJson = JSON.parse(errBody);
-        msg = errJson?.errors?.[0]?.messages?.[0] || errJson?.message || errBody;
-      } catch { /* use raw body */ }
+      const msg = safeErrorBodyForMessage(errBody);
 
-      if (response.status === 401) throw new Error(`AUTH_EXPIRED: ${msg}`);
+      if (response.status === 401) {
+        const message = `Authorization expired or revoked: ${msg}. Please re-authorize in Settings.`;
+        markOAuthAuthBroken(message);
+        throw createAuthError(message, FREEE_AUTH_ERROR_CODES.AUTH_REQUIRED);
+      }
       if (response.status === 403) throw new Error(`PERMISSION_DENIED: ${msg}`);
       if (response.status === 429) throw new Error(`RATE_LIMITED: ${msg}`);
       throw new Error(`API_ERROR_${response.status}: ${msg}`);
