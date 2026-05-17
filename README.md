@@ -15,6 +15,7 @@ Smart attendance automation for [freee HR](https://www.freee.co.jp/hr/). Runs as
 - **Batch operations** — bulk leave requests, bulk withdrawal, and bulk approval/rejection
 - **4-tier smart fallback**: Direct API > Approval Request > Time Clocks > Web form (Playwright)
 - **Monthly strategy caching** to skip known-failing methods automatically
+- **OAuth authorization guardrails** — pauses automation and asks for re-authorization instead of silently missing scheduled actions
 - **Approval workflow**: submit, track, and withdraw work time corrections; manager batch approve/reject
 - **Holiday calendar** with JP national holidays and CN holidays (including tiaoxiu/workday swaps)
 - **Web dashboard** with calendar view, execution logs, and real-time status
@@ -62,7 +63,7 @@ On first login, use the default credentials (`admin` / `admin`). You'll be promp
                      └────────────────────────────────────┘
 ```
 
-**Tech stack**: Node.js, Express 5, React 19, Ant Design 6, Vite 7, Playwright, SQLite, Docker
+**Tech stack**: Node.js, Express 5, React 19, Ant Design 6, Vite 8, Playwright, SQLite, Docker
 
 ## Batch Attendance Strategy
 
@@ -82,7 +83,8 @@ Once a month, PunchPilot detects which strategy works for your company and cache
 - **Encryption**: AES-256-GCM for all stored credentials (freee password, OAuth tokens); key derived via scrypt
 - **Key isolation**: Encryption key in Docker named volume, physically separate from data bind mount
 - **Auth hardening**: bcrypt password hashing, forced password change on first login, session tokens via CSPRNG, login rate limiting (10/15min)
-- **Security headers**: CSP (with form-action, base-uri), HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff, Permissions-Policy, COOP, CORP
+- **Security headers**: CSP (with form-action, base-uri), HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff, Permissions-Policy, COEP, CORP
+- **OAuth fail-closed behavior**: expired or revoked authorization pauses scheduled automation and surfaces re-authorization status in the dashboard and logs
 - **Static caching**: Hashed assets (1 year immutable), favicon (1 day), index.html (no-cache)
 - **Non-root**: Container drops privileges via `PUID`/`PGID` env vars (default 1000, set to 568 for TrueNAS)
 - **No external calls**: All data stays between you and freee's servers
@@ -135,6 +137,12 @@ npm run dev
 
 # Run tests
 npm test
+
+# Run coverage and E2E smoke
+npm run test:coverage
+npm --prefix client run test:coverage
+npm --prefix client run build
+npm run test:e2e
 
 # Build client
 cd client && npx vite build

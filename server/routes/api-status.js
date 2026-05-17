@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSetting, getLogsByDate, getAllConfig } from '../db.js';
+import { getSetting, getLogsByDate, getAllConfig, getDailySchedule } from '../db.js';
 import { scheduler } from '../scheduler.js';
 import { isHolidayOrWeekend, getTodayString } from '../holiday.js';
 import { hasCredentials, isDebugMode, detectCurrentState, FREEE_STATE, getConnectionMode } from '../automation/index.js';
@@ -51,12 +51,14 @@ router.get('/', async (req, res) => {
   const credentialsOk = hasCredentials();
   const freeeConfigured = getSetting('freee_configured') === '1';
   const todaySchedule = scheduler.getTodaySchedule();
+  const todayScheduleStatus = getDailySchedule(today);
   const currentCompanyId = getSetting('oauth_company_id') || '';
   const todayLogs = getLogsByDate(today, currentCompanyId);
   const configs = getAllConfig();
   const isHoliday = await isHolidayOrWeekend();
   const startupAnalysis = scheduler.getStartupAnalysis();
   const skippedActions = scheduler.getSkippedActions();
+  const authBroken = getConnectionMode() === 'api' && getSetting('oauth_auth_broken') === '1';
 
   // Fetch today's actual punch times from freee time_clocks API
   // This gives us real timestamps (e.g., checkin at 09:51) that work_records may not yet reflect
@@ -123,11 +125,18 @@ router.get('/', async (req, res) => {
     timezone: getTimezone(),
     is_holiday: isHoliday,
     today_schedule: todaySchedule,
+    today_schedule_status: todayScheduleStatus,
     today_logs: todayLogs,
     today_punch_times: todayPunchTimes,
     next_action: nextAction,
     startup_analysis: startupAnalysis,
     skipped_actions: skippedActions,
+    auth_status: {
+      broken: authBroken,
+      since: getSetting('oauth_auth_broken_since') || '',
+      reason: getSetting('oauth_auth_broken_reason') || '',
+      last_error: getSetting('oauth_auth_broken_reason') || '',
+    },
     configs,
   });
 });

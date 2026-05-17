@@ -4,6 +4,7 @@ import {
   Card,
   Table,
   Alert,
+  Button,
   Tag,
   Typography,
   Space,
@@ -138,6 +139,8 @@ const DashboardPage: React.FC = () => {
 
   // Browser mode disabled — only check OAuth credentials
   const hasCredentials = oauthConfigured;
+  const authStatus = statusData?.auth_status;
+  const authBroken = !!authStatus?.broken;
 
   // Derive actual state: prefer freee time_clocks data, fall back to startup_analysis
   const punchTimesRaw: PunchTime[] = statusData?.today_punch_times || [];
@@ -211,6 +214,21 @@ const DashboardPage: React.FC = () => {
           type="warning"
           showIcon
           icon={<WarningOutlined />}
+        />
+      )}
+
+      {authBroken && (
+        <Alert
+          message={t("dashboard.authRequired")}
+          description={authStatus?.reason || t("dashboard.authRequiredDesc")}
+          type="error"
+          showIcon
+          icon={<WarningOutlined />}
+          action={
+            <Button size="small" danger onClick={() => { window.location.href = "/settings"; }}>
+              {t("dashboard.reauthorize")}
+            </Button>
+          }
         />
       )}
 
