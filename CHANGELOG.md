@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.10] - 2026-05-17
+
+### Security
+- OAuth refresh failures now distinguish re-authorization-required errors from transient service failures.
+- Revoked or expired OAuth authorization now pauses the remaining scheduled actions for the day and shows a clear dashboard/log status.
+- OAuth token exchange and API calls now use bounded request timeouts and avoid logging response bodies.
+- Added a public release privacy gate and security threat model for release validation.
+
+### Fixed
+- Prevented scheduled actions from being marked complete after failed punch attempts.
+- Added bounded retry handling for transient OAuth refresh failures before pausing automation.
+- Added daily schedule status fields so failed, skipped, retrying, and authorization-required states remain visible.
+
+### Changed
+- Updated server, client, test, lint, and Playwright dependencies to current safe versions.
+- CI now runs dependency audit, server coverage, client coverage smoke, client build, E2E smoke, and GitHub pull-request multi-architecture Docker checks.
+- Browser automation remains available for workflows that require freee Web, while API mode remains the lighter default path.
+
 ## [0.4.9] - 2026-03-17
 
 ### Fixed

@@ -72,6 +72,9 @@ export function initDatabase() {
       action_type TEXT NOT NULL,
       resolved_time TEXT NOT NULL,
       executed INTEGER NOT NULL DEFAULT 0,
+      last_status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
       PRIMARY KEY (date, action_type)
     );
 
@@ -122,6 +125,21 @@ export function initDatabase() {
     console.log('[PunchPilot] Migrated execution_log table: added company_id, company_name columns');
   }
 
+  // Add observability columns to daily_schedule (migration)
+  const scheduleCols = db.prepare('PRAGMA table_info(daily_schedule)').all();
+  if (!scheduleCols.some(c => c.name === 'last_status')) {
+    db.exec("ALTER TABLE daily_schedule ADD COLUMN last_status TEXT NOT NULL DEFAULT 'pending'");
+    console.log('[PunchPilot] Migrated daily_schedule table: added last_status column');
+  }
+  if (!scheduleCols.some(c => c.name === 'attempts')) {
+    db.exec('ALTER TABLE daily_schedule ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0');
+    console.log('[PunchPilot] Migrated daily_schedule table: added attempts column');
+  }
+  if (!scheduleCols.some(c => c.name === 'last_error')) {
+    db.exec('ALTER TABLE daily_schedule ADD COLUMN last_error TEXT');
+    console.log('[PunchPilot] Migrated daily_schedule table: added last_error column');
+  }
+
   // Seed default config
   const insertConfig = db.prepare(`
     INSERT OR IGNORE INTO config (action_type, mode, fixed_time, window_start, window_end)
@@ -157,6 +175,9 @@ export function initDatabase() {
   insertSetting.run('oauth_company_id', '');
   insertSetting.run('oauth_employee_id', '');
   insertSetting.run('oauth_configured', '0');
+  insertSetting.run('oauth_auth_broken', '0');
+  insertSetting.run('oauth_auth_broken_since', '');
+  insertSetting.run('oauth_auth_broken_reason', '');
 
   // Seed default admin user if no users exist
   const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
@@ -436,14 +457,21 @@ export function getDailySchedule(date) {
 
 export function setDailySchedule(date, actionType, resolvedTime) {
   return getDb().prepare(
-    'INSERT OR REPLACE INTO daily_schedule (date, action_type, resolved_time, executed) VALUES (?, ?, ?, 0)'
+    "INSERT OR REPLACE INTO daily_schedule (date, action_type, resolved_time, executed, last_status, attempts, last_error) VALUES (?, ?, ?, 0, 'pending', 0, NULL)"
   ).run(date, actionType, resolvedTime);
 }
 
-export function markDailyScheduleExecuted(date, actionType) {
+export function markDailyScheduleExecuted(date, actionType, status = 'executed', error = null) {
   return getDb().prepare(
-    'UPDATE daily_schedule SET executed = 1 WHERE date = ? AND action_type = ?'
-  ).run(date, actionType);
+    'UPDATE daily_schedule SET executed = 1, last_status = ?, last_error = ? WHERE date = ? AND action_type = ?'
+  ).run(status, error, date, actionType);
+}
+
+export function updateDailyScheduleStatus(date, actionType, status, error = null, incrementAttempts = false) {
+  const attemptsExpr = incrementAttempts ? 'attempts = attempts + 1,' : '';
+  return getDb().prepare(
+    `UPDATE daily_schedule SET ${attemptsExpr} last_status = ?, last_error = ? WHERE date = ? AND action_type = ?`
+  ).run(status, error, date, actionType);
 }
 
 // --- Strategy cache helpers ---

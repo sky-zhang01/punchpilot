@@ -82,6 +82,9 @@ const zh = {
     workDuration: "工作时长",
     noActions: "今日暂无执行记录",
     punchProgress: "今日打卡进度",
+    authRequired: "freee 需要重新授权",
+    authRequiredDesc: "OAuth 授权刷新前，自动打卡会暂停。",
+    reauthorize: "重新授权",
   },
 
   // Startup Analysis (user-friendly messages)
@@ -108,6 +111,7 @@ const zh = {
     batchCorrection: "批量补卡",
     approvalSubmitted: "勤怠修正申请",
     monthlyClosing: "月度结算",
+    dailyResolution: "每日调度检查",
   },
 
   // Table columns
@@ -140,6 +144,7 @@ const zh = {
     batch: "批量",
     unknown: "未知",
     detected: "已检测",
+    scheduler: "调度器",
   },
 
   // Manual Trigger
@@ -233,6 +238,7 @@ const zh = {
     oauthTokenExpiry: "连接状态",
     oauthTokenValid: "已连接",
     oauthTokenExpired: "已过期（将自动刷新）",
+    oauthAuthBroken: "需要重新授权",
     oauthTokenExpiresAt: "令牌将于 {{time}} 过期（自动刷新）",
     oauthConnected: "已连接至 freee",
     oauthEmployeeNum: "社员号",

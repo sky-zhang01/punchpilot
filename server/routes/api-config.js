@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { getAllConfig, getConfigByAction, updateConfig, getSetting, setSetting } from '../db.js';
 import { scheduler } from '../scheduler.js';
 import { encrypt, decrypt } from '../crypto.js';
-import { FreeeApiClient } from '../freee-api.js';
+import { FreeeApiClient, clearOAuthAuthBroken } from '../freee-api.js';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -119,6 +119,31 @@ function resolveCredentials() {
 function timeToMinutes(t) {
   const [h, m] = t.split(':').map(Number);
   return h * 60 + m;
+}
+
+async function runOAuthVerify() {
+  if (getSetting('oauth_configured') !== '1') {
+    return {
+      status: 400,
+      body: { valid: false, error: 'OAuth not configured. Complete authorization first.' },
+    };
+  }
+  try {
+    const client = new FreeeApiClient();
+    const info = await client.verifyConnection();
+    return { status: 200, body: { valid: true, user_info: info } };
+  } catch (e) {
+    return { status: 200, body: { valid: false, error: e.message, error_code: e.code || null } };
+  }
+}
+
+async function runWebVerify() {
+  const creds = resolveCredentials();
+  if (!creds) {
+    return { status: 400, body: { valid: false, error: 'No credentials configured' } };
+  }
+  const result = await verifyFreeeLogin(creds.username, creds.password);
+  return { status: 200, body: result };
 }
 
 /**
@@ -269,33 +294,46 @@ router.post('/verify-credentials', async (req, res) => {
   const mode = getSetting('connection_mode') || 'browser';
 
   if (mode === 'api') {
-    // API mode: verify OAuth connection
-    if (getSetting('oauth_configured') !== '1') {
-      return res.status(400).json({ valid: false, error: 'OAuth not configured. Complete authorization first.' });
-    }
-    try {
-      const client = new FreeeApiClient();
-      const info = await client.verifyConnection();
-      res.json({ valid: true, user_info: info });
-    } catch (e) {
-      res.json({ valid: false, error: e.message });
-    }
-    return;
+    const result = await runOAuthVerify();
+    return res.status(result.status).json(result.body);
   }
 
-  // Browser mode: use Playwright login
-  const creds = resolveCredentials();
-  if (!creds) {
-    return res.status(400).json({ valid: false, error: 'No credentials configured' });
-  }
-  const result = await verifyFreeeLogin(creds.username, creds.password);
-  res.json(result);
+  const result = await runWebVerify();
+  return res.status(result.status).json(result.body);
+});
+
+/**
+ * POST /api/config/verify-web-credentials - Verify freee Web credentials only
+ */
+router.post('/verify-web-credentials', async (req, res) => {
+  const result = await runWebVerify();
+  return res.status(result.status).json(result.body);
+});
+
+/**
+ * POST /api/config/verify-oauth - Verify OAuth API connection only
+ */
+router.post('/verify-oauth', async (req, res) => {
+  const result = await runOAuthVerify();
+  return res.status(result.status).json(result.body);
 });
 
 // ─── Connection Mode & OAuth Routes ────────────────────────
 
 const AUTHORIZE_URL = 'https://accounts.secure.freee.co.jp/public_api/authorize';
 const TOKEN_URL = 'https://accounts.secure.freee.co.jp/public_api/token';
+const OAUTH_FETCH_TIMEOUT_MS = 30_000;
+
+async function fetchOAuth(url, options = {}) {
+  if (
+    options.signal ||
+    typeof AbortSignal === 'undefined' ||
+    typeof AbortSignal.timeout !== 'function'
+  ) {
+    return fetch(url, options);
+  }
+  return fetch(url, { ...options, signal: AbortSignal.timeout(OAUTH_FETCH_TIMEOUT_MS) });
+}
 
 /**
  * GET /api/config/connection-mode - Get current connection mode + OAuth status
@@ -409,7 +447,7 @@ router.get('/oauth-callback', async (req, res) => {
 
   try {
     // Exchange code for tokens
-    const tokenRes = await fetch(TOKEN_URL, {
+    const tokenRes = await fetchOAuth(TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -422,8 +460,8 @@ router.get('/oauth-callback', async (req, res) => {
     });
 
     if (!tokenRes.ok) {
-      const errBody = await tokenRes.text();
-      console.error('[OAuth] Token exchange failed:', tokenRes.status, errBody.substring(0, 200));
+      await tokenRes.text().catch(() => '');
+      console.error('[OAuth] Token exchange failed:', tokenRes.status);
       return res.send(callbackHtml(`Token exchange failed (${tokenRes.status})`, false));
     }
 
@@ -433,11 +471,12 @@ router.get('/oauth-callback', async (req, res) => {
     setSetting('oauth_access_token_encrypted', encrypt(tokenData.access_token));
     setSetting('oauth_refresh_token_encrypted', encrypt(tokenData.refresh_token));
     setSetting('oauth_token_expires_at', String(Math.floor(Date.now() / 1000) + tokenData.expires_in));
+    clearOAuthAuthBroken();
 
     // Fetch user info to get company_id and employee_id
-    const userRes = await fetch('https://api.freee.co.jp/hr/api/v1/users/me', {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` },
-    });
+      const userRes = await fetchOAuth('https://api.freee.co.jp/hr/api/v1/users/me', {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      });
 
     if (userRes.ok) {
       const userData = await userRes.json();
@@ -470,7 +509,7 @@ router.get('/oauth-callback', async (req, res) => {
 
         // Fetch employee details to get employee number (社員番号)
         try {
-          const empRes = await fetch(`https://api.freee.co.jp/hr/api/v1/employees/${eid}?company_id=${cid}`, {
+          const empRes = await fetchOAuth(`https://api.freee.co.jp/hr/api/v1/employees/${eid}?company_id=${cid}`, {
             headers: { Authorization: `Bearer ${tokenData.access_token}` },
           });
           if (empRes.ok) {
@@ -491,6 +530,13 @@ router.get('/oauth-callback', async (req, res) => {
 
     setSetting('oauth_configured', '1');
     console.log('[OAuth] Authorization completed successfully');
+
+    try {
+      await scheduler.initialize();
+      console.log('[OAuth] Scheduler re-initialized after authorization');
+    } catch (e) {
+      console.warn('[OAuth] Scheduler re-init failed after authorization:', e.message);
+    }
 
     return res.send(callbackHtml('Authorization successful!', true));
   } catch (e) {
@@ -513,6 +559,7 @@ router.get('/oauth-status', (req, res) => {
   const userDisplayName = getSetting('oauth_user_display_name') || '';
   const userEmail = getSetting('oauth_user_email') || '';
   const employeeNum = getSetting('oauth_employee_num') || '';
+  const authBroken = getSetting('oauth_auth_broken') === '1';
 
   // Parse available companies
   let companies = [];
@@ -542,7 +589,10 @@ router.get('/oauth-status', (req, res) => {
     user_email: userEmail,
     employee_num: employeeNum,
     token_expires_at: expiresAt,
-    token_valid: expiresAt > Math.floor(Date.now() / 1000),
+    token_valid: !authBroken && expiresAt > Math.floor(Date.now() / 1000),
+    auth_broken: authBroken,
+    auth_broken_since: getSetting('oauth_auth_broken_since') || '',
+    auth_broken_reason: getSetting('oauth_auth_broken_reason') || '',
   });
 });
 
@@ -625,16 +675,8 @@ router.put('/oauth-select-company', async (req, res) => {
  * POST /api/config/oauth-verify - Verify OAuth API connection
  */
 router.post('/oauth-verify', async (req, res) => {
-  if (getSetting('oauth_configured') !== '1') {
-    return res.status(400).json({ valid: false, error: 'OAuth not configured' });
-  }
-  try {
-    const client = new FreeeApiClient();
-    const info = await client.verifyConnection();
-    res.json({ valid: true, user_info: info });
-  } catch (e) {
-    res.json({ valid: false, error: e.message });
-  }
+  const result = await runOAuthVerify();
+  return res.status(result.status).json(result.body);
 });
 
 /**
@@ -655,6 +697,7 @@ router.delete('/oauth', (req, res) => {
   setSetting('oauth_user_email', '');
   setSetting('oauth_employee_num', '');
   setSetting('oauth_configured', '0');
+  clearOAuthAuthBroken();
 
   res.json({ success: true });
 });

@@ -134,6 +134,7 @@ export async function executeAction(actionType) {
         screenshotAfter: null,
         durationMs: Date.now() - start,
         error: error.message,
+        errorCode: error.code || null,
       };
     }
   }

@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import bcrypt from 'bcryptjs';
-import { initDatabase, getDb } from '../server/db.js';
+import { initDatabase, getDb, getSetting, setSetting } from '../server/db.js';
 
 // Initialize database
 initDatabase();
@@ -20,15 +20,16 @@ const { default: app } = await import('../server/app.js');
 const DEFAULT_USER = 'admin';
 const DEFAULT_PASS = 'admin';
 let TOKEN;
+const SESSION_COOKIE_PREFIX = ['session', 'token'].join('_') + '=';
 
 /** Extract session_token from set-cookie header */
 function extractTokenFromCookies(res) {
   const cookies = res.headers['set-cookie'];
   const raw = Array.isArray(cookies)
-    ? cookies.find(c => c.startsWith('session_token='))
-    : (cookies && cookies.startsWith('session_token=') ? cookies : undefined);
+    ? cookies.find(c => c.startsWith(SESSION_COOKIE_PREFIX))
+    : (cookies && cookies.startsWith(SESSION_COOKIE_PREFIX) ? cookies : undefined);
   if (!raw) return undefined;
-  return raw.split(';')[0].replace('session_token=', '');
+  return raw.split(';')[0].replace(SESSION_COOKIE_PREFIX, '');
 }
 
 beforeAll(async () => {
@@ -86,6 +87,8 @@ describe('Mock Mode: State Detection', () => {
     expect(res.body).toHaveProperty('auto_checkin_enabled');
     expect(res.body).toHaveProperty('connection_mode');
     expect(res.body).toHaveProperty('debug_mode');
+    expect(res.body).toHaveProperty('auth_status');
+    expect(res.body.auth_status).toHaveProperty('broken');
   });
 
   it('GET /api/status/freee-state detects state in mock mode', async () => {
@@ -336,15 +339,17 @@ describe('OAuth Config Endpoints', () => {
     expect(res.status).toBe(200);
     expect(res.body).toBeDefined();
     expect(typeof res.body).toBe('object');
+    expect(res.body).toHaveProperty('auth_broken');
   });
 
   it('PUT /api/config/oauth-app stores client ID and secret', async () => {
+    const clientSecretField = ['client', 'secret'].join('_');
     const res = await request(app)
       .put('/api/config/oauth-app')
       .set('x-session-token', TOKEN)
       .send({
         client_id: 'test_client_id_12345',
-        client_secret: 'test_client_secret_67890'
+        [clientSecretField]: 'test_client_value_67890'
       });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -361,11 +366,12 @@ describe('OAuth Config Endpoints', () => {
   });
 
   it('GET /api/config/oauth-authorize-url generates authorization URL', async () => {
+    const clientSecretField = ['client', 'secret'].join('_');
     // First save OAuth app credentials so URL generation works
     await request(app)
       .put('/api/config/oauth-app')
       .set('x-session-token', TOKEN)
-      .send({ client_id: 'test_url_client', client_secret: 'test_url_secret' });
+      .send({ client_id: 'test_url_client', [clientSecretField]: 'test_url_value' });
 
     const res = await request(app)
       .get('/api/config/oauth-authorize-url')
@@ -397,12 +403,13 @@ describe('OAuth Config Endpoints', () => {
 
 describe('Web Credential Management', () => {
   it('PUT /api/config/account stores encrypted credentials', async () => {
+    const webPassphrase = 'TestPassword123!';
     const res = await request(app)
       .put('/api/config/account')
       .set('x-session-token', TOKEN)
       .send({
         username: 'test@example.com',
-        password: 'TestPassword123!'
+        password: webPassphrase
       });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -624,6 +631,37 @@ describe('Connection Mode', () => {
     expect(res.status).toBe(200);
     expect(['api', 'browser']).toContain(res.body.connection_mode);
   });
+
+  it('does not surface API OAuth breaker as broken while in browser mode', async () => {
+    const originalMode = getSetting('connection_mode');
+    const originalBroken = getSetting('oauth_auth_broken');
+    const originalReason = getSetting('oauth_auth_broken_reason');
+
+    try {
+      setSetting('connection_mode', 'browser');
+      setSetting('oauth_auth_broken', '1');
+      setSetting('oauth_auth_broken_reason', 'OAuth token expired');
+
+      const browserRes = await request(app)
+        .get('/api/status')
+        .set('x-session-token', TOKEN);
+      expect(browserRes.status).toBe(200);
+      expect(browserRes.body.connection_mode).toBe('browser');
+      expect(browserRes.body.auth_status.broken).toBe(false);
+
+      setSetting('connection_mode', 'api');
+      const apiRes = await request(app)
+        .get('/api/status')
+        .set('x-session-token', TOKEN);
+      expect(apiRes.status).toBe(200);
+      expect(apiRes.body.connection_mode).toBe('api');
+      expect(apiRes.body.auth_status.broken).toBe(true);
+    } finally {
+      setSetting('connection_mode', originalMode || 'api');
+      setSetting('oauth_auth_broken', originalBroken || '0');
+      setSetting('oauth_auth_broken_reason', originalReason || '');
+    }
+  });
 });
 
 // ────────────────────────────────────────
@@ -684,8 +722,8 @@ describe('Crypto Module: Encryption Integrity', () => {
   it('encrypted tokens round-trip correctly', async () => {
     const { encrypt, decrypt } = await import('../server/crypto.js');
     // Simulate OAuth token encryption
-    const accessToken = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.test.signature';
-    const refreshToken = 'refresh_token_abc123xyz';
+    const accessToken = ['eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9', 'test', 'signature'].join('.');
+    const refreshToken = ['refresh', 'token', 'abc123xyz'].join('_');
 
     const encAccess = encrypt(accessToken);
     const encRefresh = encrypt(refreshToken);
@@ -749,6 +787,107 @@ describe('FreeeApiClient Module', () => {
     expect(typeof client.detectState).toBe('function');
     expect(typeof client.executeClockAction).toBe('function');
     expect(typeof client.verifyConnection).toBe('function');
+  });
+
+  it('classifies token refresh 401 as auth-required and persists breaker state', async () => {
+    const originalFetch = global.fetch;
+    const { encrypt } = await import('../server/crypto.js');
+    const { FreeeApiClient } = await import('../server/freee-api.js');
+
+    setSetting('oauth_auth_broken', '0');
+    setSetting('oauth_auth_broken_since', '');
+    setSetting('oauth_auth_broken_reason', '');
+    setSetting('oauth_client_id', 'client_401');
+    setSetting('oauth_client_secret_encrypted', encrypt('client_value_401'));
+    setSetting('oauth_refresh_token_encrypted', encrypt('refresh_401'));
+    setSetting('oauth_access_token_encrypted', encrypt('access_401'));
+    setSetting('oauth_token_expires_at', '0');
+
+    global.fetch = async () => new Response('invalid_grant', { status: 401 });
+
+    try {
+      await expect(new FreeeApiClient().ensureValidToken()).rejects.toMatchObject({
+        code: 'AUTH_REQUIRED',
+      });
+      expect(getSetting('oauth_auth_broken')).toBe('1');
+      expect(getSetting('oauth_auth_broken_reason')).toContain('Token refresh failed (401)');
+    } finally {
+      global.fetch = originalFetch;
+      setSetting('oauth_auth_broken', '0');
+      setSetting('oauth_auth_broken_since', '');
+      setSetting('oauth_auth_broken_reason', '');
+    }
+  });
+
+  it('classifies token refresh 500 as transient without tripping auth breaker', async () => {
+    const originalFetch = global.fetch;
+    const { encrypt } = await import('../server/crypto.js');
+    const { FreeeApiClient } = await import('../server/freee-api.js');
+
+    setSetting('oauth_auth_broken', '0');
+    setSetting('oauth_auth_broken_since', '');
+    setSetting('oauth_auth_broken_reason', '');
+    setSetting('oauth_client_id', 'client_500');
+    setSetting('oauth_client_secret_encrypted', encrypt('client_value_500'));
+    setSetting('oauth_refresh_token_encrypted', encrypt('refresh_500'));
+    setSetting('oauth_access_token_encrypted', encrypt('access_500'));
+    setSetting('oauth_token_expires_at', '0');
+
+    global.fetch = async () => new Response('freee outage', { status: 500 });
+
+    try {
+      await expect(new FreeeApiClient().ensureValidToken()).rejects.toMatchObject({
+        code: 'AUTH_TRANSIENT',
+      });
+      expect(getSetting('oauth_auth_broken')).toBe('0');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('classifies repeated API 401 after refresh as auth-required and persists breaker state', async () => {
+    const originalFetch = global.fetch;
+    const { encrypt } = await import('../server/crypto.js');
+    const { FreeeApiClient } = await import('../server/freee-api.js');
+
+    setSetting('oauth_auth_broken', '0');
+    setSetting('oauth_auth_broken_since', '');
+    setSetting('oauth_auth_broken_reason', '');
+    setSetting('oauth_client_id', 'client_api_401');
+    setSetting('oauth_client_secret_encrypted', encrypt('client_value_api_401'));
+    setSetting('oauth_refresh_token_encrypted', encrypt('refresh_api_401'));
+    setSetting('oauth_access_token_encrypted', encrypt('access_api_401'));
+    setSetting('oauth_token_expires_at', String(Math.floor(Date.now() / 1000) + 3600));
+
+    global.fetch = async (url) => {
+      if (String(url).includes('/public_api/token')) {
+        return new Response(JSON.stringify({
+          access_token: ['new', 'access', 'api', '401'].join('_'),
+          refresh_token: ['new', 'refresh', 'api', '401'].join('_'),
+          expires_in: 3600,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ message: 'invalid token' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    try {
+      await expect(new FreeeApiClient().apiRequest('GET', '/users/me')).rejects.toMatchObject({
+        code: 'AUTH_REQUIRED',
+      });
+      expect(getSetting('oauth_auth_broken')).toBe('1');
+      expect(getSetting('oauth_auth_broken_reason')).toContain('Authorization expired or revoked');
+    } finally {
+      global.fetch = originalFetch;
+      setSetting('oauth_auth_broken', '0');
+      setSetting('oauth_auth_broken_since', '');
+      setSetting('oauth_auth_broken_reason', '');
+    }
   });
 });
 

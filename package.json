@@ -1,6 +1,6 @@
 {
   "name": "punchpilot",
-  "version": "0.4.9",
+  "version": "0.4.10",
   "description": "Smart attendance automation for freee HR - auto clock-in/out with Web GUI and intelligent scheduling",
   "main": "server/server.js",
   "type": "module",
@@ -9,6 +9,8 @@
     "dev": "node --watch server/server.js",
     "install-browsers": "playwright install",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "node tests/e2e/smoke.mjs",
     "test:watch": "vitest",
     "lint:security": "npx eslint --config eslint.config.mjs 'server/**/*.js'",
     "audit": "npm audit",
@@ -16,13 +18,13 @@
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^12.9.0",
+    "better-sqlite3": "^12.10.0",
     "chalk": "^5.6.2",
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "node-cron": "^4.2.1",
-    "playwright": "^1.59.1"
+    "playwright": "^1.60.0"
   },
   "keywords": [
     "freee",
@@ -39,9 +41,10 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "eslint": "^10.3.0",
+    "@vitest/coverage-v8": "^4.1.6",
+    "eslint": "^10.4.0",
     "eslint-plugin-security": "^4.0.0",
     "supertest": "^7.2.2",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.6"
   }
 }
