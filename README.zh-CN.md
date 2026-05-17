@@ -15,6 +15,7 @@
 - **批量操作** — 批量休假申请、批量取消、批量审批/驳回
 - **4 级智能回退策略**：直接 API > 审批申请 > 打刻 > 网页表单（Playwright）
 - **月度策略缓存** — 自动跳过已知失败的方式，每月初重新检测
+- **OAuth 授权保护** — 授权过期或被撤销时暂停自动打卡并提示重新授权，避免静默漏打
 - **审批工作流** — 提交、跟踪、撤回勤务修正申请；管理者批量审批/驳回
 - **假日日历** — 日本国定假日和中国假日（含调休/补班）
 - **Web 管理面板** — 日历视图、执行日志、实时状态
@@ -62,7 +63,7 @@ open http://localhost:8681
                      └────────────────────────────────────┘
 ```
 
-**技术栈**：Node.js、Express 5、React 19、Ant Design 6、Vite 7、Playwright、SQLite、Docker
+**技术栈**：Node.js、Express 5、React 19、Ant Design 6、Vite 8、Playwright、SQLite、Docker
 
 ## 批量补卡策略
 
@@ -82,7 +83,8 @@ open http://localhost:8681
 - **加密存储**：所有凭证（freee 密码、OAuth 令牌）均使用 AES-256-GCM 加密；密钥通过 scrypt 派生
 - **密钥隔离**：加密密钥存储在 Docker 命名卷中，与数据绑定挂载物理分离
 - **认证加固**：bcrypt 密码哈希、首次登录强制改密、CSPRNG 会话令牌、登录频率限制（10次/15分钟）
-- **安全头**：CSP（含 form-action、base-uri）、HSTS、X-Frame-Options DENY、X-Content-Type-Options nosniff、Permissions-Policy、COOP、CORP
+- **安全头**：CSP（含 form-action、base-uri）、HSTS、X-Frame-Options DENY、X-Content-Type-Options nosniff、Permissions-Policy、COEP、CORP
+- **OAuth fail-closed 行为**：授权过期或被撤销时暂停定时任务，并在面板和日志中显示重新授权状态
 - **静态缓存**：哈希资源（1年不可变）、favicon（1天）、index.html（不缓存）
 - **非 root 运行**：通过 `PUID`/`PGID` 环境变量降权运行（默认 1000，TrueNAS 设为 568）
 - **无外部调用**：所有数据仅在你和 freee 服务器之间传输
@@ -135,6 +137,12 @@ npm run dev
 
 # 运行测试
 npm test
+
+# 运行覆盖率与 E2E smoke
+npm run test:coverage
+npm --prefix client run test:coverage
+npm --prefix client run build
+npm run test:e2e
 
 # 构建前端
 cd client && npx vite build

@@ -84,6 +84,10 @@ const ja = {
     workDuration: "勤務時間",
     noActions: "本日の実行履歴はありません",
     punchProgress: "本日の打刻進捗",
+    authRequired: "freeeの再認可が必要です",
+    authRequiredDesc:
+      "OAuth認可が更新されるまで、自動打刻は一時停止します。",
+    reauthorize: "再認可する",
   },
 
   // Startup Analysis (user-friendly messages)
@@ -111,6 +115,7 @@ const ja = {
     batchCorrection: "一括修正",
     approvalSubmitted: "勤怠修正申請",
     monthlyClosing: "月次締め",
+    dailyResolution: "日次スケジュール確認",
   },
 
   // Table columns
@@ -143,6 +148,7 @@ const ja = {
     batch: "一括",
     unknown: "不明",
     detected: "検出済",
+    scheduler: "スケジューラー",
   },
 
   // Manual Trigger
@@ -237,6 +243,7 @@ const ja = {
     oauthTokenExpiry: "接続状態",
     oauthTokenValid: "接続済み",
     oauthTokenExpired: "期限切れ（自動更新されます）",
+    oauthAuthBroken: "再認可が必要です",
     oauthTokenExpiresAt: "トークン有効期限: {{time}}（自動更新）",
     oauthConnected: "freeeに接続済み",
     oauthEmployeeNum: "社員番号",

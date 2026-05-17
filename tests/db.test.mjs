@@ -39,6 +39,18 @@ describe('db.js seed completeness', () => {
   it('seeds legacy freee_username (for migration)', () => {
     expect(dbSrc).toContain("insertSetting.run('freee_username', '')");
   });
+
+  it('seeds OAuth auth breaker settings', () => {
+    expect(dbSrc).toContain("insertSetting.run('oauth_auth_broken', '0')");
+    expect(dbSrc).toContain("insertSetting.run('oauth_auth_broken_since', '')");
+    expect(dbSrc).toContain("insertSetting.run('oauth_auth_broken_reason', '')");
+  });
+
+  it('migrates daily_schedule observability columns', () => {
+    expect(dbSrc).toContain("ALTER TABLE daily_schedule ADD COLUMN last_status");
+    expect(dbSrc).toContain("ALTER TABLE daily_schedule ADD COLUMN attempts");
+    expect(dbSrc).toContain("ALTER TABLE daily_schedule ADD COLUMN last_error");
+  });
 });
 
 describe('cross-reference: all encrypted getSetting calls have seeds', () => {

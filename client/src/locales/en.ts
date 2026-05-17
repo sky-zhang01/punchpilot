@@ -84,6 +84,10 @@ const en = {
     workDuration: "Work Duration",
     noActions: "No actions yet today",
     punchProgress: "Today's Progress",
+    authRequired: "freee authorization needs attention",
+    authRequiredDesc:
+      "Automatic punching is paused until OAuth authorization is refreshed.",
+    reauthorize: "Re-authorize",
   },
 
   // Startup Analysis (user-friendly messages)
@@ -111,6 +115,7 @@ const en = {
     batchCorrection: "Batch Correction",
     approvalSubmitted: "Approval Request",
     monthlyClosing: "Monthly Closing",
+    dailyResolution: "Daily Schedule Check",
   },
 
   // Table columns
@@ -143,6 +148,7 @@ const en = {
     batch: "batch",
     unknown: "unknown",
     detected: "detected",
+    scheduler: "scheduler",
   },
 
   // Manual Trigger
@@ -237,6 +243,7 @@ const en = {
     oauthTokenExpiry: "Token Status",
     oauthTokenValid: "Connected",
     oauthTokenExpired: "Expired (will auto-refresh)",
+    oauthAuthBroken: "Re-authorization required",
     oauthTokenExpiresAt: "Token expires at {{time}} (auto-refreshes)",
     oauthConnected: "Connected to freee",
     oauthEmployeeNum: "Employee Number",

@@ -179,7 +179,7 @@ const OAuthConfigCard: React.FC = () => {
   const handleVerify = async () => {
     setVerifying(true);
     try {
-      const res = await api.verifyOAuth();
+      const res = await api.verifyOAuthOnly();
       if (res.data.valid) {
         notifySuccess(t('settings.verifySuccess'));
       } else {
@@ -330,7 +330,9 @@ const OAuthConfigCard: React.FC = () => {
               )}
               {/* Connection status */}
               <Descriptions.Item label={t('settings.oauthTokenExpiry')}>
-                {oauthStatus.token_valid ? (
+                {oauthStatus.auth_broken ? (
+                  <Tag color="error">{t('settings.oauthAuthBroken')}</Tag>
+                ) : oauthStatus.token_valid ? (
                   <Space>
                     <Tag color="success">{t('settings.oauthTokenValid')}</Tag>
                     <Text type="secondary" style={{ fontSize: 12 }}>

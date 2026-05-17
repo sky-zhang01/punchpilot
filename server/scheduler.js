@@ -6,14 +6,17 @@ import {
   getDailySchedule,
   setDailySchedule,
   markDailyScheduleExecuted,
+  updateDailyScheduleStatus,
   cleanOldSchedules,
   cleanExpiredLeaveStrategyCache,
   cleanOldAsyncTasks,
 } from './db.js';
-import { executeAction, detectCurrentState, determineActionsForToday, hasCredentials, isDebugMode, FREEE_STATE } from './automation/index.js';
-import { FreeeApiClient } from './freee-api.js';
+import { executeAction, detectCurrentState, determineActionsForToday, hasCredentials, isDebugMode, FREEE_STATE, getConnectionMode } from './automation/index.js';
+import { FreeeApiClient, FREEE_AUTH_ERROR_CODES, isOAuthAuthBroken, markOAuthAuthBroken } from './freee-api.js';
 import { isHolidayOrWeekend, getTodayString } from './holiday.js';
 import { msUntilTimeInTz, getTimezone } from './timezone.js';
+
+const AUTH_TRANSIENT_RETRY_DELAYS_MS = [30_000, 120_000, 300_000];
 
 function timeToMinutes(t) {
   const [h, m] = t.split(':').map(Number);
@@ -32,6 +35,22 @@ function randomTimeBetween(start, end) {
   return minutesToTime(randomInt(timeToMinutes(start), timeToMinutes(end)));
 }
 
+function resultErrorCode(result) {
+  return result?.errorCode || result?.error_code || null;
+}
+
+function isAuthRequiredResult(result) {
+  return resultErrorCode(result) === FREEE_AUTH_ERROR_CODES.AUTH_REQUIRED;
+}
+
+function isAuthTransientResult(result) {
+  return resultErrorCode(result) === FREEE_AUTH_ERROR_CODES.AUTH_TRANSIENT;
+}
+
+function isApiOAuthAuthBroken() {
+  return getConnectionMode() === 'api' && isOAuthAuthBroken();
+}
+
 class Scheduler {
   constructor() {
     this.dailyCronJob = null;
@@ -39,6 +58,7 @@ class Scheduler {
     this.todaySchedule = {};
     this.skippedActions = new Set(); // Actions skipped due to smart startup
     this.startupAnalysis = null; // Last startup analysis result
+    this.smartSkipLoggedForDate = null;
   }
 
   async initialize() {
@@ -52,6 +72,7 @@ class Scheduler {
       cleanOldAsyncTasks(2);
       this.skippedActions.clear();
       this.startupAnalysis = null;
+      this.smartSkipLoggedForDate = null;
       await this.resolveAndScheduleToday();
     });
 
@@ -61,6 +82,7 @@ class Scheduler {
 
   async resolveAndScheduleToday() {
     this.clearTodayTimers();
+    this.smartSkipLoggedForDate = null;
 
     const today = getTodayString();
 
@@ -147,9 +169,16 @@ class Scheduler {
       execute: plan.execute,
       skip: plan.skip,
       immediate: plan.immediateActions,
+      authRequired: isApiOAuthAuthBroken(),
     };
 
     console.log(`[Scheduler] State: ${currentState} -> ${plan.reason}`);
+
+    if (currentState === FREEE_STATE.UNKNOWN && isApiOAuthAuthBroken()) {
+      console.warn('[Scheduler] OAuth authorization requires re-authorization; skipping retry loop and pausing today');
+      this.recordSmartScheduleSkip(plan);
+      return;
+    }
 
     // --- Tier 1: Rapid retry (3×30s) ---
     if (currentState === FREEE_STATE.UNKNOWN && retryCount < MAX_RETRIES) {
@@ -195,6 +224,10 @@ class Scheduler {
       }
     }
 
+    if (currentState === FREEE_STATE.UNKNOWN && plan.execute.length === 0) {
+      this.recordSmartScheduleSkip(plan);
+    }
+
     // Mark skipped actions
     for (const act of plan.skip) {
       this.skippedActions.add(act);
@@ -228,13 +261,17 @@ class Scheduler {
   }
 
   async runAction(actionType, scheduledTime) {
+    return this.runActionAttempt(actionType, scheduledTime, 0);
+  }
+
+  async runActionAttempt(actionType, scheduledTime, attempt) {
     const today = getTodayString();
 
     // Check master toggle
     if (getSetting('auto_checkin_enabled') !== '1') {
       console.log(`[Scheduler] Auto disabled, skipping ${actionType}`);
       insertLog({ action_type: actionType, scheduled_time: scheduledTime, status: 'skipped', trigger_type: 'scheduled', error_message: 'Auto check-in disabled' });
-      markDailyScheduleExecuted(today, actionType);
+      markDailyScheduleExecuted(today, actionType, 'skipped', 'Auto check-in disabled');
       return;
     }
 
@@ -242,7 +279,16 @@ class Scheduler {
     if (await isHolidayOrWeekend()) {
       console.log(`[Scheduler] Holiday, skipping ${actionType}`);
       insertLog({ action_type: actionType, scheduled_time: scheduledTime, status: 'skipped', trigger_type: 'scheduled', error_message: 'Holiday or weekend' });
-      markDailyScheduleExecuted(today, actionType);
+      markDailyScheduleExecuted(today, actionType, 'skipped', 'Holiday or weekend');
+      return;
+    }
+
+    if (isApiOAuthAuthBroken()) {
+      const reason = getSetting('oauth_auth_broken_reason') || 'OAuth authorization requires re-authorization. Automatic punching is paused.';
+      console.warn(`[Scheduler] OAuth authorization is broken, pausing scheduled actions: ${reason}`);
+      insertLog({ action_type: actionType, scheduled_time: scheduledTime, status: 'skipped', trigger_type: 'scheduled', error_message: reason });
+      updateDailyScheduleStatus(today, actionType, 'auth_required', reason, true);
+      this.cancelTodayTimers('auth_required');
       return;
     }
 
@@ -260,7 +306,25 @@ class Scheduler {
       duration_ms: result.durationMs,
     });
 
-    markDailyScheduleExecuted(today, actionType);
+    if (result.status === 'success') {
+      markDailyScheduleExecuted(today, actionType, 'success', null);
+    } else if (result.status === 'skipped') {
+      markDailyScheduleExecuted(today, actionType, 'skipped', result.error || null);
+    } else if (isAuthRequiredResult(result)) {
+      updateDailyScheduleStatus(today, actionType, 'auth_required', result.error || null, true);
+      this.cancelTodayTimers('auth_required');
+    } else if (isAuthTransientResult(result)) {
+      if (attempt < AUTH_TRANSIENT_RETRY_DELAYS_MS.length) {
+        this.scheduleAuthTransientRetry(actionType, scheduledTime, attempt, result.error || 'Transient OAuth refresh failure');
+      } else {
+        const reason = `${result.error || 'Token refresh failed'} Automatic punching is paused until re-authorization.`;
+        markOAuthAuthBroken(reason);
+        updateDailyScheduleStatus(today, actionType, 'auth_required', reason, true);
+        this.cancelTodayTimers('auth_transient_exhausted');
+      }
+    } else if (result.status === 'failure') {
+      updateDailyScheduleStatus(today, actionType, 'failure', result.error || null, true);
+    }
 
     // After any successful action, re-evaluate the plan so Dashboard reflects reality.
     if (result.status === 'success') {
@@ -268,6 +332,52 @@ class Scheduler {
     }
 
     console.log(`[Scheduler] ${actionType} -> ${result.status}`);
+  }
+
+  scheduleAuthTransientRetry(actionType, scheduledTime, attempt, error) {
+    const today = getTodayString();
+    const delayMs = AUTH_TRANSIENT_RETRY_DELAYS_MS[attempt];
+    const retryKey = `${actionType}:retry`;
+    if (this.timers[retryKey]) clearTimeout(this.timers[retryKey]);
+    updateDailyScheduleStatus(today, actionType, 'retrying', error, true);
+    console.warn(`[Scheduler] Transient OAuth failure for ${actionType}; retry ${attempt + 1}/${AUTH_TRANSIENT_RETRY_DELAYS_MS.length} in ${Math.round(delayMs / 1000)}s`);
+    this.timers[retryKey] = setTimeout(async () => {
+      delete this.timers[retryKey];
+      await this.runActionAttempt(actionType, scheduledTime, attempt + 1);
+    }, delayMs);
+  }
+
+  cancelTodayTimers(reason) {
+    for (const [key, timer] of Object.entries(this.timers)) {
+      clearTimeout(timer);
+      delete this.timers[key];
+    }
+    console.warn(`[Scheduler] Cancelled today's pending timers (${reason})`);
+  }
+
+  recordSmartScheduleSkip(plan) {
+    const today = getTodayString();
+    if (this.smartSkipLoggedForDate === today) return;
+    this.smartSkipLoggedForDate = today;
+
+    const authReason = getSetting('oauth_auth_broken_reason') || '';
+    const apiAuthBroken = isApiOAuthAuthBroken();
+    const reason = apiAuthBroken
+      ? authReason || 'OAuth authorization requires re-authorization. Automatic punching is paused.'
+      : 'Attendance state could not be determined after retries. No automatic actions were scheduled.';
+
+    insertLog({
+      action_type: 'daily_resolution',
+      scheduled_time: null,
+      status: 'skipped',
+      trigger_type: 'scheduler',
+      error_message: reason,
+    });
+
+    const status = apiAuthBroken ? 'auth_required' : 'skipped_unknown';
+    for (const act of plan.skip || []) {
+      updateDailyScheduleStatus(today, act, status, reason);
+    }
   }
 
   async triggerManual(actionType) {

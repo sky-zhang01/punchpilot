@@ -72,6 +72,7 @@ const apiClient = {
   saveAccount: (username: string, password: string): ApiCall => api.put('/config/account', { username, password }),
   clearAccount: (): ApiCall => api.delete('/config/account'),
   verifyCredentials: (): ApiCall => api.post('/config/verify-credentials', {}, { timeout: 60000 }),
+  verifyWebCredentials: (): ApiCall => api.post('/config/verify-web-credentials', {}, { timeout: 60000 }),
 
   // Connection Mode & OAuth (API mode)
   getConnectionMode: (): ApiCall => api.get('/config/connection-mode'),
@@ -82,6 +83,7 @@ const apiClient = {
   getOAuthStatus: (): ApiCall => api.get('/config/oauth-status'),
   selectOAuthCompany: (company_id: string | number): ApiCall =>
     api.put('/config/oauth-select-company', { company_id }),
+  verifyOAuthOnly: (): ApiCall => api.post('/config/verify-oauth'),
   verifyOAuth: (): ApiCall => api.post('/config/oauth-verify'),
   clearOAuth: (): ApiCall => api.delete('/config/oauth'),
 

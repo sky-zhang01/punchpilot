@@ -11,6 +11,7 @@ import {
   Space,
   Modal,
   Pagination,
+  Tooltip,
 } from 'antd';
 import {
   SearchOutlined,
@@ -40,6 +41,7 @@ const ACTION_TAG_CONFIG: Record<string, { color: string }> = {
   batch_correction: { color: 'purple' },
   approval_submitted: { color: 'geekblue' },
   monthly_closing: { color: 'magenta' },
+  daily_resolution: { color: 'default' },
 };
 
 const LogsPage: React.FC = () => {
@@ -139,6 +141,7 @@ const LogsPage: React.FC = () => {
           batch_correction: 'batchCorrection',
           approval_submitted: 'approvalSubmitted',
           monthly_closing: 'monthlyClosing',
+          daily_resolution: 'dailyResolution',
         };
         const i18nKey = i18nKeyMap[val] || snakeToCamel(val || '');
         return (
@@ -181,6 +184,23 @@ const LogsPage: React.FC = () => {
       key: 'duration',
       render: (val: number) => (val ? `${val}ms` : '-'),
       width: 100,
+    },
+    {
+      title: t('table.error'),
+      dataIndex: 'error_message',
+      key: 'error',
+      render: (val: string) => {
+        if (!val) return '-';
+        const short = val.length > 80 ? `${val.slice(0, 80)}...` : val;
+        return (
+          <Tooltip title={val}>
+            <Text type="danger" style={{ maxWidth: 220 }} ellipsis>
+              {short}
+            </Text>
+          </Tooltip>
+        );
+      },
+      width: 240,
     },
     {
       title: t('table.actions'),
@@ -327,6 +347,7 @@ const LogsPage: React.FC = () => {
                   batch_correction: 'batchCorrection',
                   approval_submitted: 'approvalSubmitted',
                   monthly_closing: 'monthlyClosing',
+                  daily_resolution: 'dailyResolution',
                 };
                 return t(`actions.${keyMap[detailLog.action_type] || snakeToCamel(detailLog.action_type || '')}`);
               })()}

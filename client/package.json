@@ -1,38 +1,40 @@
 {
   "name": "punchpilot-client",
   "private": true,
-  "version": "0.4.9",
+  "version": "0.4.10",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage --passWithNoTests",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@ant-design/icons": "^6.2.2",
-    "@reduxjs/toolkit": "^2.11.2",
-    "antd": "^6.3.7",
-    "axios": "^1.16.0",
+    "@ant-design/icons": "^6.2.3",
+    "@reduxjs/toolkit": "^2.12.0",
+    "antd": "^6.4.2",
+    "axios": "^1.16.1",
     "dayjs": "^1.11.20",
-    "i18next": "^26.0.10",
+    "i18next": "^26.2.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-i18next": "^17.0.7",
-    "react-redux": "^9.2.0",
-    "react-router": "^7.15.0"
+    "react-i18next": "^17.0.8",
+    "react-redux": "^9.3.0",
+    "react-router": "^7.15.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
-    "@types/node": "^24.12.3",
+    "@types/node": "^24.12.4",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
+    "@vitejs/plugin-react": "^6.0.2",
+    "@vitest/coverage-v8": "^4.1.6",
     "jsdom": "^29.1.1",
     "typescript": "^6.0.3",
-    "vite": "^8.0.11",
-    "vitest": "^4.1.5"
+    "vite": "^8.0.13",
+    "vitest": "^4.1.6"
   }
 }
