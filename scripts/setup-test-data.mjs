@@ -57,7 +57,7 @@ async function main() {
     // ─── Step 2: Switch to テスト事業所 ───
     console.log('\n=== Step 2: Switch company ===');
     // Click the company name in top-right to open switcher
-    const companyBtn = page.locator('header').locator('button, a, [role="button"]').filter({ hasText: /GCU|事業所|会社/ }).first();
+    const companyBtn = page.locator('header').locator('button, a, [role="button"]').filter({ hasText: /事業所|会社/ }).first();
     if ((await companyBtn.count()) > 0) {
       console.log('Found company button, clicking...');
       await companyBtn.click();
