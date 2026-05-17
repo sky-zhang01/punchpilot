@@ -17,6 +17,7 @@ data/*.db-wal
 data/logs/
 
 # Runtime artifacts
+artifacts/
 screenshots/
 /logs/
 *.log

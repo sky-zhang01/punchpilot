@@ -12,6 +12,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
 
 jobs:
   build-and-push:

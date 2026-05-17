@@ -109,6 +109,8 @@ jobs:
     runs-on: ubuntu-latest
     # Keep this manual; tag publishing performs the real multi-arch build.
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.repository == 'sky-zhang01/punchpilot')
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
     steps:
       - uses: actions/checkout@v6
       - name: Set up QEMU
