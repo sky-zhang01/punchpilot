@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.11] - 2026-05-17
+
+### Security
+- Removed a legacy internal company-name match from the exploratory test-data helper.
+- Prevented local exploratory screenshots and runtime evidence artifacts from being accidentally committed.
+- Disabled automatic Docker Buildx build-record artifact uploads in CI and release workflows.
+
 ## [0.4.10] - 2026-05-17
 
 ### Security
