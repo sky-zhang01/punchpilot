@@ -786,6 +786,7 @@ describe('FreeeApiClient Module', () => {
     expect(typeof client.ensureUserInfo).toBe('function');
     expect(typeof client.detectState).toBe('function');
     expect(typeof client.executeClockAction).toBe('function');
+    expect(typeof client.getWorkRecord).toBe('function');
     expect(typeof client.verifyConnection).toBe('function');
   });
 

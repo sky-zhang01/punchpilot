@@ -15,6 +15,7 @@ import { executeAction, detectCurrentState, determineActionsForToday, hasCredent
 import { FreeeApiClient, FREEE_AUTH_ERROR_CODES, isOAuthAuthBroken, markOAuthAuthBroken } from './freee-api.js';
 import { isHolidayOrWeekend, getTodayString } from './holiday.js';
 import { msUntilTimeInTz, getTimezone } from './timezone.js';
+import { getWorkRecordNonWorkingDayStatus } from './work-record-status.js';
 
 const AUTH_TRANSIENT_RETRY_DELAYS_MS = [30_000, 120_000, 300_000];
 
@@ -133,6 +134,14 @@ class Scheduler {
 
     // Smart startup: detect current freee state and decide what to schedule
     if (getSetting('auto_checkin_enabled') === '1') {
+      const nonWorkingStatus = await this.getTodayNonWorkingStatus(today);
+      if (nonWorkingStatus.isNonWorkingDay) {
+        this.skipTodayForNonWorkingDay(today, nonWorkingStatus);
+        console.log(`[Scheduler] Today is a freee non-working day - no actions scheduled (${nonWorkingStatus.reason})`);
+        console.log('[Scheduler] Today\'s schedule:', this.todaySchedule);
+        return;
+      }
+
       await this.smartSchedule();
     } else {
       console.log('[Scheduler] Auto-checkin OFF - times resolved but not scheduling');
@@ -283,6 +292,14 @@ class Scheduler {
       return;
     }
 
+    const nonWorkingStatus = await this.getTodayNonWorkingStatus(today);
+    if (nonWorkingStatus.isNonWorkingDay) {
+      console.log(`[Scheduler] freee non-working day, skipping ${actionType}: ${nonWorkingStatus.reason}`);
+      insertLog({ action_type: actionType, scheduled_time: scheduledTime, status: 'skipped', trigger_type: 'scheduled', error_message: nonWorkingStatus.reason });
+      markDailyScheduleExecuted(today, actionType, 'skipped', nonWorkingStatus.reason);
+      return;
+    }
+
     if (isApiOAuthAuthBroken()) {
       const reason = getSetting('oauth_auth_broken_reason') || 'OAuth authorization requires re-authorization. Automatic punching is paused.';
       console.warn(`[Scheduler] OAuth authorization is broken, pausing scheduled actions: ${reason}`);
@@ -378,6 +395,46 @@ class Scheduler {
     for (const act of plan.skip || []) {
       updateDailyScheduleStatus(today, act, status, reason);
     }
+  }
+
+  async getTodayNonWorkingStatus(today) {
+    if (!hasCredentials() || isDebugMode() || getConnectionMode() !== 'api') {
+      return { isNonWorkingDay: false, reason: null, code: null };
+    }
+
+    try {
+      const client = new FreeeApiClient();
+      const record = await client.getWorkRecord(today);
+      return getWorkRecordNonWorkingDayStatus(record);
+    } catch (e) {
+      console.warn('[Scheduler] Failed to check freee work record status:', e.message?.substring(0, 100));
+      return { isNonWorkingDay: false, reason: null, code: null };
+    }
+  }
+
+  skipTodayForNonWorkingDay(today, status) {
+    const allActions = Object.keys(this.todaySchedule);
+    this.startupAnalysis = {
+      state: 'leave',
+      reason: `${status.reason} - all actions skipped`,
+      execute: [],
+      skip: allActions,
+      immediate: [],
+      nonWorkingDayCode: status.code,
+    };
+
+    for (const act of allActions) {
+      this.skippedActions.add(act);
+      markDailyScheduleExecuted(today, act, 'skipped', status.reason);
+    }
+
+    insertLog({
+      action_type: 'daily_resolution',
+      scheduled_time: null,
+      status: 'skipped',
+      trigger_type: 'scheduler',
+      error_message: status.reason,
+    });
   }
 
   async triggerManual(actionType) {

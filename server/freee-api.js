@@ -315,6 +315,18 @@ export class FreeeApiClient {
     };
   }
 
+  /**
+   * Fetch one daily work record from freee.
+   * This is separate from time_clocks: approved leave/absence is reflected here.
+   */
+  async getWorkRecord(date = todayStringInTz()) {
+    await this.ensureUserInfo();
+    return this.apiRequest(
+      'GET',
+      `/employees/${this.employeeId}/work_records/${date}?company_id=${this.companyId}`
+    );
+  }
+
   // Map freee clock_type back to our internal action types
   static CLOCK_TYPE_TO_ACTION = {
     clock_in: 'checkin',
