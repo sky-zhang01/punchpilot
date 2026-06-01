@@ -41,8 +41,8 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.6",
-    "eslint": "^10.4.0",
+    "@vitest/coverage-v8": "^4.1.7",
+    "eslint": "^10.4.1",
     "eslint-plugin-security": "^4.0.0",
     "supertest": "^7.2.2",
     "vitest": "^4.1.6"
