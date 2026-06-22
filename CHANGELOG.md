@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.13] - 2026-06-22
+
+### Security
+- Updated dependency locks for patched `form-data`, `undici`, and `vite` releases.
+
+### Changed
+- Updated server dependencies: `better-sqlite3`, `node-cron`, `playwright`, `@vitest/coverage-v8`, `eslint`, `eslint-plugin-security`, and `vitest`.
+- Updated client dependencies: `@ant-design/icons`, `antd`, `axios`, `dayjs`, `i18next`, `react`, `react-dom`, `react-router`, `@types/node`, `@types/react`, `@vitest/coverage-v8`, `vite`, and `vitest`.
+- Updated GitHub Actions checkout steps to `actions/checkout@v7`.
+
 ## [0.4.12] - 2026-06-01
 
 ### Fixed
