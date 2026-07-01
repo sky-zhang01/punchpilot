@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.14] - 2026-07-01
+
+### Fixed
+- Monthly attendance closing now treats an already-submitted request as a successful idempotent result.
+- Monthly attendance closing now reports clear web credential errors when browser fallback is required but unavailable.
+
+### Changed
+- Updated compatible server and client dependency patch releases.
+- Scoped pull-request Docker validation to the primary Linux amd64 deployment target while keeping release images multi-architecture.
+
 ## [0.4.13] - 2026-06-22
 
 ### Security
