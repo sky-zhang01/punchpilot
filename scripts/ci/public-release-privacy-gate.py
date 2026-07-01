@@ -48,10 +48,6 @@ DEFAULT_EXCLUDES = (
     "node_modules/**",
     "dist/**",
     "coverage/**",
-    "*.lock",
-    "package-lock.json",
-    "pnpm-lock.yaml",
-    "yarn.lock",
     "scripts/ci/public-release-privacy-gate.py",
 )
 
@@ -137,12 +133,20 @@ def is_excluded(path: str, patterns: Iterable[str]) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
-def git_files(root: Path) -> list[str]:
+def git_files(root: Path, include_untracked: bool) -> list[str]:
     try:
         out = subprocess.check_output(["git", "ls-files", "-z"], cwd=root, stderr=subprocess.DEVNULL)
+        files = set(out.decode("utf-8", errors="replace").split("\0"))
+        if include_untracked:
+            untracked = subprocess.check_output(
+                ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+                cwd=root,
+                stderr=subprocess.DEVNULL,
+            )
+            files.update(untracked.decode("utf-8", errors="replace").split("\0"))
     except (FileNotFoundError, subprocess.CalledProcessError):
         return sorted(str(item.relative_to(root)) for item in root.rglob("*") if item.is_file())
-    return sorted(item for item in out.decode("utf-8", errors="replace").split("\0") if item)
+    return sorted(item for item in files if item)
 
 
 def load_excludes(root: Path, extra_excludes: list[str]) -> list[str]:
@@ -170,7 +174,7 @@ def audit(args: argparse.Namespace) -> list[Finding]:
     rules = list(BASE_RULES) + forbidden_host_rules(host_value)
     excludes = load_excludes(root, args.exclude)
     findings: list[Finding] = []
-    for rel in git_files(root):
+    for rel in git_files(root, args.include_untracked):
         if is_excluded(rel, excludes) or not looks_text_file(rel):
             continue
         path = root / rel
@@ -198,6 +202,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--exclude", action="append", default=[])
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--fail-on-warn", action="store_true")
+    parser.add_argument("--include-untracked", action="store_true")
     parser.add_argument("--require-forbidden-hosts", action="store_true")
     return parser.parse_args()
 

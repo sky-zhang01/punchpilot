@@ -15,6 +15,24 @@ interface LeaveRequestModalProps {
   preSelectedDates?: string[]; // Dates pre-selected from calendar selection mode (YYYY-MM-DD)
 }
 
+type LeaveRequestPayload = {
+  type: string;
+  date: string;
+  reason?: string;
+  holiday_type?: string;
+  start_time?: string;
+  end_time?: string;
+};
+
+type BatchLeaveRequestPayload = {
+  type: string;
+  dates: string[];
+  reason?: string;
+  holiday_type?: string;
+  start_time?: string;
+  end_time?: string;
+};
+
 const LEAVE_TYPES = [
   { value: 'PaidHoliday', labelKey: 'calendar.paidHoliday' },
   { value: 'SpecialHoliday', labelKey: 'calendar.specialHoliday' },
@@ -93,7 +111,7 @@ const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({ open, onClose, pr
     try {
       if (isBatchMode) {
         // Batch submission
-        const data: Record<string, any> = {
+        const data: BatchLeaveRequestPayload = {
           type,
           dates: dates.map(d => d.format('YYYY-MM-DD')),
           reason: reason.trim() || undefined,
@@ -117,7 +135,7 @@ const LeaveRequestModal: React.FC<LeaveRequestModalProps> = ({ open, onClose, pr
         }
       } else {
         // Single submission
-        const data: Record<string, any> = {
+        const data: LeaveRequestPayload = {
           type,
           date: dates[0].format('YYYY-MM-DD'),
           reason: reason.trim() || undefined,

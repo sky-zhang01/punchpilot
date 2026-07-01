@@ -405,7 +405,6 @@ const en = {
     myRequests: "My Requests",
     incomingRequests: "Incoming Requests",
     noIncomingRequests: "No pending approval requests",
-    selectedCount: "{{count}} selected",
     batchWithdraw: "Batch Withdraw",
     batchWithdrawConfirm: "Withdraw all selected requests?",
     noWithdrawable: "No withdrawable requests selected",

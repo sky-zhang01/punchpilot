@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Updated compatible server and client dependency patch releases.
+- Updated React Router to 8.1 for the client application.
+- Added an internal release-check workflow that validates release metadata, privacy scanning, dependency audits, tests, E2E smoke, and the Linux amd64 Docker build before public publishing.
+- Limited the public Docker publish workflow to GitHub-hosted release publishing.
 - Scoped pull-request Docker validation to the primary Linux amd64 deployment target while keeping release images multi-architecture.
 
 ## [0.4.13] - 2026-06-22
