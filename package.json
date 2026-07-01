@@ -24,7 +24,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "node-cron": "^4.5.0",
-    "playwright": "^1.61.0"
+    "playwright": "^1.61.1"
   },
   "keywords": [
     "freee",
@@ -42,7 +42,7 @@
   "license": "MIT",
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.9",
-    "eslint": "^10.5.0",
+    "eslint": "^10.6.0",
     "eslint-plugin-security": "^4.0.1",
     "supertest": "^7.2.2",
     "vitest": "^4.1.9"

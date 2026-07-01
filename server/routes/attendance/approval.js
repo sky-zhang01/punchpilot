@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { insertLog } from "../../db.js";
+import { FREEE_ERROR_MESSAGES } from "../../constants.js";
 import { FreeeApiClient } from "../../freee-api.js";
 import {
   withdrawApprovalRequestWeb,
@@ -18,6 +19,24 @@ import {
 } from "./utils.js";
 
 const router = Router();
+
+function monthlyClosingScheduledTime(year, month) {
+  return `${year}-${String(month).padStart(2, "0")}-01`;
+}
+
+function isMonthlyClosingAlreadySubmitted(err) {
+  return err.message?.includes(
+    FREEE_ERROR_MESSAGES.MONTHLY_CLOSING_ALREADY_SUBMITTED,
+  );
+}
+
+function requiresMonthlyClosingWebFallback(err) {
+  return (
+    err.message?.includes("役職") ||
+    err.message?.includes("部門") ||
+    err.message?.includes("Webから申請")
+  );
+}
 
 // ===================================================================
 //  Approval Requests — individual operations (kept for single-use)
@@ -98,7 +117,7 @@ router.post("/approval/monthly", async (req, res) => {
     try {
       insertLog({
         action_type: "monthly_closing",
-        scheduled_time: `${year}-${String(month).padStart(2, "0")}-01`,
+        scheduled_time: monthlyClosingScheduledTime(year, month),
         status: "success",
         trigger_type: "manual",
       });
@@ -110,14 +129,49 @@ router.post("/approval/monthly", async (req, res) => {
   } catch (err) {
     log.error(`Monthly closing API failed: ${err.message}`);
 
+    if (isMonthlyClosingAlreadySubmitted(err)) {
+      log.info("Monthly attendance closing already submitted");
+      try {
+        insertLog({
+          action_type: "monthly_closing",
+          scheduled_time: monthlyClosingScheduledTime(year, month),
+          status: "success",
+          trigger_type: "manual",
+        });
+      } catch (logErr) {
+        /* ignore */
+      }
+      return res.json({
+        success: true,
+        alreadySubmitted: true,
+        via: "api",
+      });
+    }
+
     // freee returns 400 when the company's approval flow requires dept/role routing —
     // the API cannot handle it and instructs us to use the web form instead.
-    const needsWebFallback =
-      err.message?.includes("役職") ||
-      err.message?.includes("部門") ||
-      err.message?.includes("Webから申請");
+    const needsWebFallback = requiresMonthlyClosingWebFallback(err);
 
-    if (needsWebFallback && hasWebCredentials()) {
+    if (needsWebFallback && !hasWebCredentials()) {
+      try {
+        insertLog({
+          action_type: "monthly_closing",
+          scheduled_time: monthlyClosingScheduledTime(year, month),
+          status: "failure",
+          trigger_type: "manual",
+          error_message: "Web credentials are required for monthly closing.",
+        });
+      } catch (logErr) {
+        /* ignore */
+      }
+      return res.status(400).json({
+        error:
+          "Web credentials are required because freee requires monthly closing from the web form.",
+        code: "WEB_CREDENTIALS_REQUIRED",
+      });
+    }
+
+    if (needsWebFallback) {
       log.info(
         "Monthly closing: API rejected (dept/role routing required), falling back to Playwright web form",
       );
@@ -127,7 +181,7 @@ router.post("/approval/monthly", async (req, res) => {
           try {
             insertLog({
               action_type: "monthly_closing",
-              scheduled_time: `${year}-${String(month).padStart(2, "0")}-01`,
+              scheduled_time: monthlyClosingScheduledTime(year, month),
               status: "success",
               trigger_type: "manual",
             });
@@ -138,6 +192,30 @@ router.post("/approval/monthly", async (req, res) => {
         }
         // Web fallback also failed — fall through to error response
         log.error(`Monthly closing web fallback failed: ${webResult.error}`);
+        try {
+          insertLog({
+            action_type: "monthly_closing",
+            scheduled_time: monthlyClosingScheduledTime(year, month),
+            status: "failure",
+            trigger_type: "manual",
+            error_message: String(webResult.error || "web fallback failed").substring(
+              0,
+              300,
+            ),
+          });
+        } catch (logErr) {
+          /* ignore */
+        }
+        if (webResult.error === "web_credentials_invalid") {
+          return res.status(401).json({
+            error: "Web credentials are invalid. Update freee web credentials.",
+            code: "WEB_CREDENTIALS_INVALID",
+          });
+        }
+        return res.status(500).json({
+          error: sanitizeError(new Error(webResult.error || "web fallback failed")),
+          code: "WEB_FALLBACK_FAILED",
+        });
       } catch (webErr) {
         log.error(`Monthly closing web fallback threw: ${webErr.message}`);
       }
@@ -146,7 +224,7 @@ router.post("/approval/monthly", async (req, res) => {
     try {
       insertLog({
         action_type: "monthly_closing",
-        scheduled_time: `${year}-${String(month).padStart(2, "0")}-01`,
+        scheduled_time: monthlyClosingScheduledTime(year, month),
         status: "failure",
         trigger_type: "manual",
         error_message: err.message?.substring(0, 300),
