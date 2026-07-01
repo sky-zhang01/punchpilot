@@ -72,6 +72,9 @@ jobs:
           cache-dependency-path: client/package-lock.json
       - working-directory: client
         run: npm ci
+      - name: Typecheck client
+        working-directory: client
+        run: npm run typecheck
       - name: Run client tests with coverage
         working-directory: client
         run: npm run test:coverage
@@ -105,7 +108,7 @@ jobs:
         run: npm run test:e2e
 
   docker-build:
-    name: Docker Build Check (Multi-Arch)
+    name: Docker Build Check (amd64)
     runs-on: ubuntu-latest
     # PRs validate the deployment target (TrueNAS/x86). Tag publishing performs
     # the real multi-arch release build; workflow_dispatch can still dry-run arm64.

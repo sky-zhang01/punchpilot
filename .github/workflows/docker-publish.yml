@@ -18,8 +18,14 @@ jobs:
   build-and-push:
     name: Build & Push (Multi-Arch)
     runs-on: ubuntu-latest
+    if: github.server_url == 'https://github.com' && github.repository == 'sky-zhang01/punchpilot'
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Release metadata check
+        run: node scripts/ci/release-metadata-check.mjs --tag "$GITHUB_REF_NAME" --mode public --require-handoff
 
       - name: Public release privacy gate
         env:

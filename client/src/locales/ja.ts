@@ -404,7 +404,6 @@ const ja = {
     myRequests: "自分の申請",
     incomingRequests: "承認待ち",
     noIncomingRequests: "承認待ちの申請はありません",
-    selectedCount: "{{count}}件選択中",
     batchWithdraw: "一括取下げ",
     batchWithdrawConfirm: "選択した申請を一括取下げしますか？",
     noWithdrawable: "取下げ可能な申請が選択されていません",

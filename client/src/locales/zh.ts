@@ -394,7 +394,6 @@ const zh = {
     myRequests: "我的申请",
     incomingRequests: "待审批",
     noIncomingRequests: "暂无待审批的申请",
-    selectedCount: "已选择 {{count}} 项",
     batchWithdraw: "批量撤回",
     batchWithdrawConfirm: "确定要批量撤回选中的申请吗？",
     noWithdrawable: "未选择可撤回的申请",

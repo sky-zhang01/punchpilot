@@ -1,0 +1,100 @@
+name: Internal Release Check
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to validate, such as vX.Y.Z.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release-check:
+    name: Internal Release Check
+    runs-on: ubuntu-latest
+    if: github.server_url != 'https://github.com'
+    timeout-minutes: 45
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Release metadata check
+        env:
+          DISPATCH_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          release_tag="${GITHUB_REF_NAME:-}"
+          if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ] && [ -n "${DISPATCH_RELEASE_TAG:-}" ]; then
+            release_tag="$DISPATCH_RELEASE_TAG"
+          fi
+          node scripts/ci/release-metadata-check.mjs --tag "$release_tag" --mode internal
+
+      - name: Public release privacy gate
+        env:
+          PUBLIC_RELEASE_FORBIDDEN_HOSTS: ${{ secrets.PUBLIC_RELEASE_FORBIDDEN_HOSTS }}
+        run: python3 scripts/ci/public-release-privacy-gate.py --root . --repo-name "$GITHUB_REPOSITORY" --require-forbidden-hosts
+
+      - name: Install server dependencies
+        run: npm ci
+
+      - name: Audit server dependencies
+        run: npm audit --audit-level=moderate
+
+      - name: Security lint
+        run: npm run lint:security
+
+      - name: Run server tests with coverage
+        run: npm run test:coverage
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Audit client dependencies
+        working-directory: client
+        run: npm audit --audit-level=moderate
+
+      - name: Typecheck client
+        working-directory: client
+        run: npm run typecheck
+
+      - name: Run client tests with coverage
+        working-directory: client
+        run: npm run test:coverage
+
+      - name: Build client
+        working-directory: client
+        run: npm run build
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E smoke test
+        run: npm run test:e2e
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build amd64 image (dry run)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
