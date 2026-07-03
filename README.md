@@ -148,6 +148,12 @@ npm run test:e2e
 cd client && npx vite build
 ```
 
+Branch and release hygiene rules live in [docs/branching.md](docs/branching.md). Preview merged branch cleanup candidates with:
+
+```bash
+npm run housekeeping:branches -- --fetch --remote origin --include-local
+```
+
 ## Acknowledgments
 
 This project was inspired by and built upon [freee-checkin](https://github.com/newbdez33/freee-checkin) by [@newbdez33](https://github.com/newbdez33). The original project provided the foundation for Playwright-based freee attendance automation. PunchPilot extends it with a web GUI, OAuth API integration, multi-strategy batch correction, and enterprise security features.
