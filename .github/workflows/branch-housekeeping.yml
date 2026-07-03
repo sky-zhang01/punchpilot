@@ -1,0 +1,26 @@
+name: Branch Housekeeping
+
+on:
+  schedule:
+    - cron: '20 22 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    name: Merged Branch Dry Run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Report merged branch cleanup candidates
+        run: npm run housekeeping:branches -- --fetch --remote origin

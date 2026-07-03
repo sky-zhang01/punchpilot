@@ -14,6 +14,7 @@
     "test:watch": "vitest",
     "lint:security": "npx eslint --config eslint.config.mjs 'server/**/*.js'",
     "audit": "npm audit",
+    "housekeeping:branches": "node scripts/ci/branch-housekeeping.mjs",
     "scan:dockerfile": "hadolint Dockerfile"
   },
   "dependencies": {
