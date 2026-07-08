@@ -24,7 +24,7 @@
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "node-cron": "^4.5.0",
+    "node-cron": "^4.6.0",
     "playwright": "^1.61.1"
   },
   "keywords": [
