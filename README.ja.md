@@ -118,7 +118,7 @@ PunchPilot はマルチアーキテクチャ Docker イメージとして配布�
 
 ```bash
 # バージョン固定イメージを取得
-docker pull ghcr.io/sky-zhang01/punchpilot:0.5.0
+docker pull ghcr.io/sky-zhang01/punchpilot:0.5.1
 
 # Compose も同じマルチアーキテクチャ版を取得
 docker compose pull
@@ -137,7 +137,7 @@ PUNCHPILOT_IMAGE=ghcr.io/sky-zhang01/punchpilot@sha256:<digest> docker compose u
 | `TZ` | `Asia/Tokyo` | コンテナのタイムゾーン |
 | `PORT` | `8681` | サーバーポート |
 | `PUID` / `PGID` | `1000` | 実行ユーザー/グループ；標準の TrueNAS Apps では両方を `568` に設定 |
-| `PUNCHPILOT_IMAGE` | `ghcr.io/sky-zhang01/punchpilot:0.5.0` | Compose が使用する公開イメージタグまたはリリース manifest digest |
+| `PUNCHPILOT_IMAGE` | `ghcr.io/sky-zhang01/punchpilot:0.5.1` | Compose が使用する公開イメージタグまたはリリース manifest digest |
 | `TRUST_PROXY` | 無効 | 信頼するリバースプロキシの IP/CIDR、または `loopback`、`linklocal`、`uniquelocal`；未設定時は転送ヘッダーを無視 |
 | `PUNCHPILOT_PUBLIC_ORIGIN` | loopback のみ | loopback 外で使う正規 HTTPS origin；リクエストヘッダーを信頼せず、書き込み検証、Secure cookie、HSTS、OAuth callback を固定 |
 | `OAUTH_REDIRECT_URI` | 自動導出 | 任意の freee callback URI；正規 origin と一致し、パスは `/api/config/oauth-callback` であること |

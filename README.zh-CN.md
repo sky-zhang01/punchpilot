@@ -118,7 +118,7 @@ PunchPilot 以多架构 Docker 镜像分发。
 
 ```bash
 # 拉取固定版本镜像
-docker pull ghcr.io/sky-zhang01/punchpilot:0.5.0
+docker pull ghcr.io/sky-zhang01/punchpilot:0.5.1
 
 # Compose 会拉取同一多架构版本
 docker compose pull
@@ -137,7 +137,7 @@ PUNCHPILOT_IMAGE=ghcr.io/sky-zhang01/punchpilot@sha256:<digest> docker compose u
 | `TZ` | `Asia/Tokyo` | 容器时区 |
 | `PORT` | `8681` | 服务端口 |
 | `PUID` / `PGID` | `1000` | 运行用户/用户组；标准 TrueNAS Apps 环境将两者设为 `568` |
-| `PUNCHPILOT_IMAGE` | `ghcr.io/sky-zhang01/punchpilot:0.5.0` | Compose 使用的公开镜像标签或 release manifest digest |
+| `PUNCHPILOT_IMAGE` | `ghcr.io/sky-zhang01/punchpilot:0.5.1` | Compose 使用的公开镜像标签或 release manifest digest |
 | `TRUST_PROXY` | 禁用 | 可信反向代理的 IP/CIDR，或 `loopback`、`linklocal`、`uniquelocal`；未设置时忽略转发头 |
 | `PUNCHPILOT_PUBLIC_ORIGIN` | 仅 loopback | 非 loopback 访问的规范 HTTPS origin；用于固定写请求校验、Secure cookie、HSTS 和 OAuth callback，不信任请求头 |
 | `OAUTH_REDIRECT_URI` | 自动派生 | 可选的 freee 完整 callback URI；须与规范 origin 相同且路径为 `/api/config/oauth-callback` |

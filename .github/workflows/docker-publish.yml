@@ -332,7 +332,7 @@ jobs:
           cd /tmp/release/arm64
           sha256sum --check punchpilot-arm64.sha256
           zstd --test punchpilot-arm64.tar.zst
-          zstd --decompress punchpilot-arm64.tar.zst --output punchpilot-arm64.tar
+          zstd --decompress punchpilot-arm64.tar.zst -o punchpilot-arm64.tar
           docker load --input punchpilot-arm64.tar
           test "$(docker image inspect punchpilot-release-scan:arm64 --format '{{.Architecture}}')" = "arm64"
 
@@ -423,13 +423,13 @@ jobs:
             cd /tmp/release/amd64
             sha256sum --check punchpilot-amd64.sha256
             zstd --test punchpilot-amd64.tar.zst
-            zstd --decompress punchpilot-amd64.tar.zst --output punchpilot-amd64.tar
+            zstd --decompress punchpilot-amd64.tar.zst -o punchpilot-amd64.tar
           )
           (
             cd /tmp/release/arm64
             sha256sum --check punchpilot-arm64.sha256
             zstd --test punchpilot-arm64.tar.zst
-            zstd --decompress punchpilot-arm64.tar.zst --output punchpilot-arm64.tar
+            zstd --decompress punchpilot-arm64.tar.zst -o punchpilot-arm64.tar
           )
           docker load --input /tmp/release/amd64/punchpilot-amd64.tar
           docker load --input /tmp/release/arm64/punchpilot-arm64.tar

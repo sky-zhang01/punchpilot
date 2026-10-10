@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-10-11
+
+### Fixed
+- Used portable zstd decompression arguments so native ARM64 verification and both image publication consumers can load the scanned release artifacts.
+
+### Changed
+- Updated the default installation image and application version to 0.5.1 while preserving the published 0.5.0 release.
+
 ## [0.5.0] - 2026-10-10
 
 ### Fixed

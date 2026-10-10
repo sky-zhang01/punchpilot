@@ -118,7 +118,7 @@ PunchPilot is distributed as a multi-architecture Docker image.
 
 ```bash
 # Pull the versioned image
-docker pull ghcr.io/sky-zhang01/punchpilot:0.5.0
+docker pull ghcr.io/sky-zhang01/punchpilot:0.5.1
 
 # Compose pulls the same versioned multi-architecture image
 docker compose pull
@@ -137,7 +137,7 @@ PUNCHPILOT_IMAGE=ghcr.io/sky-zhang01/punchpilot@sha256:<digest> docker compose u
 | `TZ` | `Asia/Tokyo` | Container timezone |
 | `PORT` | `8681` | Server port |
 | `PUID` / `PGID` | `1000` | Runtime user/group; set both to `568` for the standard TrueNAS Apps identity |
-| `PUNCHPILOT_IMAGE` | `ghcr.io/sky-zhang01/punchpilot:0.5.0` | Published image tag or release manifest digest used by Compose |
+| `PUNCHPILOT_IMAGE` | `ghcr.io/sky-zhang01/punchpilot:0.5.1` | Published image tag or release manifest digest used by Compose |
 | `TRUST_PROXY` | disabled | Trusted reverse-proxy IP/CIDR entries or `loopback`, `linklocal`, and `uniquelocal`; forwarded headers are ignored when unset |
 | `PUNCHPILOT_PUBLIC_ORIGIN` | loopback only | Canonical HTTPS origin for non-loopback access; anchors write validation, Secure cookies, HSTS, and the OAuth callback instead of trusting request headers |
 | `OAUTH_REDIRECT_URI` | derived | Optional exact freee callback URI on the same canonical origin; path must be `/api/config/oauth-callback` |
