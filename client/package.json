@@ -1,8 +1,16 @@
 {
   "name": "punchpilot-client",
   "private": true,
-  "version": "0.4.14",
+  "version": "0.5.0",
   "type": "module",
+  "packageManager": "npm@12.2.0",
+  "engines": {
+    "node": ">=24.15 <25",
+    "npm": ">=12.2.0 <13"
+  },
+  "allowScripts": {
+    "fsevents": false
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -13,29 +21,28 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
   },
   "dependencies": {
-    "@ant-design/icons": "^6.3.2",
-    "@reduxjs/toolkit": "^2.12.0",
-    "antd": "^6.5.0",
-    "axios": "^1.18.1",
-    "dayjs": "^1.11.21",
-    "i18next": "^26.3.4",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "react-i18next": "^17.0.8",
+    "@ant-design/icons": "^6.3.4",
+    "@reduxjs/toolkit": "^2.13.0",
+    "antd": "^6.6.5",
+    "dayjs": "^1.11.23",
+    "i18next": "^26.4.2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-i18next": "^17.0.15",
     "react-redux": "^9.3.0",
-    "react-router": "^8.1.0"
+    "react-router": "^8.4.0"
   },
   "devDependencies": {
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
-    "@types/node": "^24.13.2",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.3",
-    "@vitest/coverage-v8": "^4.1.9",
-    "jsdom": "^29.1.1",
-    "typescript": "^6.0.3",
-    "vite": "^8.1.2",
-    "vitest": "^4.1.9"
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^24.19.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "@vitest/coverage-v8": "^5.0.3",
+    "jsdom": "^30.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3"
   }
 }

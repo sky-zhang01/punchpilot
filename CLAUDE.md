@@ -2,8 +2,8 @@
 
 ## Tech Stack
 
-- **Backend**: Node.js (ES modules), Express 5, SQLite (better-sqlite3 12), Playwright
-- **Frontend**: React 19, Ant Design 6, Vite 7, TypeScript
+- **Backend**: Node.js (ES modules), Express 5, SQLite (better-sqlite3 13), Playwright
+- **Frontend**: React 19, Ant Design 6, Vite 8, TypeScript
 - **Auth**: bcrypt password hashing, CSPRNG session tokens, AES-256-GCM credential encryption (scrypt KDF)
 - **Infra**: Docker (multi-arch amd64/arm64), PUID/PGID privilege dropping via gosu
 
@@ -47,18 +47,14 @@ client/src/
     en.ts, ja.ts, zh.ts # i18n translation files
 
 tests/
-  *.test.mjs             # Vitest unit tests (run via: npx vitest run)
-  phase5-integration.test.mjs  # Integration tests (run via: node tests/phase5-integration.test.mjs)
+  *.test.mjs             # Vitest unit and integration tests (run via: npm test)
 ```
 
 ## Key Commands
 
 ```bash
-# Unit tests (224 tests)
-npx vitest run
-
-# Integration tests (85 tests) — standalone script, excluded from vitest
-node tests/phase5-integration.test.mjs
+# Unit and integration tests
+npm test
 
 # Dev server (backend, auto-reload)
 npm run dev

@@ -1,16 +1,42 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOG_DIR = path.resolve(__dirname, '..', 'data', 'logs');
+import { LOG_DIR } from './paths.js';
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB per file
 const MAX_LOG_FILES = 10; // keep last 10 rotated files
 
-// Ensure log directory exists
-if (!fs.existsSync(LOG_DIR)) {
-  fs.mkdirSync(LOG_DIR, { recursive: true });
+function safeDiagnosticToken(value, fallback) {
+  return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(value)
+    ? value
+    : fallback;
 }
+
+export function safeErrorMetadata(error) {
+  const metadata = {
+    name: safeDiagnosticToken(error?.name, 'Error'),
+  };
+  const code = safeDiagnosticToken(error?.code, '');
+  if (code) metadata.code = code;
+  if (Number.isInteger(error?.status)) metadata.status = error.status;
+  return metadata;
+}
+
+function ensurePrivateLogDirectory() {
+  fs.mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 });
+  const metadata = fs.lstatSync(LOG_DIR);
+  const currentUid = process.getuid?.();
+  if (
+    metadata.isSymbolicLink() ||
+    !metadata.isDirectory() ||
+    (currentUid != null && metadata.uid !== currentUid && metadata.uid !== 0)
+  ) {
+    const error = new Error('Log directory is not a trusted private directory');
+    error.code = 'LOG_DIRECTORY_UNSAFE';
+    throw error;
+  }
+  fs.chmodSync(LOG_DIR, 0o700);
+}
+
+ensurePrivateLogDirectory();
 
 /**
  * Simple file-based logger with rotation.
@@ -26,9 +52,30 @@ class Logger {
 
   _ensureStream() {
     if (!this._stream || this._stream.destroyed) {
-      this._stream = fs.createWriteStream(this.currentLogPath, { flags: 'a' });
+      const flags =
+        fs.constants.O_APPEND |
+        fs.constants.O_CREAT |
+        fs.constants.O_WRONLY |
+        (fs.constants.O_NOFOLLOW || 0);
+      const fd = fs.openSync(this.currentLogPath, flags, 0o600);
+      const metadata = fs.fstatSync(fd);
+      const currentUid = process.getuid?.();
+      if (
+        !metadata.isFile() ||
+        (currentUid != null && metadata.uid !== currentUid && metadata.uid !== 0)
+      ) {
+        fs.closeSync(fd);
+        const error = new Error('Log file is not a trusted regular file');
+        error.code = 'LOG_FILE_UNSAFE';
+        throw error;
+      }
+      fs.fchmodSync(fd, 0o600);
+      this._stream = fs.createWriteStream(this.currentLogPath, {
+        fd,
+        autoClose: true,
+      });
       this._stream.on('error', (err) => {
-        console.error('[Logger] Write stream error:', err.message);
+        console.error('[Logger] Write stream error', safeErrorMetadata(err));
         this._stream = null;
       });
     }
@@ -63,7 +110,7 @@ class Logger {
       // Create new stream
       this._ensureStream();
     } catch (err) {
-      console.error('[Logger] Rotation error:', err.message);
+      console.error('[Logger] Rotation error', safeErrorMetadata(err));
     }
   }
 

@@ -1,22 +1,40 @@
 import { defineConfig } from 'vitest/config';
+import crypto from 'node:crypto';
+import os from 'node:os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appCredentialEnvName = ['APP', 'SECRET'].join('_');
 const testCredentialValue = ['vitest', 'local', 'only', 'credential', 'placeholder', 'without', 'keystore', 'write'].join('-');
+const initialAdminPassword = `Vitest-A1-${crypto.randomBytes(24).toString('base64url')}`;
+const testDatabaseRoot = path.join(
+  os.tmpdir(),
+  `punchpilot-vitest-${process.pid}-${crypto.randomUUID()}`,
+);
 
 export default defineConfig({
   test: {
     include: ['tests/**/*.test.{js,mjs,ts}'],
-    exclude: ['tests/phase5-integration.test.mjs'],  // Standalone test, runs with: node tests/phase5-integration.test.mjs
     testTimeout: 30000,
     hookTimeout: 30000,
-    fileParallelism: false,  // Run test files sequentially (shared SQLite DB)
+    fileParallelism: true,
+    globalSetup: ['./tests/setup/vitest-global.mjs'],
+    setupFiles: ['./tests/setup/vitest-file.mjs'],
     env: {
-      // Use a separate test DB to avoid overwriting production data
-      PUNCHPILOT_DB_PATH: path.resolve(__dirname, 'data', 'punchpilot-test.db'),
+      // Each test file selects a private DB below this disposable run root.
+      PUNCHPILOT_TEST_RUN_ROOT: testDatabaseRoot,
+      PUNCHPILOT_DB_PATH: path.join(testDatabaseRoot, 'bootstrap', 'punchpilot.db'),
+      PUNCHPILOT_KEYSTORE_DIR: path.join(testDatabaseRoot, 'bootstrap', 'keystore'),
+      PUNCHPILOT_LEGACY_APP_SECRET_FILE: path.join(
+        testDatabaseRoot,
+        'bootstrap',
+        'data',
+        '.app-secret',
+      ),
+      TRUST_PROXY: 'loopback',
       [appCredentialEnvName]: testCredentialValue,
+      PUNCHPILOT_INITIAL_ADMIN_PASSWORD: initialAdminPassword,
     },
     coverage: {
       provider: 'v8',

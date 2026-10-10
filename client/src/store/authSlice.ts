@@ -36,7 +36,7 @@ export const logoutUser = createAsyncThunk('auth/logout', async () => {
 
 export const changePassword = createAsyncThunk(
   'auth/changePassword',
-  async (data: { current_password?: string; new_username?: string; new_password: string }) => {
+  async (data: { old_password?: string; new_username?: string; new_password: string }) => {
     const res = await api.changePassword(data);
     return res.data;
   }

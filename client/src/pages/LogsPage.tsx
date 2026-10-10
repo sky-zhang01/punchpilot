@@ -21,6 +21,9 @@ import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import api from '../api';
 import { snakeToCamel } from '../utils/i18n-helpers';
+import { formatLogTimestamp } from '../utils/date-time';
+import { useAppSelector, useAppDispatch } from '../store/hooks';
+import { fetchStatus } from '../store/statusSlice';
 
 const { RangePicker } = DatePicker;
 const { Text } = Typography;
@@ -46,6 +49,11 @@ const ACTION_TAG_CONFIG: Record<string, { color: string }> = {
 
 const LogsPage: React.FC = () => {
   const { t } = useTranslation();
+  const dispatch = useAppDispatch();
+  const timezone = useAppSelector(state => state.status.data?.timezone);
+  const identity = useAppSelector(state => state.identity);
+  useEffect(() => { dispatch(fetchStatus()); }, [dispatch, identity]);
+  const requestId = React.useRef(0);
 
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -66,6 +74,7 @@ const LogsPage: React.FC = () => {
   const [detailOpen, setDetailOpen] = useState(false);
 
   const fetchLogs = useCallback(async () => {
+    const request = ++requestId.current;
     setLoading(true);
     try {
       const params: Record<string, any> = {
@@ -83,16 +92,18 @@ const LogsPage: React.FC = () => {
       if (searchText) params.search = searchText;
 
       const res = await api.getLogs(params);
+      if (request !== requestId.current) return;
       setLogs(res.data.rows || res.data.logs || []);
       setTotal(res.data.total || 0);
     } catch {
-      setLogs([]);
+      if (request === requestId.current) setLogs([]);
     } finally {
-      setLoading(false);
+      if (request === requestId.current) setLoading(false);
     }
-  }, [page, pageSize, dateRange, actionFilter, statusFilter, searchText]);
+  }, [page, pageSize, dateRange, actionFilter, statusFilter, searchText, identity]);
 
   useEffect(() => {
+    setLogs([]); setDetailLog(null); setDetailOpen(false);
     fetchLogs();
   }, [fetchLogs]);
 
@@ -116,14 +127,14 @@ const LogsPage: React.FC = () => {
       title: t('table.date'),
       dataIndex: 'executed_at',
       key: 'date',
-      render: (val: string) => (val ? dayjs(val).format('YYYY-MM-DD') : '-'),
+      render: (val: string, row: { business_date?: string }) => row.business_date || formatLogTimestamp(val, timezone).date,
       width: 120,
     },
     {
       title: t('table.time'),
       dataIndex: 'executed_at',
       key: 'time',
-      render: (val: string) => (val ? dayjs(val).format('HH:mm:ss') : '-'),
+      render: (val: string) => <span title={formatLogTimestamp(val, timezone).hasTimezone ? timezone : t('logs.timezoneUnrecorded')}>{formatLogTimestamp(val, timezone).time}</span>,
       width: 100,
     },
     {
@@ -182,7 +193,9 @@ const LogsPage: React.FC = () => {
       title: t('table.duration'),
       dataIndex: 'duration_ms',
       key: 'duration',
-      render: (val: number) => (val ? `${val}ms` : '-'),
+      render: (val: number | null | undefined) => (
+        val === null || val === undefined ? '-' : `${val}ms`
+      ),
       width: 100,
     },
     {
@@ -376,7 +389,20 @@ const LogsPage: React.FC = () => {
                 <Text strong>{t('table.error')}:</Text> {detailLog.error_message || detailLog.error}
               </Text>
             )}
-            {detailLog.duration_ms && (
+            {detailLog.error_code && (
+              <Text>
+                <Text strong>{t('logs.errorCode')}:</Text>{' '}
+                <Text code>{detailLog.error_code}</Text>
+              </Text>
+            )}
+            {detailLog.failure_stage && (
+              <Text>
+                <Text strong>{t('logs.failureStage')}:</Text>{' '}
+                {t(`logs.stages.${snakeToCamel(detailLog.failure_stage)}`)}{' '}
+                <Text code>{detailLog.failure_stage}</Text>
+              </Text>
+            )}
+            {detailLog.duration_ms !== null && detailLog.duration_ms !== undefined && (
               <Text>
                 <Text strong>{t('table.duration')}:</Text>{' '}
                 {detailLog.duration_ms}ms

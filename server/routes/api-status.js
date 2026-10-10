@@ -1,12 +1,23 @@
 import { Router } from 'express';
-import { getSetting, getLogsByDate, getAllConfig, getDailySchedule } from '../db.js';
+import {
+  currentExecutionLogIdentityKey,
+  getSetting,
+  getLogsByDate,
+  getAllConfig,
+  getDailySchedule,
+} from '../db.js';
 import { scheduler } from '../scheduler.js';
 import { isHolidayOrWeekend, getTodayString } from '../holiday.js';
-import { hasCredentials, isDebugMode, detectCurrentState, FREEE_STATE, getConnectionMode } from '../automation/index.js';
+import { hasApiCredentials, hasCredentials, isDebugMode, detectCurrentState, FREEE_STATE, getConnectionMode } from '../automation/index.js';
 import { nowInTz, getTimezone } from '../timezone.js';
 import { FreeeApiClient } from '../freee-api.js';
+import { currentAutomationIdentityKey } from '../automation/identity.js';
+import logger, { safeErrorMetadata } from '../logger.js';
+import { normalizeAutomationErrorCode } from '../automation-diagnostics.js';
 
 const router = Router();
+const log = logger.child('Status');
+const STATUS_SNAPSHOT_ATTEMPTS = 2;
 
 /**
  * GET /api/status/freee-state - Detect current freee attendance state
@@ -26,7 +37,7 @@ router.get('/freee-state', async (req, res) => {
       [FREEE_STATE.WORKING]: ['break_start', 'checkout'],
       [FREEE_STATE.ON_BREAK]: ['break_end'],
       [FREEE_STATE.CHECKED_OUT]: [],
-      [FREEE_STATE.UNKNOWN]: ['checkin', 'break_start', 'break_end', 'checkout'],
+      [FREEE_STATE.UNKNOWN]: [],
     };
 
     res.json({
@@ -36,44 +47,60 @@ router.get('/freee-state', async (req, res) => {
       connection_mode: getConnectionMode(),
     });
   } catch (e) {
-    console.error('[Status] freee-state detection failed:', e.message);
-    res.json({ state: FREEE_STATE.UNKNOWN, valid_actions: ['checkin', 'break_start', 'break_end', 'checkout'], error: e.message });
+    log.error('freee-state detection failed', { error: safeErrorMetadata(e) });
+    res.json({
+      state: FREEE_STATE.UNKNOWN,
+      valid_actions: [],
+      error: 'attendance_state_unconfirmed',
+      error_code: normalizeAutomationErrorCode(e?.code) || 'ATTENDANCE_STATE_UNCONFIRMED',
+    });
   }
 });
 
 /**
  * GET /api/status - Dashboard status data (enriched)
  */
-router.get('/', async (req, res) => {
+async function buildStatusSnapshot(binding, includeSchedulerState) {
   const today = getTodayString();
   const autoEnabled = getSetting('auto_checkin_enabled') === '1';
   const debugMode = isDebugMode();
   const credentialsOk = hasCredentials();
   const freeeConfigured = getSetting('freee_configured') === '1';
-  const todaySchedule = scheduler.getTodaySchedule();
-  const todayScheduleStatus = getDailySchedule(today);
-  const currentCompanyId = getSetting('oauth_company_id') || '';
-  const todayLogs = getLogsByDate(today, currentCompanyId);
+  const todaySchedule = includeSchedulerState ? scheduler.getTodaySchedule() : {};
+  const todayScheduleStatus = includeSchedulerState
+    ? getDailySchedule(today, binding.automationIdentityKey)
+    : [];
+  const todayLogs = getLogsByDate(today, binding.logIdentityKey);
   const configs = getAllConfig();
-  const isHoliday = await isHolidayOrWeekend();
-  const startupAnalysis = scheduler.getStartupAnalysis();
-  const skippedActions = scheduler.getSkippedActions();
+  let isHoliday = false;
+  let calendarGuardVerified = true;
+  try {
+    isHoliday = await isHolidayOrWeekend();
+  } catch (error) {
+    calendarGuardVerified = false;
+    log.warn('Holiday status could not be verified', {
+      error: safeErrorMetadata(error),
+    });
+  }
+  const startupAnalysis = includeSchedulerState ? scheduler.getStartupAnalysis() : null;
+  const skippedActions = includeSchedulerState ? scheduler.getSkippedActions() : [];
   const authBroken = getConnectionMode() === 'api' && getSetting('oauth_auth_broken') === '1';
 
   // Fetch today's actual punch times from freee time_clocks API
   // This gives us real timestamps (e.g., checkin at 09:51) that work_records may not yet reflect
   let todayPunchTimes = [];
-  if (credentialsOk && !debugMode) {
+  if (hasApiCredentials() && !debugMode) {
     try {
       const client = new FreeeApiClient();
       todayPunchTimes = await client.getTodayTimeClocks();
     } catch (e) {
-      console.warn('[Status] Failed to fetch today time_clocks:', e.message?.substring(0, 100));
+      log.warn('Failed to fetch today time_clocks', {
+        error: safeErrorMetadata(e),
+      });
     }
   }
 
-  // Derive actual state from punch times (same logic as frontend DashboardPage).
-  // This is the single source of truth for "what state are we actually in".
+  // One state snapshot drives both the displayed state and the next action.
   let derivedState = startupAnalysis?.state || 'unknown';
   if (todayPunchTimes.length > 0) {
     const lastType = todayPunchTimes[todayPunchTimes.length - 1].type;
@@ -115,7 +142,7 @@ router.get('/', async (req, res) => {
     }
   }
 
-  res.json({
+  return {
     auto_checkin_enabled: autoEnabled,
     debug_mode: debugMode,
     freee_configured: freeeConfigured,
@@ -124,10 +151,12 @@ router.get('/', async (req, res) => {
     current_date: today,
     timezone: getTimezone(),
     is_holiday: isHoliday,
+    calendar_guard_verified: calendarGuardVerified,
     today_schedule: todaySchedule,
     today_schedule_status: todayScheduleStatus,
     today_logs: todayLogs,
     today_punch_times: todayPunchTimes,
+    attendance_state: derivedState,
     next_action: nextAction,
     startup_analysis: startupAnalysis,
     skipped_actions: skippedActions,
@@ -138,6 +167,34 @@ router.get('/', async (req, res) => {
       last_error: getSetting('oauth_auth_broken_reason') || '',
     },
     configs,
+  };
+}
+
+function captureStatusBinding() {
+  return Object.freeze({
+    logIdentityKey: currentExecutionLogIdentityKey(),
+    automationIdentityKey: currentAutomationIdentityKey(),
+  });
+}
+
+function statusBindingIsCurrent(binding, includeSchedulerState) {
+  return binding.logIdentityKey === currentExecutionLogIdentityKey() &&
+    binding.automationIdentityKey === currentAutomationIdentityKey() &&
+    (!includeSchedulerState ||
+      binding.automationIdentityKey === scheduler.getActiveIdentityKey());
+}
+
+router.get('/', async (req, res) => {
+  for (let attempt = 0; attempt < STATUS_SNAPSHOT_ATTEMPTS; attempt += 1) {
+    const binding = captureStatusBinding();
+    const includeSchedulerState =
+      binding.automationIdentityKey === scheduler.getActiveIdentityKey();
+    const snapshot = await buildStatusSnapshot(binding, includeSchedulerState);
+    if (statusBindingIsCurrent(binding, includeSchedulerState)) return res.json(snapshot);
+  }
+  return res.status(409).json({
+    error: 'status_identity_changed',
+    code: 'STATUS_IDENTITY_CHANGED',
   });
 });
 

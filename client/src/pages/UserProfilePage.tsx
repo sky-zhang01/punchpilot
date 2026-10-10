@@ -55,7 +55,7 @@ const UserProfilePage: React.FC = () => {
     try {
       await dispatch(
         changePassword({
-          current_password: values.currentPassword,
+          old_password: values.currentPassword,
           new_password: values.newPassword,
         })
       ).unwrap();

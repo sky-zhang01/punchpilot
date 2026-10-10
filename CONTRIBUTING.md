@@ -20,6 +20,8 @@ npm run dev
 
 ## Pull Request Process
 
+Public `main` is written only by the documented publication path. This GitHub repository is a published artifact, not the development forge. GitHub pull requests are intake for maintainers: a reviewable patch that, if accepted, is reproduced on the source forge and published through that path.
+
 1. Fork the repo and create a feature branch from `main`
 2. Make your changes
 3. Run lint and tests before submitting:
@@ -27,14 +29,20 @@ npm run dev
    npm run lint:security
    npm test
    ```
-4. Open a PR against `main` — fill in the PR template
-5. A maintainer will review and merge after approval
+4. Open a GitHub pull request against `main` and fill in the PR template so maintainers can review the patch. Accepted changes are reproduced on the source forge and published through the documented publication path.
+
+See [docs/releases.md](docs/releases.md) for how public releases are produced.
 
 ## Code Style
 
 - Server code lives in `server/`, client in `client/`
 - Use ES modules (`import`/`export`)
-- Run `npm run lint:security` to catch common security issues
+- Run `npm run lint:security` to catch common security issues. It enforces an
+  exact baseline (`security-lint-baseline.json`); when you deliberately change
+  the lint toolchain, configuration, or the warning set, regenerate the baseline
+  in the same PR with `npm run lint:security:rebaseline` - see
+  [docs/security-lint-baseline.md](docs/security-lint-baseline.md) for when and
+  how to do that under review.
 
 ## Reporting Issues
 

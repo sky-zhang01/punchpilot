@@ -9,6 +9,7 @@ export { FREEE_STATE } from "../constants.js";
 // Public API
 export {
   detectCurrentState,
+  detectWebNonWorkingStatus,
   executeAction,
   submitWebCorrections,
   scrapeEmployeeProfile,
@@ -23,6 +24,7 @@ export { determineActionsForToday } from "./scheduling.js";
 // Utils (re-exported for backward compatibility)
 export {
   getConnectionMode,
+  hasApiCredentials,
   hasCredentials,
   isDebugMode,
   hasWebCredentials,

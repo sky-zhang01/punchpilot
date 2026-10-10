@@ -1,0 +1,872 @@
+{
+  "schema_version": 2,
+  "eslint_version": "10.11.0",
+  "plugin_security_version": "4.1.0",
+  "config_sha256": "ac25fdc1c9cab97369a34ff3986e3243d4c6fc7dee2320049d8df51dc16c5693",
+  "warnings": [
+    {
+      "path": "server/app.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found open from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "3df0e2fbbc357294a87deed0cfc67ec96a40ea44bc66d537eeff542e44e3d564",
+      "source_file_sha256": "cc31e53a4a26043070a8cd6af349005629a2ec2fab529ccade4138cdad2af2da",
+      "column": 20,
+      "occurrence": 1
+    },
+    {
+      "path": "server/app.js",
+      "rule": "security/detect-object-injection",
+      "message": "Function Call Object Injection Sink",
+      "source_line_sha256": "ec1207e44d9d23ead4c4b8ff10b482c8ce757f2de4414d84e13943233a0b1add",
+      "source_file_sha256": "cc31e53a4a26043070a8cd6af349005629a2ec2fab529ccade4138cdad2af2da",
+      "column": 7,
+      "occurrence": 1
+    },
+    {
+      "path": "server/app.js",
+      "rule": "security/detect-unsafe-regex",
+      "message": "Unsafe Regular Expression",
+      "source_line_sha256": "7fb1fe018af8bd8dc81f7ebe5bdb6d137fc1291d3b0eabd61658decb50c4b86b",
+      "source_file_sha256": "cc31e53a4a26043070a8cd6af349005629a2ec2fab529ccade4138cdad2af2da",
+      "column": 25,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/constants.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found openSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "10ce7726b74e04df68566f393b08bd9b19dca47b9718da8522be93849216bb9a",
+      "source_file_sha256": "a579d0ebff99d4f2edec153f1d9b9a2d5a1c7c9dda12652a83091eeb6f95bbaf",
+      "column": 18,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/constants.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found writeFileSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "23c4ed7612c9fc5b1d6a46e5a4e0249791d6709fdfda130e75d0d94e844d50f7",
+      "source_file_sha256": "a579d0ebff99d4f2edec153f1d9b9a2d5a1c7c9dda12652a83091eeb6f95bbaf",
+      "column": 5,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/constants.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found readFileSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "33a81185ca2f2298f50ec7aa6ce1e8f6582163edc7f45a561d249398394f522c",
+      "source_file_sha256": "a579d0ebff99d4f2edec153f1d9b9a2d5a1c7c9dda12652a83091eeb6f95bbaf",
+      "column": 9,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/constants.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found existsSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "3c1528d19753f0a7467f83ce35571cac7f9e896f5a2397c60c588375a1e9f86b",
+      "source_file_sha256": "a579d0ebff99d4f2edec153f1d9b9a2d5a1c7c9dda12652a83091eeb6f95bbaf",
+      "column": 7,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/constants.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "6640bd56ac450c8aae76c9cd1b284871fcb118559c76918c500c5582f5a7f976",
+      "source_file_sha256": "a579d0ebff99d4f2edec153f1d9b9a2d5a1c7c9dda12652a83091eeb6f95bbaf",
+      "column": 20,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/constants.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "6c6481384a211525f00ffd48109b819c22b555b5ecccc5d0252f119b1c35cdfd",
+      "source_file_sha256": "a579d0ebff99d4f2edec153f1d9b9a2d5a1c7c9dda12652a83091eeb6f95bbaf",
+      "column": 22,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/constants.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found chmodSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "7908382fbd08ba46d3a4737be6c8de18ab1def152c9b06c72e5f1fbf6f017ce2",
+      "source_file_sha256": "a579d0ebff99d4f2edec153f1d9b9a2d5a1c7c9dda12652a83091eeb6f95bbaf",
+      "column": 3,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/constants.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found mkdirSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "7fbc3b40c7cacbaf6e9e3ce15af98f33961fb18f8735b2c59b23a9d7a9448efb",
+      "source_file_sha256": "a579d0ebff99d4f2edec153f1d9b9a2d5a1c7c9dda12652a83091eeb6f95bbaf",
+      "column": 15,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/constants.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "abd9efd13d6f075558ce24afa0f514923b8c0ae896b0e1b08b3eb693029f1aa7",
+      "source_file_sha256": "a579d0ebff99d4f2edec153f1d9b9a2d5a1c7c9dda12652a83091eeb6f95bbaf",
+      "column": 20,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/constants.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found readdirSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "cfa18969b3a9be6d46617c2bcb834cf40f5e0319675891c65d9f89e38060a822",
+      "source_file_sha256": "a579d0ebff99d4f2edec153f1d9b9a2d5a1c7c9dda12652a83091eeb6f95bbaf",
+      "column": 22,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/constants.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found readdirSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "d716d815271eb27125342b69459ff5e786072fb168e3a6a5e3793d87803a246d",
+      "source_file_sha256": "a579d0ebff99d4f2edec153f1d9b9a2d5a1c7c9dda12652a83091eeb6f95bbaf",
+      "column": 31,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/forms.js",
+      "rule": "security/detect-object-injection",
+      "message": "Variable Assigned to Object Injection Sink",
+      "source_line_sha256": "4f082ce0651d84e2f345ecd9706733fc179472aa132d19edeaddc65c4f0d1fd5",
+      "source_file_sha256": "891f6b5c110066fc1c00e6ef7e36727dc5567c010f3e91428a4f659bcf780003",
+      "column": 24,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/mock.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "cc6c6f82ddfa00146a3358f77a006718bafb15f21f53c220fcdef2c25c5c3751",
+      "source_file_sha256": "e7b1edc75798d5ced8c392946dd54c10733bf300b5243bc63e8261f35ace5ca6",
+      "column": 36,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/mock.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "ef11a73f86951aa78010323cf594df69afa8602f9fc65e42c359741dbcdde0cf",
+      "source_file_sha256": "e7b1edc75798d5ced8c392946dd54c10733bf300b5243bc63e8261f35ace5ca6",
+      "column": 15,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/public-api.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "16b22d690c0199da7793a7e2178616edcac1b0d77a718fb0879c3466fbaa1e7a",
+      "source_file_sha256": "279c089385b48c410ac1b79779d5c79846eaf48121520713ce6ff75ed00b69c5",
+      "column": 14,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/public-api.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "7701f3db92cf79a0db8578b724b1588d6d0995cd2a54c0de9f2f1a19b68ac45f",
+      "source_file_sha256": "279c089385b48c410ac1b79779d5c79846eaf48121520713ce6ff75ed00b69c5",
+      "column": 18,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/public-api.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "a534e2cb36a8b491a697b548e564d56e67346d7c9186d4f40e63b33df1e24a10",
+      "source_file_sha256": "279c089385b48c410ac1b79779d5c79846eaf48121520713ce6ff75ed00b69c5",
+      "column": 20,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/public-api.js",
+      "rule": "security/detect-object-injection",
+      "message": "Variable Assigned to Object Injection Sink",
+      "source_line_sha256": "aabadb4db3a33e2de2f470a55bdf46d03e0e1578b7e6829fec2afe4be04b15da",
+      "source_file_sha256": "279c089385b48c410ac1b79779d5c79846eaf48121520713ce6ff75ed00b69c5",
+      "column": 19,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/public-api.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "d65d8d597d781513b580298d1e09bcc5d93e8dcfc1eff6c09b375027a5f01746",
+      "source_file_sha256": "279c089385b48c410ac1b79779d5c79846eaf48121520713ce6ff75ed00b69c5",
+      "column": 27,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/punch-bot.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "56cc98451276e20a224cafda497371615fb304cbc42ab51d28d57fc4af125286",
+      "source_file_sha256": "4bc9d12f58827c3192e5c2e4bf423dac300814a315a9f33890f5fb196c1bf58d",
+      "column": 22,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/punch-bot.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found existsSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "7e625c754fd014901576819366189e6f82d560ac04be62f4be88e6c2294e9118",
+      "source_file_sha256": "4bc9d12f58827c3192e5c2e4bf423dac300814a315a9f33890f5fb196c1bf58d",
+      "column": 9,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/punch-bot.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found chmodSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "c48b22d65d138a980cbeae25e0b42fc7cfbf8da678c00147a8b90669b2ae7dda",
+      "source_file_sha256": "4bc9d12f58827c3192e5c2e4bf423dac300814a315a9f33890f5fb196c1bf58d",
+      "column": 5,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/punch-bot.js",
+      "rule": "security/detect-non-literal-regexp",
+      "message": "Found non-literal argument to RegExp Constructor",
+      "source_line_sha256": "4754ff6ca9170d158e048d0328791115a40cf041af980c5efcb81f0392a6f46d",
+      "source_file_sha256": "4bc9d12f58827c3192e5c2e4bf423dac300814a315a9f33890f5fb196c1bf58d",
+      "column": 10,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/punch-bot.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "27a98f2a38cfca4fc62bb0df8f4ccdc7926015767e68da32b3a73ffb5ea5d8e2",
+      "source_file_sha256": "4bc9d12f58827c3192e5c2e4bf423dac300814a315a9f33890f5fb196c1bf58d",
+      "column": 31,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/punch-bot.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "3a34f3f9360714e572dc9bafe7f82b205cf69b39e8b23ae987a95a424f21fe52",
+      "source_file_sha256": "4bc9d12f58827c3192e5c2e4bf423dac300814a315a9f33890f5fb196c1bf58d",
+      "column": 7,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/punch-bot.js",
+      "rule": "security/detect-object-injection",
+      "message": "Variable Assigned to Object Injection Sink",
+      "source_line_sha256": "43778b457d31cc1acf39df843af5545e572f33281853903bba3653c892388804",
+      "source_file_sha256": "4bc9d12f58827c3192e5c2e4bf423dac300814a315a9f33890f5fb196c1bf58d",
+      "column": 22,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/punch-bot.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "7ef9f7c302473dcf214f041e96d492b2483b14eccd07a8a2d19e2c9313acbb1b",
+      "source_file_sha256": "4bc9d12f58827c3192e5c2e4bf423dac300814a315a9f33890f5fb196c1bf58d",
+      "column": 10,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/scheduling.js",
+      "rule": "security/detect-object-injection",
+      "message": "Variable Assigned to Object Injection Sink",
+      "source_line_sha256": "5f3c38def539dac9900f201f350d3701d030dea148f432a95d7b13f85ad47410",
+      "source_file_sha256": "182294fb4ac5a3e5a1da0bfdeb7f8981c4c62dc470a1c941633843f9e7ad36fa",
+      "column": 16,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/scheduling.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "80bc6548d8b02dc3e82ba0a67ccb6d30dcdcecb1130f335c50b08c5d0fde0c03",
+      "source_file_sha256": "182294fb4ac5a3e5a1da0bfdeb7f8981c4c62dc470a1c941633843f9e7ad36fa",
+      "column": 7,
+      "occurrence": 1
+    },
+    {
+      "path": "server/automation/scheduling.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "80bc6548d8b02dc3e82ba0a67ccb6d30dcdcecb1130f335c50b08c5d0fde0c03",
+      "source_file_sha256": "182294fb4ac5a3e5a1da0bfdeb7f8981c4c62dc470a1c941633843f9e7ad36fa",
+      "column": 7,
+      "occurrence": 2
+    },
+    {
+      "path": "server/automation/web-work-record.js",
+      "rule": "security/detect-object-injection",
+      "message": "Function Call Object Injection Sink",
+      "source_line_sha256": "228b62c30c280047f86e9ad774ac4af49fcb139f3a3c353dd9ebe1540fd93a22",
+      "source_file_sha256": "47ac0f50ec707938a131e7c6b188a7de6d411ae47dbacb4322471dfd69ee6009",
+      "column": 36,
+      "occurrence": 1
+    },
+    {
+      "path": "server/crypto.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found readFileSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "0d1b18bf8c5a2eacd7ae4ac577cc8780c914b8e993053d13d16d8286b1734f21",
+      "source_file_sha256": "2dfdec21ce32f3c441598074741963fe22007880a44b1a5b5742d005d7a9d1d1",
+      "column": 27,
+      "occurrence": 1
+    },
+    {
+      "path": "server/crypto.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found chmodSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "1a6098beef549cf335e50a6a27bc9d0dc548715b442882f7a8a0364c3a513e1c",
+      "source_file_sha256": "2dfdec21ce32f3c441598074741963fe22007880a44b1a5b5742d005d7a9d1d1",
+      "column": 3,
+      "occurrence": 1
+    },
+    {
+      "path": "server/crypto.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found chmodSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "21f712556538cbd7e9996f0aaba217b5cf803dea3092dad507250ea2f0d1bc0e",
+      "source_file_sha256": "2dfdec21ce32f3c441598074741963fe22007880a44b1a5b5742d005d7a9d1d1",
+      "column": 3,
+      "occurrence": 1
+    },
+    {
+      "path": "server/crypto.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found writeFileSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "389125a785e6ede8140ad5d3c7af5c793a0cee79a49eddd03eee77560aba29e8",
+      "source_file_sha256": "2dfdec21ce32f3c441598074741963fe22007880a44b1a5b5742d005d7a9d1d1",
+      "column": 3,
+      "occurrence": 1
+    },
+    {
+      "path": "server/crypto.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "52ecc7dc8de300e1a8495f9c3e094e018a2746620d321b5d90812e4f60fc1d13",
+      "source_file_sha256": "2dfdec21ce32f3c441598074741963fe22007880a44b1a5b5742d005d7a9d1d1",
+      "column": 20,
+      "occurrence": 1
+    },
+    {
+      "path": "server/crypto.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found mkdirSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "5ebeec69e7faf8e30f35fd4c1020b18473119dc71936d342bbd2968d8edf27be",
+      "source_file_sha256": "2dfdec21ce32f3c441598074741963fe22007880a44b1a5b5742d005d7a9d1d1",
+      "column": 3,
+      "occurrence": 1
+    },
+    {
+      "path": "server/crypto.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found openSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "69d180ffdffde015fdb23d7f18c84b38d902a3e7a462f478e970f19ebb74d604",
+      "source_file_sha256": "2dfdec21ce32f3c441598074741963fe22007880a44b1a5b5742d005d7a9d1d1",
+      "column": 18,
+      "occurrence": 1
+    },
+    {
+      "path": "server/crypto.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "8fe7af215d5eb80f3104c9e8f011f98759dd689426003a5a4e9795e3c40215e2",
+      "source_file_sha256": "2dfdec21ce32f3c441598074741963fe22007880a44b1a5b5742d005d7a9d1d1",
+      "column": 5,
+      "occurrence": 1
+    },
+    {
+      "path": "server/crypto.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "9af3f95953d92926ef8b3dd3d1a6790357fef9301dabef9e7643ddd67efff937",
+      "source_file_sha256": "2dfdec21ce32f3c441598074741963fe22007880a44b1a5b5742d005d7a9d1d1",
+      "column": 26,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "0506e9d18939b9b88502898499ce2c6ce0bf5001b967cac19a402fb60458c5ca",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 26,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found chmodSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "1a6098beef549cf335e50a6a27bc9d0dc548715b442882f7a8a0364c3a513e1c",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 3,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found statSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "2dfff41df0affa88480a257aa84ab13742e369a4d1a7eb05a612e0c5f1758904",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 10,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "34b58b2cb9846cb1ec416615d00170f75c9e2c601e832dcfc9f70d7eccaabf69",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 20,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found writeFileSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "39b57b59ff45afec20b8ac5ea457f3fa1f5c8dff00a0cf5fbf45a2dd43d92645",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 5,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "40fe6c6fedf8301a91e083471e09573effec83d8d9b163b6fe08607ba5fbc045",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 16,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found mkdirSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "54be19425b6789c980c25d989b03c289fbc7ef5bd7e49858bb93b7d1c54807ee",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 3,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found chmodSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "55694096a0aa2be8830e615516b5435d4503b51bd29dccf73f1f9b1bd44507b5",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 3,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "577a82a6bb6fc7aa128a9bfdf96db05e194af31cebd917d0371c780fa7d29216",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 29,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found openSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "69d180ffdffde015fdb23d7f18c84b38d902a3e7a462f478e970f19ebb74d604",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 18,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found chmodSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "7908382fbd08ba46d3a4737be6c8de18ab1def152c9b06c72e5f1fbf6f017ce2",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 3,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found mkdirSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "880a5db4cc79794c804d165ff03a09569d21dae4eaea746f87f575b2319b0b69",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 3,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found readFileSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "abda40a633892b449c4a7205f407ff8d3fd8b9b968e739e0ba071f568f1c8535",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 12,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "09332d04e9221764d5632efb90395e333914d1215c19cff9377769fbb1492b77",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 9,
+      "occurrence": 1
+    },
+    {
+      "path": "server/db.js",
+      "rule": "security/detect-object-injection",
+      "message": "Function Call Object Injection Sink",
+      "source_line_sha256": "2066f646231c65d4f740ed3fa88383b175cd344b0e23957a272fb3543eb5003a",
+      "source_file_sha256": "804db462af8f67e41c214fea177c78fd6c4e39344dc4dce02d5b069c48af66be",
+      "column": 19,
+      "occurrence": 1
+    },
+    {
+      "path": "server/freee-api.js",
+      "rule": "security/detect-object-injection",
+      "message": "Variable Assigned to Object Injection Sink",
+      "source_line_sha256": "f174da07314e6a43a4133fbce61e80032a6de98f8876e183e060ea84cb07434f",
+      "source_file_sha256": "c3219fefc5d1d94e1b5b9060756ea2b06c90a7d52844d09f67f05969b7e19c14",
+      "column": 23,
+      "occurrence": 1
+    },
+    {
+      "path": "server/holiday.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "8e28c1033cfbad4ac0101be59f5d4a91358caaee26a924cd583a3950de888fc1",
+      "source_file_sha256": "e2e6be3420b42f98799a6b99788a07063f485a69959c872c01fe7e2e7bf3b35b",
+      "column": 11,
+      "occurrence": 1
+    },
+    {
+      "path": "server/holiday.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "fee08d5eb3b558465426563eecbc40c025f243e136279c14d920fc56fe13df38",
+      "source_file_sha256": "e2e6be3420b42f98799a6b99788a07063f485a69959c872c01fe7e2e7bf3b35b",
+      "column": 9,
+      "occurrence": 1
+    },
+    {
+      "path": "server/logger.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found readdirSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "06331ebb502bb9f4677b8b39178f55790ccdf76e30ffeabb4ab8e49a8ef9574c",
+      "source_file_sha256": "924270ce0c94a1d8e1913fff7e60af2a21e8516f0934b0cf6305a746f05383ca",
+      "column": 21,
+      "occurrence": 1
+    },
+    {
+      "path": "server/logger.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found mkdirSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "1e96bb00a92a4297b8e4fe97c8b19ddf808b6b9390402d69968d9448600bf936",
+      "source_file_sha256": "924270ce0c94a1d8e1913fff7e60af2a21e8516f0934b0cf6305a746f05383ca",
+      "column": 3,
+      "occurrence": 1
+    },
+    {
+      "path": "server/logger.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found createWriteStream from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "2eb47841ac120cdab5a885881b8bb6b0ea25aa811544b1696c04295a3fe595bb",
+      "source_file_sha256": "924270ce0c94a1d8e1913fff7e60af2a21e8516f0934b0cf6305a746f05383ca",
+      "column": 22,
+      "occurrence": 1
+    },
+    {
+      "path": "server/logger.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found renameSync from package \"fs\" with non literal argument at index 0,1",
+      "source_line_sha256": "47dd1e65231a51966d331bf6d0c94fc3e358b4c07bf7458a55a8e5bb836fec5e",
+      "source_file_sha256": "924270ce0c94a1d8e1913fff7e60af2a21e8516f0934b0cf6305a746f05383ca",
+      "column": 7,
+      "occurrence": 1
+    },
+    {
+      "path": "server/logger.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found statSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "571c80329b1435765b4af463e6f8cddebaebc9fe533fd9709aa7b482ad76e9ad",
+      "source_file_sha256": "924270ce0c94a1d8e1913fff7e60af2a21e8516f0934b0cf6305a746f05383ca",
+      "column": 21,
+      "occurrence": 1
+    },
+    {
+      "path": "server/logger.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found chmodSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "6413ecb2ed607bf8189aad6bcc9e690a61d3398e688f1e8fcca16ef8d7b4700f",
+      "source_file_sha256": "924270ce0c94a1d8e1913fff7e60af2a21e8516f0934b0cf6305a746f05383ca",
+      "column": 3,
+      "occurrence": 1
+    },
+    {
+      "path": "server/logger.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found existsSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "6f5edd094786f21a07449d70e25376ef0481839a859a1af47987149d370a68da",
+      "source_file_sha256": "924270ce0c94a1d8e1913fff7e60af2a21e8516f0934b0cf6305a746f05383ca",
+      "column": 12,
+      "occurrence": 1
+    },
+    {
+      "path": "server/logger.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "b363d40680a2fead34b29374150b4b0b55a788787118feea4497c6858f902480",
+      "source_file_sha256": "924270ce0c94a1d8e1913fff7e60af2a21e8516f0934b0cf6305a746f05383ca",
+      "column": 20,
+      "occurrence": 1
+    },
+    {
+      "path": "server/logger.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found unlinkSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "eba3404c7e89f73c31d6f88f7bb0add8990ec9f330eb79fbe18762224ca24b4d",
+      "source_file_sha256": "924270ce0c94a1d8e1913fff7e60af2a21e8516f0934b0cf6305a746f05383ca",
+      "column": 9,
+      "occurrence": 1
+    },
+    {
+      "path": "server/logger.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found openSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "ef98853a5de895d4b5b9297ad7453a38f2e449e769a4319b35e16f6f558f398f",
+      "source_file_sha256": "924270ce0c94a1d8e1913fff7e60af2a21e8516f0934b0cf6305a746f05383ca",
+      "column": 18,
+      "occurrence": 1
+    },
+    {
+      "path": "server/logger.js",
+      "rule": "security/detect-object-injection",
+      "message": "Function Call Object Injection Sink",
+      "source_line_sha256": "eba3404c7e89f73c31d6f88f7bb0add8990ec9f330eb79fbe18762224ca24b4d",
+      "source_file_sha256": "924270ce0c94a1d8e1913fff7e60af2a21e8516f0934b0cf6305a746f05383ca",
+      "column": 42,
+      "occurrence": 1
+    },
+    {
+      "path": "server/reset-password.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found mkdirSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "1a86302d80ee6ae9ff5234c0ffb5b70f142fdcaa8a9f149f5ad3b114a952c5ab",
+      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "column": 5,
+      "occurrence": 1
+    },
+    {
+      "path": "server/reset-password.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "34b58b2cb9846cb1ec416615d00170f75c9e2c601e832dcfc9f70d7eccaabf69",
+      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "column": 20,
+      "occurrence": 1
+    },
+    {
+      "path": "server/reset-password.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "37f367f4369aab464e64177cee82ca70589471f1b8fafdbccf346d287c9e35c3",
+      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "column": 18,
+      "occurrence": 1
+    },
+    {
+      "path": "server/reset-password.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "5dc1242ac22b74d49abc7348b3b472164fa86594f2f4da159bad865438a24579",
+      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "column": 16,
+      "occurrence": 1
+    },
+    {
+      "path": "server/reset-password.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "8eebf57bbb22c368fae6883ec41de1e3c8cd608cca9fcb765da056c7f4efa5aa",
+      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "column": 24,
+      "occurrence": 1
+    },
+    {
+      "path": "server/reset-password.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "a72c6346d9eaa0fb020a02214f3c84ada287a0de89cfb474e7ffeb340910f190",
+      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "column": 26,
+      "occurrence": 1
+    },
+    {
+      "path": "server/reset-password.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found mkdirSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "c6094120cd30e06b3d540a334d78c5c868c97a1945b1f5c405062fe94e10eac8",
+      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "column": 5,
+      "occurrence": 1
+    },
+    {
+      "path": "server/reset-password.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found existsSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "dc8a5aa67b7ea51d42f59f6555bbf9fa177e80df33ccf72ec52a441ee535e778",
+      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "column": 8,
+      "occurrence": 1
+    },
+    {
+      "path": "server/reset-password.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found readdirSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "f0824eabc7ad48138055ab38be2fa7d96df7c8e087454d84976956cd92062541",
+      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "column": 22,
+      "occurrence": 1
+    },
+    {
+      "path": "server/routes/api-status.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "26358d5791613f601f257f2354c2f43565a0288cdd5598a7f8adbcd48cf1ea77",
+      "source_file_sha256": "bf3628a941039ca014435b71c5f7702e71f4a5e6f1709dba8a5647857cfc604c",
+      "column": 22,
+      "occurrence": 1
+    },
+    {
+      "path": "server/routes/attendance/batch.js",
+      "rule": "security/detect-object-injection",
+      "message": "Variable Assigned to Object Injection Sink",
+      "source_line_sha256": "aaf9d03c150075e017fc61d42dc9bce270b0ba690d2e9c3bf354c4f4c727a3ff",
+      "source_file_sha256": "29ebf214f7e6ad07e19c3237360596a65f4eb44d0d5178f64e51c1402039d99c",
+      "column": 23,
+      "occurrence": 1
+    },
+    {
+      "path": "server/routes/attendance/batch.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "eceaf6747d6a30ce886966a9260d02cdf5fae06d2e95a3a9c35350b5c2a8d82d",
+      "source_file_sha256": "29ebf214f7e6ad07e19c3237360596a65f4eb44d0d5178f64e51c1402039d99c",
+      "column": 18,
+      "occurrence": 1
+    },
+    {
+      "path": "server/routes/attendance/batch.js",
+      "rule": "security/detect-object-injection",
+      "message": "Generic Object Injection Sink",
+      "source_line_sha256": "ed4a7a0d07f7d82307c575cd24b2d69bd6bef230af7978f53f33d5581feba494",
+      "source_file_sha256": "29ebf214f7e6ad07e19c3237360596a65f4eb44d0d5178f64e51c1402039d99c",
+      "column": 18,
+      "occurrence": 1
+    },
+    {
+      "path": "server/routes/attendance/utils.js",
+      "rule": "security/detect-unsafe-regex",
+      "message": "Unsafe Regular Expression",
+      "source_line_sha256": "1210367d481c8b2e7233f15020120315323ac46b9519491380a59d320e686440",
+      "source_file_sha256": "8d9b347e29800965416047c3dafe99f41e837c2092cd81ff8acfeec6c535a83b",
+      "column": 7,
+      "occurrence": 1
+    },
+    {
+      "path": "server/routes/attendance/utils.js",
+      "rule": "security/detect-unsafe-regex",
+      "message": "Unsafe Regular Expression",
+      "source_line_sha256": "4ea64d71d77d093c91d5878d7359954ccbbd9d8f716f7b810db2906733100779",
+      "source_file_sha256": "8d9b347e29800965416047c3dafe99f41e837c2092cd81ff8acfeec6c535a83b",
+      "column": 21,
+      "occurrence": 1
+    },
+    {
+      "path": "server/routes/attendance/utils.js",
+      "rule": "security/detect-unsafe-regex",
+      "message": "Unsafe Regular Expression",
+      "source_line_sha256": "87ac534442596de4e6e57968f868a102b43f5ad09435ead809a854d5517dcfb6",
+      "source_file_sha256": "8d9b347e29800965416047c3dafe99f41e837c2092cd81ff8acfeec6c535a83b",
+      "column": 5,
+      "occurrence": 1
+    },
+    {
+      "path": "server/scheduler.js",
+      "rule": "security/detect-object-injection",
+      "message": "Variable Assigned to Object Injection Sink",
+      "source_line_sha256": "2b59ed6799c700ea3661ac5b20e009b8d6bcd6280bdbc3b2b7483206b1974f2a",
+      "source_file_sha256": "48d41917ef3c2903d1b3a864d9244aeb471ef32e6169b170777b52291bfaf828",
+      "column": 21,
+      "occurrence": 1
+    },
+    {
+      "path": "server/scheduler.js",
+      "rule": "security/detect-object-injection",
+      "message": "Variable Assigned to Object Injection Sink",
+      "source_line_sha256": "95fed8483af8a0b9462e8a0ebc9f17d0a6a631971799fb8835c8e5d90a2a145f",
+      "source_file_sha256": "48d41917ef3c2903d1b3a864d9244aeb471ef32e6169b170777b52291bfaf828",
+      "column": 21,
+      "occurrence": 1
+    },
+    {
+      "path": "server/server.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "0d52e2f0434902fb03d76b26d90ebd61bc1cd169a4bf82a760e110e51c7678ef",
+      "source_file_sha256": "36df771cd91de28b0104e08d2588b3cdc52aca7ec0e5d6379d20d68af90cd0f6",
+      "column": 22,
+      "occurrence": 1
+    },
+    {
+      "path": "server/server.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found readdirSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "12e1c8d9815e99bf750c13961b5ae76e53a9d5302cc4a34fb076aa65e46d1373",
+      "source_file_sha256": "36df771cd91de28b0104e08d2588b3cdc52aca7ec0e5d6379d20d68af90cd0f6",
+      "column": 24,
+      "occurrence": 1
+    },
+    {
+      "path": "server/server.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found existsSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "7042abb5169d8de3ca99ed0a90e3536f3cb430ee84f6c1bc0fff2f6100713b09",
+      "source_file_sha256": "36df771cd91de28b0104e08d2588b3cdc52aca7ec0e5d6379d20d68af90cd0f6",
+      "column": 8,
+      "occurrence": 1
+    },
+    {
+      "path": "server/server.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found readdirSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "92cc3d48d0eb7338e01131a7d8b25ba7b95a09c83289d08b79a84681a39b992c",
+      "source_file_sha256": "36df771cd91de28b0104e08d2588b3cdc52aca7ec0e5d6379d20d68af90cd0f6",
+      "column": 26,
+      "occurrence": 1
+    },
+    {
+      "path": "server/server.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "bd32319d436a2d774b2198bed5b82be76d96462571cdcca90707d83d431a91ff",
+      "source_file_sha256": "36df771cd91de28b0104e08d2588b3cdc52aca7ec0e5d6379d20d68af90cd0f6",
+      "column": 24,
+      "occurrence": 1
+    },
+    {
+      "path": "server/server.js",
+      "rule": "security/detect-non-literal-fs-filename",
+      "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
+      "source_line_sha256": "f1850604fcafd4f3f95b6b496e4b5c28d07ee7fb275f573d385b133b2e42e5f0",
+      "source_file_sha256": "36df771cd91de28b0104e08d2588b3cdc52aca7ec0e5d6379d20d68af90cd0f6",
+      "column": 26,
+      "occurrence": 1
+    }
+  ]
+}

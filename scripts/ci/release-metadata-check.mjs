@@ -13,10 +13,6 @@ function argValue(name) {
   return process.argv[index + 1];
 }
 
-function hasArg(name) {
-  return process.argv.includes(name);
-}
-
 function fail(message) {
   console.error(`[FAIL] ${message}`);
   process.exitCode = 1;
@@ -80,28 +76,6 @@ if (releaseHeadings.length === 0) {
 
 if (mode === 'public' && process.env.GITHUB_SERVER_URL && process.env.GITHUB_SERVER_URL !== 'https://github.com') {
   fail(`public release mode must run on GitHub, got ${process.env.GITHUB_SERVER_URL}`);
-}
-
-if (hasArg('--require-handoff')) {
-  if (!tag) {
-    fail('release handoff marker requires a tag');
-  } else {
-    let tagType = '';
-    let tagBody = '';
-    try {
-      const { execFileSync } = await import('node:child_process');
-      tagType = execFileSync('git', ['cat-file', '-t', `refs/tags/${tag}`], { encoding: 'utf8' }).trim();
-      tagBody = execFileSync('git', ['for-each-ref', `refs/tags/${tag}`, '--format=%(contents)'], { encoding: 'utf8' });
-    } catch (error) {
-      fail(`could not inspect release tag ${tag}: ${error.message}`);
-    }
-    if (tagType !== 'tag') {
-      fail(`tag ${tag} must be an annotated tag for public release handoff`);
-    }
-    if (!/^Internal-Release-Check: passed$/m.test(tagBody)) {
-      fail(`tag ${tag} is missing Internal-Release-Check: passed handoff marker`);
-    }
-  }
 }
 
 if (process.exitCode) {

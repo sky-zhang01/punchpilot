@@ -1,0 +1,117 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":separateMajorReleases"
+  ],
+  "gitAuthor": "PunchPilot Renovate <renovate@punchpilot.invalid>",
+  "timezone": "Asia/Tokyo",
+  "schedule": ["* 0-5 * * 1-5"],
+  "prConcurrentLimit": 6,
+  "rangeStrategy": "bump",
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "configMigration": true,
+  "osvVulnerabilityAlerts": true,
+  "dependencyDashboardOSVVulnerabilitySummary": "all",
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"],
+    "schedule": ["at any time"],
+    "minimumReleaseAge": null,
+    "prCreation": "immediate",
+    "vulnerabilityFixStrategy": "lowest"
+  },
+  "lockFileMaintenance": {
+    "enabled": false
+  },
+  "postUpdateOptions": ["npmDedupe"],
+  "packageRules": [
+    {
+      "description": "Keep Node type declarations aligned with the Node 24 runtime",
+      "matchPackageNames": ["@types/node"],
+      "allowedVersions": "24.x",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Review browser and framework runtime changes independently",
+      "matchPackageNames": [
+        "playwright",
+        "better-sqlite3",
+        "express",
+        "react-router"
+      ],
+      "groupName": null,
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Keep the Vitest runtime and coverage provider aligned",
+      "matchPackageNames": ["vitest", "@vitest/coverage-v8"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "vitest toolchain",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Keep Vite and its React integration aligned",
+      "matchPackageNames": ["vite", "@vitejs/plugin-react"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "vite toolchain",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Keep ESLint and the security ruleset aligned",
+      "matchPackageNames": ["eslint", "eslint-plugin-security"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "eslint toolchain",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Review TypeScript changes independently",
+      "matchPackageNames": ["typescript"],
+      "groupName": null,
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Keep major upgrades isolated and manually approved",
+      "matchUpdateTypes": ["major"],
+      "groupName": null,
+      "dependencyDashboardApproval": true,
+      "minimumReleaseAge": "14 days"
+    },
+    {
+      "description": "Group non-major server production updates",
+      "matchFileNames": ["package.json"],
+      "matchDepTypes": ["dependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "server production dependencies",
+      "matchPackageNames": ["!playwright", "!better-sqlite3", "!express"],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Group non-major client production updates",
+      "matchFileNames": ["client/package.json"],
+      "matchDepTypes": ["dependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "client production dependencies",
+      "matchPackageNames": ["!react-router"],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Group non-major development tool updates",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "development tools",
+      "matchPackageNames": [
+        "!vitest",
+        "!@vitest/coverage-v8",
+        "!vite",
+        "!@vitejs/plugin-react",
+        "!eslint",
+        "!eslint-plugin-security",
+        "!typescript"
+      ],
+      "minimumReleaseAge": "7 days"
+    }
+  ]
+}

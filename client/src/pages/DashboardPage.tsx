@@ -27,6 +27,9 @@ import { fetchConfig } from "../store/configSlice";
 import ManualTrigger from "../components/dashboard/ManualTrigger";
 import { snakeToCamel } from "../utils/i18n-helpers";
 import { STATE_COLORS, STATE_LABEL_KEYS } from "../utils/freeeState";
+import { formatLogTimestamp } from "../utils/date-time";
+
+import type { LogEntry, PunchTime } from '../contracts';
 
 const { Title, Text } = Typography;
 
@@ -50,22 +53,6 @@ const LOG_STATUS_COLORS: Record<string, string> = {
   skipped: "#faad14",
 };
 
-interface LogEntry {
-  executed_at?: string;
-  action_type?: string;
-  status?: string;
-  trigger_type?: string;
-  duration?: number | string;
-  company_name?: string;
-  company_id?: string;
-}
-
-interface PunchTime {
-  type: string; // 'checkin' | 'break_start' | 'break_end' | 'checkout'
-  time: string; // 'HH:MM'
-  datetime: string;
-}
-
 function calcWorkMinutes(times: PunchTime[]): number {
   let minutes = 0;
   let workStart: string | null = null;
@@ -85,13 +72,21 @@ function calcWorkMinutes(times: PunchTime[]): number {
 const DashboardPage: React.FC = () => {
   const { t } = useTranslation();
   const dispatch = useAppDispatch();
+  const identity = useAppSelector((state) => state.identity);
   const { data: statusData, loading } = useAppSelector((state) => state.status);
-  const { autoEnabled, debugMode, oauthConfigured, oauthCompanyId } =
+  const {
+    autoEnabled,
+    debugMode,
+    webCredentialsConfigured,
+    connectionMode,
+    oauthConfigured,
+    oauthCompanyId,
+  } =
     useAppSelector((state) => state.config);
 
   const loadStatus = useCallback(() => {
     dispatch(fetchStatus());
-  }, [dispatch]);
+  }, [dispatch, identity]);
 
   // Re-fetch status immediately when the active company changes (e.g. user switches
   // companies in Settings). Without this, Dashboard shows stale data from the previous
@@ -137,10 +132,18 @@ const DashboardPage: React.FC = () => {
     };
   }, [dispatch, loadStatus]);
 
-  // Browser mode disabled — only check OAuth credentials
-  const hasCredentials = oauthConfigured;
+  const hasCredentials =
+    connectionMode === "browser" ? webCredentialsConfigured : oauthConfigured;
   const authStatus = statusData?.auth_status;
   const authBroken = !!authStatus?.broken;
+  const calendarGuardVerified = statusData?.calendar_guard_verified !== false;
+  const pausedSchedules =
+    (statusData?.today_schedule_status || []).filter(entry => entry.last_status === 'paused_configuration');
+  const pauseReason = (code: string | null) => t({
+    SCHEDULE_WINDOW_PAST: 'dashboard.scheduleWindowPast',
+    SCHEDULE_TIME_NONEXISTENT: 'dashboard.scheduleTimeNonexistent',
+    BREAK_WINDOW_INCOMPATIBLE: 'dashboard.breakWindowIncompatible',
+  }[code || ''] || 'dashboard.schedulePausedHint');
 
   // Derive actual state: prefer freee time_clocks data, fall back to startup_analysis
   const punchTimesRaw: PunchTime[] = statusData?.today_punch_times || [];
@@ -149,16 +152,7 @@ const DashboardPage: React.FC = () => {
     workMinutes > 0
       ? `${Math.floor(workMinutes / 60)}h ${workMinutes % 60}m`
       : "—";
-  const derivedState = (() => {
-    if (punchTimesRaw.length > 0) {
-      const lastType = punchTimesRaw[punchTimesRaw.length - 1].type;
-      if (lastType === "checkout") return "checked_out";
-      if (lastType === "break_start") return "on_break";
-      if (lastType === "break_end" || lastType === "checkin") return "working";
-    }
-    return statusData?.startup_analysis?.state || "unknown";
-  })();
-  const detectedState = derivedState;
+  const detectedState = statusData?.attendance_state || 'unknown';
   const stateColor = STATE_COLORS[detectedState] || STATE_COLORS.unknown;
 
   // Table columns for today's log
@@ -167,7 +161,7 @@ const DashboardPage: React.FC = () => {
       title: t("table.time"),
       dataIndex: "executed_at",
       key: "time",
-      render: (val: string) => val?.split(" ")[1] || val || "-",
+      render: (val: string) => <span title={formatLogTimestamp(val, statusData?.timezone).hasTimezone ? statusData?.timezone : t("logs.timezoneUnrecorded")}>{formatLogTimestamp(val, statusData?.timezone).time}</span>,
     },
     {
       title: t("table.action"),
@@ -198,10 +192,10 @@ const DashboardPage: React.FC = () => {
     },
     {
       title: t("table.duration"),
-      dataIndex: "duration",
+      dataIndex: "duration_ms",
       key: "duration",
-      render: (val: number | string | undefined) =>
-        val != null ? String(val) : "-",
+      render: (val: number | null | undefined) =>
+        val != null ? `${val}ms` : "-",
     },
   ];
 
@@ -229,6 +223,16 @@ const DashboardPage: React.FC = () => {
               {t("dashboard.reauthorize")}
             </Button>
           }
+        />
+      )}
+
+      {!calendarGuardVerified && (
+        <Alert
+          message={t("dashboard.calendarGuardUnavailable")}
+          description={t("dashboard.calendarGuardUnavailableDesc")}
+          type="warning"
+          showIcon
+          icon={<WarningOutlined />}
         />
       )}
 
@@ -297,6 +301,11 @@ const DashboardPage: React.FC = () => {
               </Text>
             )}
 
+            {pausedSchedules.length > 0 && <Alert type="warning" showIcon
+              message={t('dashboard.schedulePaused')}
+              description={<ul>{pausedSchedules.map(entry => <li key={entry.action_type}>
+                {t(`actions.${snakeToCamel(entry.action_type)}`)}: {pauseReason(entry.last_error)}
+              </li>)}</ul>} />}
             {/* Next action info */}
             {statusData.next_action ? (
               <Alert
@@ -320,7 +329,7 @@ const DashboardPage: React.FC = () => {
                 showIcon
                 icon={<ClockCircleOutlined />}
               />
-            ) : (
+            ) : pausedSchedules.length > 0 ? null : (
               <Alert
                 message={t("dashboard.allDone")}
                 type="success"
@@ -520,11 +529,11 @@ const DashboardPage: React.FC = () => {
                   if (freeTime) {
                     description = freeTime;
                   } else if (done && log?.status === "success") {
-                    const time = log.executed_at?.split(" ")[1];
+                    const time = formatLogTimestamp(log.executed_at, statusData?.timezone).time;
                     description = time || undefined;
                   } else if (!done && log?.status === "failure") {
                     status = "error";
-                    const time = log.executed_at?.split(" ")[1];
+                    const time = formatLogTimestamp(log.executed_at, statusData?.timezone).time;
                     description = time || undefined;
                   } else if (
                     done &&
@@ -545,6 +554,8 @@ const DashboardPage: React.FC = () => {
                     status = "process";
                   }
 
+                  const paused = pausedSchedules.find(entry => entry.action_type === step);
+                  if (paused) { status = 'error'; description = pauseReason(paused.last_error); icon = <WarningOutlined />; }
                   return { title, status, description, icon };
                 })}
               />

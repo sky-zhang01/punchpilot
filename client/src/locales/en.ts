@@ -1,4 +1,22 @@
 const en = {
+  tasks: {
+    admissionUnknown: "Whether this submission was accepted is unknown. Check freee and the execution logs before submitting again.",
+    "title": "Batch task results",
+    "running": "Running",
+    "completed": "Finished",
+    "failed": "Stopped after a failure",
+    "interrupted": "Interrupted",
+    "counts": "Succeeded {{succeeded}} · Failed {{failed}} · Unknown {{unknown}} · Not processed {{unprocessed}}",
+    "totalUnknown": "unknown",
+    "verifyUnknown": "Verify unknown outcomes in freee before submitting anything again.",
+    "queryPaused": "Querying stopped. Recorded results remain available; resume querying without resubmitting.",
+    "resume": "Resume query",
+    "dismiss": "Dismiss from this session",
+    "batch_punch": "Punch correction",
+    "batch_leave": "Leave requests",
+    "batch_withdraw": "Withdraw requests",
+    "batch_approve": "Approval actions"
+  },
   // Navigation
   nav: {
     dashboard: "Dashboard",
@@ -68,6 +86,12 @@ const en = {
 
   // Dashboard
   dashboard: {
+    schedulePaused: "Automatic punching is paused for configuration",
+    schedulePausedHint: "Review the schedule settings before resuming.",
+    scheduleWindowPast: "The configured time has already passed. Review the schedule.",
+    scheduleTimeNonexistent: "This local time does not exist because of daylight saving time. Choose another time.",
+    breakWindowIncompatible: "The break windows cannot produce a 60–90 minute break.",
+
     title: "Dashboard",
     startupAnalysis: "Status",
     detectedState: "Detected state",
@@ -88,6 +112,9 @@ const en = {
     authRequiredDesc:
       "Automatic punching is paused until OAuth authorization is refreshed.",
     reauthorize: "Re-authorize",
+    calendarGuardUnavailable: "Holiday status could not be verified",
+    calendarGuardUnavailableDesc:
+      "Automatic actions pause when holiday data is unavailable and no verified cache exists.",
   },
 
   // Startup Analysis (user-friendly messages)
@@ -204,13 +231,15 @@ const en = {
     credsSaved: "Credentials saved",
     credsCleared: "Credentials cleared",
     enterBoth: "Please enter both username and password",
+    enterWebCompany: "Please enter the exact freee company name",
     encryption: "Your credentials are securely encrypted before storage",
     savedUsername: "Saved account",
     singleUserNote:
       "This tool is designed for single-user use. Using the same attendance account across multiple instances may cause conflicts.",
-    webAccountTitle: "freee Web Login (Fallback)",
+    webAccountTitle: "freee Web Login",
     webAccountDesc:
-      "Used for operations that the API cannot handle, such as department-specific approval routes and leave requests. Works alongside the API automatically.",
+      "Used for browser-mode attendance and Web-only requests. The exact company name is verified before automation changes attendance data.",
+    webCompanyPlaceholder: "Exact company name shown in freee",
     // Connection Mode
     connectionModeTitle: "Connection Mode",
     modeBrowser: "Browser Simulation",
@@ -282,7 +311,7 @@ const en = {
       "Select which countries' national holidays to skip when auto-punching. Calendar can display all holidays independently.",
     holidaySkipPlaceholder: "Select countries",
     lunchBreak: "Break Duration Rule",
-    lunchBreakNote: "Break duration must be at least 60 minutes",
+    lunchBreakNote: "Break duration must be 60–90 minutes",
   },
 
   // Schedule Card
@@ -299,7 +328,8 @@ const en = {
     resolvedTime: "Today's scheduled time",
     saved: "Configuration saved",
     saveFailed: "Save failed",
-    breakMinDuration: "Break duration must be at least 60 minutes",
+    breakMinDuration: "Break duration must be between 60 and 90 minutes",
+    invalidTime: "Enter a valid time in HH:mm format",
     windowStartBeforeEnd: "Window start time must be before end time",
     checkin: "Check-in",
     checkout: "Check-out",
@@ -309,6 +339,7 @@ const en = {
 
   // Logs
   logs: {
+    timezoneUnrecorded: "Timezone was not recorded; original local time is shown",
     title: "Execution Logs",
     dateFilter: "Date",
     actionFilter: "Action",
@@ -318,6 +349,25 @@ const en = {
     screenshotTitle: "Screenshots",
     before: "Before",
     after: "After",
+    errorCode: "Error code",
+    failureStage: "Failure stage",
+    stages: {
+      accountQueue: "Account operation queue",
+      authorization: "Authorization guard",
+      browserInit: "Browser startup",
+      calendarGuard: "Holiday calendar guard",
+      cleanup: "Browser cleanup",
+      companyBinding: "Company binding",
+      credentials: "Credential check",
+      employeeIdentity: "Employee identity",
+      identityBinding: "Account identity binding",
+      login: "Web login",
+      mutation: "Attendance mutation",
+      operation: "Automation operation",
+      queue: "Automation queue",
+      stateRead: "Attendance state read",
+      workRecordGuard: "Work record and leave guard",
+    },
   },
 
   // Calendar
@@ -405,6 +455,8 @@ const en = {
     myRequests: "My Requests",
     incomingRequests: "Incoming Requests",
     noIncomingRequests: "No pending approval requests",
+    approvalListIncomplete:
+      "Some freee request types could not be verified. Check freee Web before acting on the list.",
     batchWithdraw: "Batch Withdraw",
     batchWithdrawConfirm: "Withdraw all selected requests?",
     noWithdrawable: "No withdrawable requests selected",
@@ -421,6 +473,12 @@ const en = {
     leaveType: "Leave Type",
     paidHoliday: "Paid Leave",
     specialHoliday: "Special Leave",
+    specialHolidaySetting: "Special Leave Setting",
+    selectSpecialHolidaySetting: "Select an available setting",
+    specialHolidaySettingsUnavailable:
+      "Special leave settings could not be loaded for this date.",
+    specialHolidaySingleDateOnly:
+      "Special leave must be submitted one date at a time.",
     absence: "Absence",
     holidayWork: "Holiday Work",
     overtimeWork: "Overtime Request",

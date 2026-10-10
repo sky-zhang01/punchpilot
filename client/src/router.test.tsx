@@ -1,11 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router';
+import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AppRouter from './router';
 
-const mockDispatch = vi.fn();
-
-const unauthenticatedState = {
+const mockDispatch = vi.hoisted(() => vi.fn());
+const state = vi.hoisted(() => ({
   auth: {
     authenticated: false,
     checked: true,
@@ -16,36 +15,88 @@ const unauthenticatedState = {
   config: {},
   status: {},
   attendance: {},
-};
+}));
 
 vi.mock('./store/hooks', () => ({
   useAppDispatch: () => mockDispatch,
-  useAppSelector: (selector: (state: typeof unauthenticatedState) => unknown) =>
-    selector(unauthenticatedState),
+  useAppSelector: (selector: (value: typeof state) => unknown) => selector(state),
+}));
+vi.mock('./store/authSlice', () => ({
+  checkAuthStatus: () => ({ type: 'auth/checkStatus' }),
 }));
 
-function LocationProbe() {
-  const location = useLocation();
-  return <span data-testid="location">{location.pathname}</span>;
+vi.mock('./pages/LoginPage', () => ({ default: () => <div>login-page</div> }));
+vi.mock('./pages/ForcePasswordChangePage', () => ({
+  default: () => <div>change-password-page</div>,
+}));
+vi.mock('./pages/DashboardPage', () => ({ default: () => <div>dashboard-page</div> }));
+vi.mock('./pages/SettingsPage', () => ({ default: () => <div>settings-page</div> }));
+vi.mock('./pages/LogsPage', () => ({ default: () => <div>logs-page</div> }));
+vi.mock('./pages/CalendarPage', () => ({ default: () => <div>calendar-page</div> }));
+vi.mock('./pages/UserProfilePage', () => ({ default: () => <div>profile-page</div> }));
+vi.mock('./components/layout/AppLayout', async () => {
+  const { Outlet } = await import('react-router');
+  return { default: () => <main><span>app-layout</span><Outlet /></main> };
+});
+
+function renderRouter(path: string) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <AppRouter />
+    </MemoryRouter>,
+  );
 }
 
 describe('AppRouter', () => {
   beforeEach(() => {
-    vi.stubGlobal('__APP_VERSION__', '0.4.14');
+    vi.stubGlobal('__APP_VERSION__', '0.5.0');
     mockDispatch.mockReset();
+    mockDispatch.mockResolvedValue(undefined);
+    Object.assign(state.auth, {
+      authenticated: false,
+      checked: true,
+      username: '',
+      mustChangePassword: false,
+      loading: false,
+    });
   });
 
   it('redirects unauthenticated users away from protected routes', async () => {
-    render(
-      <MemoryRouter initialEntries={['/dashboard']}>
-        <AppRouter />
-        <LocationProbe />
-      </MemoryRouter>
-    );
+    renderRouter('/dashboard');
 
-    await waitFor(() => {
-      expect(screen.getByTestId('location').textContent).toBe('/login');
-    });
+    expect(await screen.findByText('login-page')).toBeTruthy();
+    expect(screen.queryByText('dashboard-page')).toBeNull();
     expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it('uses the real index route for an authenticated user', async () => {
+    state.auth.authenticated = true;
+    renderRouter('/');
+
+    expect(await screen.findByText('dashboard-page')).toBeTruthy();
+    expect(screen.getByText('app-layout')).toBeTruthy();
+  });
+
+  it('forces password change before rendering a protected page', async () => {
+    state.auth.authenticated = true;
+    state.auth.mustChangePassword = true;
+    renderRouter('/settings');
+
+    expect(await screen.findByText('change-password-page')).toBeTruthy();
+    expect(screen.queryByText('settings-page')).toBeNull();
+  });
+
+  it('keeps the legacy holidays redirect on the real route tree', async () => {
+    state.auth.authenticated = true;
+    renderRouter('/holidays');
+
+    expect(await screen.findByText('calendar-page')).toBeTruthy();
+  });
+
+  it('routes unknown paths through the protected dashboard fallback', async () => {
+    state.auth.authenticated = true;
+    renderRouter('/unknown-path');
+
+    expect(await screen.findByText('dashboard-page')).toBeTruthy();
   });
 });

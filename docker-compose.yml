@@ -1,17 +1,33 @@
 services:
   punchpilot:
-    build: .
+    image: ${PUNCHPILOT_IMAGE:-ghcr.io/sky-zhang01/punchpilot:0.5.0}
+    pull_policy: always
     container_name: punchpilot
+    init: true
     restart: unless-stopped
+    stop_grace_period: 9m
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - SYS_CHROOT
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./docker/playwright-seccomp.json
     environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Asia/Tokyo
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Asia/Tokyo}
       - RESET_DB=${RESET_DB:-false}
+      - CHROMIUM_SANDBOX=${CHROMIUM_SANDBOX:-true}
     env_file:
       - .env
     ports:
-      - "8681:8681"
+      - "${PORT:-8681}:${PORT:-8681}"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs

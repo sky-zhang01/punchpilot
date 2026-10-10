@@ -62,6 +62,19 @@ describe('determineActionsForToday - Smart Action Planning', () => {
     expect(result.reason).toContain('Scheduling');
   });
 
+  it('pauses duplicate-prone break actions when punch history is unconfirmed', () => {
+    const result = determineActionsForToday(
+      'working',
+      FULL_SCHEDULE,
+      null,
+      '10:00',
+    );
+
+    expect(result.execute).toEqual(['checkout']);
+    expect(result.skip).toEqual(['checkin', 'break_start', 'break_end']);
+    expect(result.reason).toContain('Punch history unavailable');
+  });
+
   // UC3: User manually checked out before break
   it('UC3: skips all actions when already checked out', () => {
     const result = determineActionsForToday(
@@ -126,6 +139,31 @@ describe('determineActionsForToday - Smart Action Planning', () => {
     expect(result.execute).toEqual(['break_end', 'checkout']);
     expect(result.skip).toEqual(['checkin', 'break_start']);
     expect(result.immediateActions).toEqual([]);
+  });
+
+  it('infers an active break from browser state when API punch history is unavailable', () => {
+    const result = determineActionsForToday(
+      'on_break',
+      FULL_SCHEDULE,
+      null,
+      '12:30',
+    );
+
+    expect(result.execute).toEqual(['break_end', 'checkout']);
+    expect(result.skip).toEqual(['checkin', 'break_start']);
+  });
+
+  it('ends an active break immediately after its scheduled end when history is unavailable', () => {
+    const result = determineActionsForToday(
+      'on_break',
+      FULL_SCHEDULE,
+      null,
+      '13:05',
+    );
+
+    expect(result.immediateActions).toEqual(['break_end']);
+    expect(result.execute).toEqual(['checkout']);
+    expect(result.skip).toEqual(['checkin', 'break_start']);
   });
 
   // UC8: On break, overtime >90min → immediate break_end

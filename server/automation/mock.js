@@ -1,4 +1,4 @@
-import chalk from "chalk";
+import { todayStringInTz } from "../timezone.js";
 import { FREEE_STATE } from "../constants.js";
 import { ACTION_LABELS } from "./constants.js";
 import { isActionValidForState } from "./scheduling.js";
@@ -8,7 +8,7 @@ let mockState = FREEE_STATE.NOT_CHECKED_IN;
 let mockStateDate = "";
 
 export function resetMockStateIfNewDay() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStringInTz();
   if (mockStateDate !== today) {
     mockState = FREEE_STATE.NOT_CHECKED_IN;
     mockStateDate = today;
@@ -39,7 +39,7 @@ function mockTransition(actionType) {
 }
 
 export async function mockExecuteAction(actionType) {
-  console.log(chalk.yellow(`[MOCK] Simulating ${ACTION_LABELS[actionType]}`));
+  console.log(`[MOCK] Simulating ${ACTION_LABELS[actionType]}`);
   await new Promise((r) => setTimeout(r, 300 + Math.random() * 700));
 
   // Validate transition
@@ -58,9 +58,7 @@ export async function mockExecuteAction(actionType) {
 
   mockTransition(actionType);
   console.log(
-    chalk.green(
-      `[MOCK] ${ACTION_LABELS[actionType]} done -> state=${mockState}`,
-    ),
+    `[MOCK] ${ACTION_LABELS[actionType]} done -> state=${mockState}`,
   );
 
   return {

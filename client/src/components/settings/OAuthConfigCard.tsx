@@ -87,6 +87,7 @@ const OAuthConfigCard: React.FC = () => {
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return; // Reject cross-origin messages
+      if (!popupRef.current || event.source !== popupRef.current) return;
       if (event.data?.type === 'oauth-callback-success') {
         notifySuccess(t('settings.oauthSuccess'));
         dispatch(fetchConfig());
@@ -114,24 +115,30 @@ const OAuthConfigCard: React.FC = () => {
     }
   };
 
-  const startOAuthPolling = useCallback(() => {
+  const startOAuthPolling = useCallback((initialAuthorizationVersion: string) => {
     // Don't create duplicate intervals
     if (pollIntervalRef.current) return;
 
-    // Track whether we've already seen OAuth configured (to detect change)
-    let wasConfigured = false;
-    // Get initial state
-    api.getOAuthStatus().then(res => {
-      wasConfigured = !!(res.data?.configured && res.data?.token_valid);
-    }).catch(() => {});
+    const startedAt = Date.now();
+    const authorizationCompleted = (status: any) => (
+      String(status?.authorization_version ?? '') !== initialAuthorizationVersion &&
+      status?.token_valid &&
+      (status?.configured || status?.needs_company_selection)
+    );
 
     pollIntervalRef.current = setInterval(async () => {
       try {
+        if (Date.now() - startedAt >= 10 * 60 * 1000) {
+          if (popupRef.current && !popupRef.current.closed) popupRef.current.close();
+          stopOAuthPolling();
+          notifyWarning(t('common.error'));
+          return;
+        }
         // Check if popup was closed by user
         if (popupRef.current && popupRef.current.closed) {
           // Popup closed — do one final check
           const res = await api.getOAuthStatus();
-          if (res.data?.configured && res.data?.token_valid && !wasConfigured) {
+          if (authorizationCompleted(res.data)) {
             notifySuccess(t('settings.oauthSuccess'));
             dispatch(fetchConfig());
             loadOAuthStatus();
@@ -140,9 +147,9 @@ const OAuthConfigCard: React.FC = () => {
           stopOAuthPolling();
           return;
         }
-        // Poll OAuth status endpoint — detect when configured + token_valid becomes true
+        // Poll OAuth status endpoint and bind success to this authorization generation.
         const res = await api.getOAuthStatus();
-        if (res.data?.configured && res.data?.token_valid && !wasConfigured) {
+        if (authorizationCompleted(res.data)) {
           notifySuccess(t('settings.oauthSuccess'));
           dispatch(fetchConfig());
           loadOAuthStatus();
@@ -160,18 +167,31 @@ const OAuthConfigCard: React.FC = () => {
   }, [dispatch, t, loadOAuthStatus, loadEmployeeInfo, stopOAuthPolling]);
 
   const handleAuthorize = async () => {
+    // Open synchronously from the click so browser popup protection cannot discard it.
+    const popup = window.open(
+      '',
+      'punchpilot_oauth',
+      'popup=yes,width=600,height=700,left=200,top=100'
+    );
+    if (!popup) {
+      notifyWarning(t('common.error'));
+      return;
+    }
+    popupRef.current = popup;
+
     try {
-      const res = await api.getOAuthAuthorizeUrl();
-      // Use named target + popup features to ensure window.opener is set
-      const popup = window.open(
-        res.data.url,
-        'punchpilot_oauth',
-        'popup=yes,width=600,height=700,left=200,top=100'
+      const initialStatus = await api.getOAuthStatus();
+      const initialAuthorizationVersion = String(
+        initialStatus.data?.authorization_version ?? ''
       );
-      popupRef.current = popup;
+      const res = await api.getOAuthAuthorizeUrl();
+      if (popup.closed) throw new Error('OAuth popup was closed before navigation');
+      popup.location.href = res.data.url;
       // Start polling as fallback (in case postMessage doesn't work)
-      startOAuthPolling();
+      startOAuthPolling(initialAuthorizationVersion);
     } catch (err: any) {
+      if (!popup.closed) popup.close();
+      stopOAuthPolling();
       notifyError(err?.response?.data?.error || t('common.error'));
     }
   };

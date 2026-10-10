@@ -86,7 +86,7 @@ function printUsage() {
 Reports merged branch cleanup candidates. Deletes only when explicitly requested.
 
 Options:
-  --fetch                                   Run git fetch --all --prune first.
+  --fetch                                   Fetch and prune only the selected remotes.
   --remote <name>                           Inspect one remote. Repeatable.
   --base [remote:]<ref>                     Base ref. Default is <remote>/main.
   --include-local                           Also report local branches merged into origin/main.
@@ -247,11 +247,13 @@ if ((args.deleteLocal || args.deleteRemote) && !args.confirmed) {
   fail(`${DELETE_CONFIRMATION} is required with delete flags`);
 }
 
+const remotes = listRemotes(args.remotes);
 if (args.fetch) {
-  runGit(['fetch', '--all', '--prune', '--tags'], { stdio: 'inherit' });
+  for (const remote of remotes) {
+    runGit(['fetch', '--prune', '--tags', remote], { stdio: 'inherit' });
+  }
 }
 
-const remotes = listRemotes(args.remotes);
 const remoteResult = collectRemoteCandidates(remotes, args.bases);
 const localBase = args.bases.get('local') || args.bases.get('*') || 'origin/main';
 const localResult = args.includeLocal

@@ -1,31 +1,35 @@
 {
   "name": "punchpilot",
-  "version": "0.4.14",
+  "version": "0.5.0",
+  "private": true,
   "description": "Smart attendance automation for freee HR - auto clock-in/out with Web GUI and intelligent scheduling",
   "main": "server/server.js",
   "type": "module",
+  "packageManager": "npm@12.2.0",
   "scripts": {
     "start": "node server/server.js",
     "dev": "node --watch server/server.js",
-    "install-browsers": "playwright install",
+    "install-browsers": "playwright install --only-shell chromium",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "node tests/e2e/smoke.mjs",
     "test:watch": "vitest",
-    "lint:security": "npx eslint --config eslint.config.mjs 'server/**/*.js'",
+    "lint:security": "node scripts/ci/security-lint-gate.mjs",
+    "lint:security:rebaseline": "node scripts/ci/security-lint-gate.mjs --update",
     "audit": "npm audit",
+    "audit:release-age": "node scripts/ci/dependency-release-age-check.mjs",
     "housekeeping:branches": "node scripts/ci/branch-housekeeping.mjs",
-    "scan:dockerfile": "hadolint Dockerfile"
+    "scan:dockerfile": "hadolint Dockerfile",
+    "publication:preflight": "node scripts/ci/publication-preflight.mjs --head HEAD --base origin/main --repo-name local"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^12.11.1",
-    "chalk": "^5.6.2",
+    "better-sqlite3": "^13.0.3",
     "cookie-parser": "^1.4.7",
-    "dotenv": "^17.4.2",
+    "es-module-lexer": "^3.0.2",
     "express": "^5.2.1",
-    "node-cron": "^4.5.0",
-    "playwright": "^1.61.1"
+    "node-cron": "^4.6.0",
+    "playwright": "^1.63.0"
   },
   "keywords": [
     "freee",
@@ -41,11 +45,18 @@
     "url": "https://github.com/sky-zhang01/punchpilot.git"
   },
   "license": "MIT",
+  "engines": {
+    "node": ">=24.15 <25",
+    "npm": ">=12.2.0 <13"
+  },
+  "allowScripts": {
+    "fsevents": false
+  },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.9",
-    "eslint": "^10.6.0",
-    "eslint-plugin-security": "^4.0.1",
-    "supertest": "^7.2.2",
-    "vitest": "^4.1.9"
+    "@vitest/coverage-v8": "^5.0.3",
+    "eslint": "^10.11.0",
+    "eslint-plugin-security": "^4.2.0",
+    "supertest": "^7.3.0",
+    "vitest": "^5.0.3"
   }
 }

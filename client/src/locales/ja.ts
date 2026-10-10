@@ -1,4 +1,22 @@
 const ja = {
+  tasks: {
+    admissionUnknown: "送信が受理されたか確認できません。再送信する前にfreeeと実行ログを確認してください。",
+    "title": "一括処理の結果",
+    "running": "実行中",
+    "completed": "処理終了",
+    "failed": "エラーで停止",
+    "interrupted": "中断",
+    "counts": "成功 {{succeeded}} · 失敗 {{failed}} · 結果不明 {{unknown}} · 未処理 {{unprocessed}}",
+    "totalUnknown": "不明",
+    "verifyUnknown": "結果不明の項目は、再送信する前に freee で確認してください。",
+    "queryPaused": "照会を停止しました。記録済みの結果は保持されています。再送信せずに照会を再開できます。",
+    "resume": "照会を再開",
+    "dismiss": "このセッションから非表示",
+    "batch_punch": "一括打刻補正",
+    "batch_leave": "一括休暇申請",
+    "batch_withdraw": "一括取下げ",
+    "batch_approve": "一括承認操作"
+  },
   // Navigation
   nav: {
     dashboard: "ダッシュボード",
@@ -67,6 +85,12 @@ const ja = {
 
   // Dashboard
   dashboard: {
+    schedulePaused: "設定により自動打刻を一時停止しています",
+    schedulePausedHint: "再開する前にスケジュール設定を確認してください。",
+    scheduleWindowPast: "設定時刻はすでに過ぎています。スケジュールを確認してください。",
+    scheduleTimeNonexistent: "夏時間の切り替えによりこの時刻は存在しません。別の時刻を指定してください。",
+    breakWindowIncompatible: "休憩の時間帯では60〜90分の休憩を確保できません。",
+
     title: "ダッシュボード",
     startupAnalysis: "ステータス",
     detectedState: "検出された状態",
@@ -88,6 +112,9 @@ const ja = {
     authRequiredDesc:
       "OAuth認可が更新されるまで、自動打刻は一時停止します。",
     reauthorize: "再認可する",
+    calendarGuardUnavailable: "祝日情報を確認できません",
+    calendarGuardUnavailableDesc:
+      "確認済みキャッシュがなく祝日情報を取得できない場合、自動打刻を一時停止します。",
   },
 
   // Startup Analysis (user-friendly messages)
@@ -204,13 +231,15 @@ const ja = {
     credsSaved: "認証情報を保存しました",
     credsCleared: "認証情報をクリアしました",
     enterBoth: "ユーザー名とパスワードの両方を入力してください",
+    enterWebCompany: "freeeに表示される正確な事業所名を入力してください",
     encryption: "認証情報は安全に暗号化して保存されます",
     savedUsername: "保存済みアカウント",
     singleUserNote:
       "このツールはシングルユーザー用です。同じ勤怠アカウントを複数のインスタンスで使用すると競合が発生する可能性があります。",
-    webAccountTitle: "freee Webログイン（フォールバック）",
+    webAccountTitle: "freee Webログイン",
     webAccountDesc:
-      "APIで対応できない操作（部署別承認経路、休暇申請等）に使用します。APIと自動的に連携して動作します。",
+      "ブラウザモードの打刻とWeb限定の申請に使用します。勤怠データを変更する前に対象事業所名を確認します。",
+    webCompanyPlaceholder: "freeeに表示される正確な事業所名",
     // 接続モード
     connectionModeTitle: "接続モード",
     modeBrowser: "ブラウザシミュレーション",
@@ -282,7 +311,7 @@ const ja = {
       "自動打刻時にスキップする国の祝日を選択してください。カレンダーにはすべての国の祝日を独立して表示できます。",
     holidaySkipPlaceholder: "国を選択",
     lunchBreak: "休憩時間ルール",
-    lunchBreakNote: "休憩時間は60分以上に設定してください",
+    lunchBreakNote: "休憩時間は60〜90分に設定してください",
   },
 
   // Schedule Card
@@ -299,7 +328,8 @@ const ja = {
     resolvedTime: "本日の予定時刻",
     saved: "設定を保存しました",
     saveFailed: "保存に失敗しました",
-    breakMinDuration: "休憩時間は60分以上に設定してください",
+    breakMinDuration: "休憩時間は60〜90分で設定してください",
+    invalidTime: "有効なHH:mm形式の時刻を入力してください",
     windowStartBeforeEnd: "開始時間は終了時間より前に設定してください",
     checkin: "出勤",
     checkout: "退勤",
@@ -309,6 +339,7 @@ const ja = {
 
   // Logs
   logs: {
+    timezoneUnrecorded: "タイムゾーン未記録のため、元の現地時刻を表示",
     title: "実行ログ",
     dateFilter: "日付",
     actionFilter: "アクション",
@@ -318,6 +349,25 @@ const ja = {
     screenshotTitle: "スクリーンショット",
     before: "実行前",
     after: "実行後",
+    errorCode: "エラーコード",
+    failureStage: "失敗ステージ",
+    stages: {
+      accountQueue: "アカウント操作キュー",
+      authorization: "認可ガード",
+      browserInit: "ブラウザー起動",
+      calendarGuard: "祝日カレンダーガード",
+      cleanup: "ブラウザー終了処理",
+      companyBinding: "事業所の紐付け",
+      credentials: "認証情報の確認",
+      employeeIdentity: "従業員IDの確認",
+      identityBinding: "アカウントIDの紐付け",
+      login: "Webログイン",
+      mutation: "勤怠データの更新",
+      operation: "自動操作",
+      queue: "自動操作キュー",
+      stateRead: "勤怠状態の読み取り",
+      workRecordGuard: "勤務記録・休暇ガード",
+    },
   },
 
   // Calendar
@@ -404,6 +454,8 @@ const ja = {
     myRequests: "自分の申請",
     incomingRequests: "承認待ち",
     noIncomingRequests: "承認待ちの申請はありません",
+    approvalListIncomplete:
+      "一部の申請種別を確認できませんでした。操作前にfreee Webも確認してください。",
     batchWithdraw: "一括取下げ",
     batchWithdrawConfirm: "選択した申請を一括取下げしますか？",
     noWithdrawable: "取下げ可能な申請が選択されていません",
@@ -420,6 +472,12 @@ const ja = {
     leaveType: "休暇種別",
     paidHoliday: "有給休暇",
     specialHoliday: "特別休暇",
+    specialHolidaySetting: "特別休暇設定",
+    selectSpecialHolidaySetting: "利用する設定を選択",
+    specialHolidaySettingsUnavailable:
+      "この日付で利用可能な特別休暇設定を取得できませんでした。",
+    specialHolidaySingleDateOnly:
+      "特別休暇は日付ごとに1件ずつ申請してください。",
     absence: "欠勤",
     holidayWork: "休日出勤",
     overtimeWork: "残業申請",

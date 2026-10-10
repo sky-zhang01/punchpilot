@@ -1,6 +1,472 @@
-import chalk from "chalk";
 import { FREEE_ERROR_MESSAGES } from "../constants.js";
 import { APPROVAL_TYPE_MAP } from "./constants.js";
+import {
+  assertApprovalMutationRequest,
+  assertApprovalWithdrawalMutationRequest,
+  assertMonthlyClosingMutationRequest,
+} from "./mutation-intent.js";
+
+const WEB_LEAVE_MUTATION_SKIPPED = "WEB_LEAVE_MUTATION_SKIPPED";
+
+function approvalTypeFor(type) {
+  return Object.entries(APPROVAL_TYPE_MAP)
+    .find(([name]) => name === type)?.[1] || null;
+}
+
+async function assertMutationGuard(bot) {
+  if (!bot || typeof bot.assertPreMutationGuard !== 'function') {
+    const error = new Error('The Web mutation guard is unavailable.');
+    error.code = 'WEB_COMPANY_IDENTITY_UNCONFIRMED';
+    throw error;
+  }
+  await bot.assertPreMutationGuard();
+}
+
+async function guardedClick(bot, locator) {
+  await assertMutationGuard(bot);
+  await locator.click();
+}
+
+function requireMutationDispatchGuard(bot) {
+  if (typeof bot?.dispatchGuardedMutation === "function") return;
+  const error = new Error("The Web mutation dispatch guard is unavailable.");
+  error.code = "WEB_MUTATION_DISPATCH_GUARD_UNAVAILABLE";
+  throw error;
+}
+
+async function waitForSubmissionOutcome(
+  bot,
+  initialUrl,
+  {
+    successIndicators = [],
+    acceptedIndicators = [],
+    includeDefaultSuccessIndicators = true,
+    targetConfirmed = false,
+  } = {},
+) {
+  const knownSuccessIndicators = includeDefaultSuccessIndicators
+    ? ["申請しました", "申請が完了", ...successIndicators]
+    : successIndicators;
+  const errorIndicators = [
+    "エラー",
+    "申請できませんでした",
+  ];
+  const terminalIndicators = [
+    ...knownSuccessIndicators,
+    ...errorIndicators,
+    ...acceptedIndicators,
+  ];
+  await bot.page.waitForFunction(
+    ({ url, expectedIndicators }) => {
+      if (window.location.href !== url) {
+        try {
+          const current = new URL(window.location.href);
+          const route = current.hash
+            .replace(/^#\/?/, "")
+            .split("?", 1)[0];
+          const trustedRoute =
+            current.origin === "https://p.secure.freee.co.jp" &&
+            current.pathname === "/approval_requests" &&
+            (/^requests\/?$/.test(route) ||
+              /^requests\/[1-9]\d*\/?$/.test(route));
+          if (!trustedRoute) return true;
+        } catch {
+          return true;
+        }
+      }
+      const text = document.body.innerText;
+      return expectedIndicators.some((indicator) => text.includes(indicator));
+    },
+    { url: initialUrl, expectedIndicators: terminalIndicators },
+    { timeout: 15_000 },
+  ).catch(() => {});
+
+  const indicators = await bot.page.evaluate(
+    ({ success, errors, accepted }) => {
+      const text = document.body.innerText;
+      return {
+        successIndicator: success.some((indicator) => text.includes(indicator)),
+        errorIndicator: errors.some((indicator) => text.includes(indicator)),
+        acceptedIndicator: accepted.some((indicator) => text.includes(indicator)),
+      };
+    },
+    {
+      success: knownSuccessIndicators,
+      errors: errorIndicators,
+      accepted: acceptedIndicators,
+    },
+  ).catch(() => ({
+    successIndicator: false,
+    errorIndicator: false,
+    acceptedIndicator: false,
+  }));
+
+  const finalUrl = bot.page.url();
+  return {
+    routeChanged: bot.page.url() !== initialUrl,
+    targetConfirmed: Boolean(targetConfirmed),
+    trustedRoute: isTrustedApprovalRequestRoute(finalUrl, initialUrl),
+    ...indicators,
+  };
+}
+
+export function assertSubmissionConfirmed(outcome, { allowAccepted = false } = {}) {
+  if (outcome?.errorIndicator) {
+    const error = new Error("freee Web rejected the form submission.");
+    error.code = "WEB_FORM_SUBMISSION_REJECTED";
+    throw error;
+  }
+  const hasTerminalEvidence =
+    outcome?.successIndicator ||
+    (allowAccepted && outcome?.acceptedIndicator);
+  if (hasTerminalEvidence && outcome?.targetConfirmed && outcome?.trustedRoute) {
+    return;
+  }
+  const error = new Error("freee Web form submission could not be confirmed.");
+  error.code = "WEB_FORM_SUBMISSION_UNCONFIRMED";
+  throw error;
+}
+
+function normalizeFormDate(value) {
+  const match = String(value || "")
+    .trim()
+    .match(/^(\d{4})[-/.\u5e74](\d{1,2})[-/.\u6708](\d{1,2})(?:\u65e5)?$/);
+  if (!match) return null;
+  return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+}
+
+export function assertFormTargetDate(actual, expected) {
+  if (normalizeFormDate(actual) === normalizeFormDate(expected)) return;
+  const error = new Error("freee Web form target date could not be confirmed.");
+  error.code = "WEB_FORM_TARGET_MISMATCH";
+  throw error;
+}
+
+const APPROVAL_FORM_LABELS = Object.freeze({
+  [APPROVAL_TYPE_MAP.PaidHoliday]: "有給休暇申請",
+  [APPROVAL_TYPE_MAP.SpecialHoliday]: "特別休暇申請",
+  [APPROVAL_TYPE_MAP.Absence]: "欠勤申請",
+  [APPROVAL_TYPE_MAP.HolidayWork]: "休日出勤申請",
+  [APPROVAL_TYPE_MAP.OvertimeWork]: "残業申請",
+  [APPROVAL_TYPE_MAP.WorkTime]: "勤務時間修正申請",
+});
+
+function formTargetError(message = "freee Web form target could not be confirmed.") {
+  const error = new Error(message);
+  error.code = "WEB_FORM_TARGET_MISMATCH";
+  return error;
+}
+
+function formFieldError() {
+  const error = new Error("freee Web form fields could not be confirmed.");
+  error.code = "WEB_FORM_FIELDS_UNCONFIRMED";
+  return error;
+}
+
+function parseApprovalRequestFormRoute(actualUrl) {
+  try {
+    const url = new URL(actualUrl);
+    const [route, query = ""] = url.hash.replace(/^#\/?/, "").split("?", 2);
+    if (
+      url.origin !== "https://p.secure.freee.co.jp" ||
+      url.pathname !== "/approval_requests" ||
+      !/^requests\/new\/?$/.test(route)
+    ) return null;
+    const params = new URLSearchParams(query);
+    return {
+      requestType: params.get("type"),
+      targetDate: params.get("target_date"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function assertApprovalFormTarget(observation, expectedType, expectedDate) {
+  const routeTarget = parseApprovalRequestFormRoute(observation?.url);
+  if (
+    routeTarget?.requestType === expectedType &&
+    normalizeFormDate(routeTarget?.targetDate) === normalizeFormDate(expectedDate) &&
+    observation?.requestType === expectedType &&
+    normalizeFormDate(observation?.date) === normalizeFormDate(expectedDate)
+  ) return;
+  throw formTargetError();
+}
+
+async function observeApprovalFormTarget(page, dateInput) {
+  const requestType = await page.evaluate(({ labels }) => {
+    const explicitSelectors = [
+      "[data-approval-request-type]",
+      '[name="approval_request_type"]',
+      '[name="type"]',
+    ];
+    for (const selector of explicitSelectors) {
+      const element = document.querySelector(selector);
+      const value =
+        element?.getAttribute("data-approval-request-type") ||
+        element?.value ||
+        element?.getAttribute("value");
+      if (String(value || "").trim()) return String(value).trim();
+    }
+    const bodyText = document.body?.innerText || "";
+    const matches = Object.entries(labels)
+      .filter(([, label]) => bodyText.includes(label))
+      .map(([type]) => type);
+    return matches.length === 1 ? matches[0] : null;
+  }, { kind: "approval-form-target", labels: APPROVAL_FORM_LABELS }).catch(() => null);
+  const date = await dateInput.inputValue().catch(() => null);
+  return { url: page.url(), requestType, date };
+}
+
+async function requireSingleFormField(locator) {
+  if ((await locator.count()) !== 1) throw formFieldError();
+  return locator;
+}
+
+async function assertFormFieldValue(locator, expected) {
+  await requireSingleFormField(locator);
+  const actual = await locator.inputValue().catch(() => null);
+  if (String(actual ?? "").trim() !== String(expected ?? "").trim()) {
+    throw formFieldError();
+  }
+}
+
+async function fillAndConfirmFormField(bot, locator, value, { tab = false } = {}) {
+  await requireSingleFormField(locator);
+  await locator.click();
+  await bot.page.waitForTimeout(200);
+  await locator.fill(String(value));
+  if (tab) await bot.page.keyboard.press("Tab");
+  await bot.page.waitForTimeout(200);
+  await assertFormFieldValue(locator, value);
+}
+
+function normalizeRenderedInteger(value) {
+  const match = String(value ?? "").trim().match(/^(\d{1,4})(?:年|月)?$/);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+export function assertMonthlyClosingTarget(observation, expectedYear, expectedMonth) {
+  if (
+    observation &&
+    typeof observation === "object" &&
+    observation.requestType === APPROVAL_TYPE_MAP.MonthlyAttendance &&
+    normalizeRenderedInteger(observation.year) === Number(expectedYear) &&
+    normalizeRenderedInteger(observation.month) === Number(expectedMonth)
+  ) return;
+  const error = new Error("freee Web monthly closing target could not be confirmed.");
+  error.code = "WEB_FORM_TARGET_MISMATCH";
+  throw error;
+}
+
+function isTrustedApprovalRequestRoute(actualUrl, initialUrl) {
+  try {
+    const url = new URL(actualUrl);
+    const initial = new URL(initialUrl);
+    const route = url.hash
+      .replace(/^#\/?/, "")
+      .split("?", 1)[0];
+    const knownResultRoute =
+      /^requests\/?$/.test(route) ||
+      /^requests\/[1-9]\d*\/?$/.test(route);
+    const unchangedFormRoute =
+      /^requests\/new\/?$/.test(route) &&
+      url.href === initial.href;
+    return (
+      url.origin === "https://p.secure.freee.co.jp" &&
+      url.pathname === "/approval_requests" &&
+      (knownResultRoute || unchangedFormRoute)
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function observeMonthlyClosingTarget(page) {
+  return page.evaluate(() => {
+    const bodyText = document.body?.innerText || "";
+    const isRendered = (element) => {
+      if (element instanceof HTMLInputElement && element.type === "hidden") {
+        return false;
+      }
+      const style = window.getComputedStyle(element);
+      return style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        element.getClientRects().length > 0;
+    };
+    const readValue = (selectors) => {
+      for (const selector of selectors) {
+        const element = document.querySelector(selector);
+        if (!element || !isRendered(element)) continue;
+        const value =
+          element.getAttribute("data-approval-request-type") ||
+          element.value ||
+          element.getAttribute("value") ||
+          element.textContent;
+        if (String(value || "").trim()) return String(value).trim();
+      }
+      return null;
+    };
+
+    const explicitType = readValue([
+      "[data-approval-request-type]",
+      '[name="approval_request_type"]',
+      '[name="type"]',
+    ]);
+    const requestType = explicitType ||
+      (/月次勤怠締め申請/.test(bodyText)
+        ? "ApprovalRequest::MonthlyAttendance"
+        : null);
+    let year = readValue([
+      "#approval-request-fields-target-year",
+      '[name="target_year"]',
+      '[name="targetYear"]',
+      '[data-testid="target-year"]',
+    ]);
+    let month = readValue([
+      "#approval-request-fields-target-month",
+      '[name="target_month"]',
+      '[name="targetMonth"]',
+      '[data-testid="target-month"]',
+    ]);
+
+    if (!year || !month) {
+      const match = bodyText.match(
+        /(?:対象年月|対象月|申請年月|月次勤怠締め申請)[\s\S]{0,80}?(\d{4})\s*年\s*(\d{1,2})\s*月/,
+      );
+      year ||= match?.[1] || null;
+      month ||= match?.[2] || null;
+    }
+
+    return { requestType, year, month };
+  }, { kind: "monthly-closing-target" });
+}
+
+function assertMonthlyClosingRoute(actualUrl, expectedYear, expectedMonth) {
+  try {
+    const url = new URL(actualUrl);
+    const [route, query = ""] = url.hash
+      .replace(/^#\/?/, "")
+      .split("?", 2);
+    const params = new URLSearchParams(query);
+    if (
+      url.origin === "https://p.secure.freee.co.jp" &&
+      url.pathname === "/approval_requests" &&
+      /^requests\/new\/?$/.test(route) &&
+      params.get("type") === APPROVAL_TYPE_MAP.MonthlyAttendance &&
+      normalizeRenderedInteger(params.get("target_year")) ===
+        Number(expectedYear) &&
+      normalizeRenderedInteger(params.get("target_month")) ===
+        Number(expectedMonth)
+    ) {
+      return;
+    }
+  } catch {}
+  const error = new Error("freee Web monthly closing target could not be confirmed.");
+  error.code = "WEB_FORM_TARGET_MISMATCH";
+  throw error;
+}
+
+function parseApprovalRequestDetailUrl(actualUrl) {
+  try {
+    const url = new URL(actualUrl);
+    if (
+      url.origin !== "https://p.secure.freee.co.jp" ||
+      url.pathname !== "/approval_requests"
+    ) return null;
+    const [route, query = ""] = url.hash.replace(/^#\/?/, "").split("?", 2);
+    const match = route.match(/^requests\/([^/?#]+)\/?$/);
+    if (!match) return null;
+    return {
+      requestId: decodeURIComponent(match[1]),
+      requestType: new URLSearchParams(query).get("type"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function assertWithdrawalTarget(
+  observation,
+  expectedRequestId,
+  expectedRequestType,
+  { requireAction = false } = {},
+) {
+  const routeTarget = parseApprovalRequestDetailUrl(observation?.url);
+  const expectedId = String(expectedRequestId);
+  let actionTarget = null;
+  if (observation?.actionUrl != null) {
+    try {
+      actionTarget = parseApprovalRequestDetailUrl(
+        new URL(observation.actionUrl, observation.url).href,
+      );
+    } catch {}
+  }
+  const matchesOptionalValue = (actual, expected) =>
+    actual == null || String(actual) === String(expected);
+  const matches =
+    routeTarget?.requestId === expectedId &&
+    routeTarget?.requestType === expectedRequestType &&
+    matchesOptionalValue(observation?.domRequestId, expectedId) &&
+    matchesOptionalValue(observation?.domRequestType, expectedRequestType) &&
+    matchesOptionalValue(observation?.actionRequestId, expectedId) &&
+    matchesOptionalValue(observation?.actionRequestType, expectedRequestType) &&
+    (observation?.actionUrl == null ||
+      (actionTarget?.requestId === expectedId &&
+        actionTarget?.requestType === expectedRequestType)) &&
+    (!requireAction || observation?.actionCount === 1);
+  if (matches) return;
+
+  const error = new Error("freee Web approval request target could not be confirmed.");
+  error.code = "WEB_FORM_TARGET_MISMATCH";
+  throw error;
+}
+
+async function observeWithdrawalTarget(page, action = null) {
+  const domTarget = await page.evaluate(() => {
+    const readValue = (selectors, attributes = []) => {
+      for (const selector of selectors) {
+        const element = document.querySelector(selector);
+        if (!element) continue;
+        for (const attribute of attributes) {
+          const value = element.getAttribute(attribute);
+          if (value) return value;
+        }
+        if (element.value) return String(element.value);
+      }
+      return null;
+    };
+    return {
+      domRequestId: readValue(
+        ["[data-approval-request-id]", '[name="approval_request_id"]', '[name="request_id"]'],
+        ["data-approval-request-id", "data-request-id"],
+      ),
+      domRequestType: readValue(
+        ["[data-approval-request-type]", '[name="approval_request_type"]', '[name="type"]'],
+        ["data-approval-request-type", "data-request-type"],
+      ),
+    };
+  }, { kind: "approval-request-target" }).catch(() => ({
+    domRequestId: null,
+    domRequestType: null,
+  }));
+  const observation = { url: page.url(), ...domTarget };
+  if (!action) return observation;
+
+  observation.actionCount = await action.count();
+  if (observation.actionCount !== 1) return observation;
+  const targetAction = action.first();
+  observation.actionRequestId =
+    await targetAction.getAttribute("data-approval-request-id").catch(() => null) ||
+    await targetAction.getAttribute("data-request-id").catch(() => null);
+  observation.actionRequestType =
+    await targetAction.getAttribute("data-approval-request-type").catch(() => null) ||
+    await targetAction.getAttribute("data-request-type").catch(() => null);
+  observation.actionUrl =
+    await targetAction.getAttribute("href").catch(() => null) ||
+    await targetAction.getAttribute("formaction").catch(() => null);
+  return observation;
+}
 
 /**
  * Submit a work time correction via freee Web form (勤務時間修正申請).
@@ -11,11 +477,18 @@ import { APPROVAL_TYPE_MAP } from "./constants.js";
  * @param {string} date — YYYY-MM-DD
  * @param {object} times — { clockInHour, clockInMin, clockOutHour, clockOutMin, breakStartHour?, breakStartMin?, breakEndHour?, breakEndMin? }
  * @param {string} [reason] — 申請理由 text
+ * @param {{ employeeId?: string|null, companyId?: string|null }} [expectedIntent]
  * @returns {{ success: boolean, error?: string }}
  */
-export async function submitWorkTimeCorrection(bot, date, times, reason) {
+export async function submitWorkTimeCorrection(
+  bot,
+  date,
+  times,
+  reason,
+  expectedIntent = {},
+) {
   const formUrl = `https://p.secure.freee.co.jp/approval_requests#/requests/new?type=ApprovalRequest::WorkTime&target_date=${date}`;
-  console.log(chalk.blue(`[Bot] Navigating to correction form: ${formUrl}`));
+  console.log("[Bot] Navigating to correction form");
 
   await bot.navigateToSpaForm(formUrl);
 
@@ -28,34 +501,29 @@ export async function submitWorkTimeCorrection(bot, date, times, reason) {
     formUrl,
     { debugPrefix: `web-correction-${date}` },
   );
-  const dateValue = await dateInput.inputValue();
-  if (dateValue !== date) {
-    console.log(
-      chalk.yellow(`[Bot] Date mismatch: expected ${date}, got ${dateValue}`),
-    );
-  }
+  assertApprovalFormTarget(
+    await observeApprovalFormTarget(bot.page, dateInput),
+    APPROVAL_TYPE_MAP.WorkTime,
+    date,
+  );
 
   // Ensure "勤務時間を修正する" radio is selected (default, but be explicit)
   const modifyRadio = bot.page.locator(
     '[data-testid="clear-work-time-false"]',
   );
-  if ((await modifyRadio.count()) > 0) {
-    await modifyRadio.click();
-    await bot.page.waitForTimeout(300);
-  }
+  await requireSingleFormField(modifyRadio);
+  await guardedClick(bot, modifyRadio);
+  await bot.page.waitForTimeout(300);
+  if (!(await modifyRadio.isChecked().catch(() => false))) throw formFieldError();
+
+  const requiredFields = [];
 
   // Helper: fill a combobox time input
   const fillTimeInput = async (id, value) => {
     const input = bot.page.locator(`#${id}`);
-    if ((await input.count()) === 0) {
-      throw new Error(`Time input #${id} not found`);
-    }
-    await input.click();
-    await bot.page.waitForTimeout(200);
-    await input.fill(String(value).padStart(2, "0"));
-    await bot.page.waitForTimeout(200);
-    await bot.page.keyboard.press("Tab");
-    await bot.page.waitForTimeout(200);
+    const expected = String(value).padStart(2, "0");
+    await fillAndConfirmFormField(bot, input, expected, { tab: true });
+    requiredFields.push([input, expected]);
   };
 
   // Fill check-in time
@@ -100,182 +568,73 @@ export async function submitWorkTimeCorrection(bot, date, times, reason) {
       times.breakEndMin,
     );
   } else {
-    // No break data — remove the default empty break row (freee adds one by default)
-    // The delete button is near the break time inputs (trash icon button)
-    try {
-      const breakDeleteBtn = bot.page
-        .locator('button[aria-label*="削除"], button[aria-label*="休憩"]')
-        .first();
-      if ((await breakDeleteBtn.count()) > 0) {
-        await breakDeleteBtn.click();
-        await bot.page.waitForTimeout(300);
-        console.log(chalk.blue("[Bot] Removed empty break row"));
-      } else {
-        // Fallback: find the trash icon button near break fields
-        const breakSection = bot.page.locator(
-          "#approval-request-fields-break-clock-in-at-hour-0",
-        );
-        if ((await breakSection.count()) > 0) {
-          // The delete button is a sibling in the same row — find it by proximity
-          const rowBtns = await bot.page.evaluate(() => {
-            const breakInput = document.getElementById(
-              "approval-request-fields-break-clock-in-at-hour-0",
-            );
-            if (!breakInput) return null;
-            // Walk up to find the row container
-            let row = breakInput;
-            for (let i = 0; i < 10 && row.parentElement; i++) {
-              row = row.parentElement;
-              const btns = row.querySelectorAll("button");
-              if (btns.length > 0) {
-                // Find the delete/trash button (usually last button with an SVG icon)
-                for (const btn of btns) {
-                  const svg = btn.querySelector("svg");
-                  if (svg && !btn.textContent?.trim()) {
-                    btn.click();
-                    return "clicked";
-                  }
-                }
-              }
-            }
-            return null;
-          });
-          if (rowBtns === "clicked") {
-            await bot.page.waitForTimeout(300);
-            console.log(chalk.blue("[Bot] Removed empty break row (via JS)"));
-          }
-        }
-      }
-    } catch (breakErr) {
-      console.log(
-        chalk.yellow(
-          `[Bot] Could not remove empty break row: ${breakErr.message}`,
-        ),
+    const breakInput = bot.page.locator(
+      "#approval-request-fields-break-clock-in-at-hour-0",
+    );
+    const breakCount = await breakInput.count();
+    if (breakCount > 1) throw formFieldError();
+    if (breakCount === 1) {
+      const breakDeleteBtn = bot.page.locator(
+        '[data-testid="delete-break-0"], button[aria-label="休憩を削除"], button[aria-label="休憩削除"]',
       );
+      await requireSingleFormField(breakDeleteBtn);
+      await guardedClick(bot, breakDeleteBtn);
+      await bot.page.waitForTimeout(300);
+      if ((await breakInput.count()) !== 0) throw formFieldError();
     }
   }
 
   // Fill reason
   if (reason) {
     const reasonInput = bot.page.locator('[data-testid="申請理由"]');
-    if ((await reasonInput.count()) > 0) {
-      await reasonInput.click();
-      await bot.page.waitForTimeout(200);
-      await reasonInput.fill(reason);
-      await bot.page.waitForTimeout(200);
-    }
+    await fillAndConfirmFormField(bot, reasonInput, reason);
+    requiredFields.push([reasonInput, reason]);
   }
 
-  // Select approver — freee uses vibes vb-comboBox (not <select>)
-  // Input: id="approval-request-fields-approver_id", placeholder="選択してください"
-  // The listbox options are covered by adjacent combobox overlays, so we use
-  // page.evaluate() to programmatically click instead of Playwright .click()
-  try {
-    const approverInput = bot.page.locator(
-      "#approval-request-fields-approver_id",
-    );
-    if ((await approverInput.count()) > 0) {
-      const currentVal = await approverInput.inputValue();
-      if (!currentVal) {
-        // Scroll the approver input into view first
-        await approverInput.scrollIntoViewIfNeeded();
-        await bot.page.waitForTimeout(300);
-
-        // Click the input to open the dropdown
-        await approverInput.click();
-        await bot.page.waitForTimeout(800);
-
-        // Get the listbox ID and select the first option via JS (bypasses overlay interception)
-        const approverName = await bot.page.evaluate(() => {
-          const input = document.getElementById(
-            "approval-request-fields-approver_id",
-          );
-          if (!input) return null;
-          const listboxId = input.getAttribute("aria-controls");
-          if (!listboxId) return null;
-          const listbox = document.getElementById(listboxId);
-          if (!listbox) return null;
-          const firstOption = listbox.querySelector('[role="option"]');
-          if (!firstOption) return null;
-          const name = firstOption.textContent?.trim();
-          // Dispatch click event directly on the option element
-          firstOption.dispatchEvent(
-            new MouseEvent("mousedown", { bubbles: true }),
-          );
-          firstOption.dispatchEvent(
-            new MouseEvent("mouseup", { bubbles: true }),
-          );
-          firstOption.dispatchEvent(
-            new MouseEvent("click", { bubbles: true }),
-          );
-          return name;
-        });
-
-        await bot.page.waitForTimeout(500);
-
-        if (approverName) {
-          // Verify the input now has a value
-          const newVal = await approverInput.inputValue();
-          if (newVal) {
-            console.log(
-              chalk.green(
-                `[Bot] Selected approver: ${approverName} (confirmed: ${newVal})`,
-              ),
-            );
-          } else {
-            // If dispatchEvent didn't trigger React state update, try keyboard approach
-            console.log(
-              chalk.yellow(
-                `[Bot] Click dispatch didn't set value, trying keyboard...`,
-              ),
-            );
-            await approverInput.click();
-            await bot.page.waitForTimeout(500);
-            await bot.page.keyboard.press("ArrowDown");
-            await bot.page.waitForTimeout(200);
-            await bot.page.keyboard.press("Enter");
-            await bot.page.waitForTimeout(500);
-            const retryVal = await approverInput.inputValue();
-            console.log(
-              chalk.green(`[Bot] Approver after keyboard: "${retryVal}"`),
-            );
-          }
-        } else {
-          console.log(
-            chalk.yellow("[Bot] No approver options found in listbox"),
-          );
-        }
-      } else {
-        console.log(
-          chalk.green(`[Bot] Approver already selected: ${currentVal}`),
-        );
-      }
-    } else {
-      console.log(
-        chalk.yellow(
-          "[Bot] Approver input #approval-request-fields-approver_id not found",
-        ),
-      );
-    }
-  } catch (approverErr) {
-    console.log(
-      chalk.yellow(`[Bot] Approver selection error: ${approverErr.message}`),
-    );
+  const approverInput = bot.page.locator("#approval-request-fields-approver_id");
+  if (
+    (await approverInput.count()) > 0 &&
+    !(await approverInput.inputValue()).trim()
+  ) {
+    const error = new Error("freee Web requires an explicit approver selection.");
+    error.code = "WEB_APPROVER_SELECTION_REQUIRED";
+    throw error;
   }
+
+  assertApprovalFormTarget(
+    await observeApprovalFormTarget(bot.page, dateInput),
+    APPROVAL_TYPE_MAP.WorkTime,
+    date,
+  );
+  for (const [field, expected] of requiredFields) {
+    await assertFormFieldValue(field, expected);
+  }
+  if (!(await modifyRadio.isChecked().catch(() => false))) throw formFieldError();
 
   const screenshots = bot.takeScreenshots(`web-correction-${date}`);
   const beforePath = await screenshots.before();
 
   // Click submit button
-  console.log(chalk.blue(`[Bot] Submitting correction for ${date}...`));
+  console.log("[Bot] Submitting correction");
   const submitBtn = bot.page
     .locator('button[type="submit"]')
     .filter({ hasText: "申請" });
   if ((await submitBtn.count()) === 0) {
     throw new Error("Submit button not found");
   }
-  await submitBtn.click();
-  await bot.page.waitForTimeout(5000);
+  const preSubmitUrl = bot.page.url();
+  requireMutationDispatchGuard(bot);
+  await bot.dispatchGuardedMutation(submitBtn, {
+    validateRequest: (request) => assertApprovalMutationRequest(request, {
+      requestType: APPROVAL_TYPE_MAP.WorkTime,
+      date,
+      employeeId: expectedIntent.employeeId ?? null,
+      companyId: expectedIntent.companyId ?? null,
+    }),
+  });
+  const submissionOutcome = await waitForSubmissionOutcome(bot, preSubmitUrl, {
+    targetConfirmed: true,
+  });
 
   const afterPath = await screenshots.after();
 
@@ -283,7 +642,7 @@ export async function submitWorkTimeCorrection(bot, date, times, reason) {
   const result = await bot.checkSubmitResult();
   if (!result.success) {
     console.log(
-      chalk.red(`[Bot] Correction form error for ${date}: ${result.error}`),
+      `[Bot] Correction form error: ${result.error}`,
     );
     return {
       success: false,
@@ -306,14 +665,16 @@ export async function submitWorkTimeCorrection(bot, date, times, reason) {
         .textContent();
       return {
         success: false,
-        error: errorText || "Validation error",
+        error: errorText ? "freee form validation error" : "Validation error",
         screenshotBefore: beforePath,
         screenshotAfter: afterPath,
       };
     }
   }
 
-  console.log(chalk.green(`[Bot] Correction submitted for ${date}`));
+  assertSubmissionConfirmed(submissionOutcome);
+
+  console.log("[Bot] Correction submitted");
   return {
     success: true,
     screenshotBefore: beforePath,
@@ -331,35 +692,63 @@ export async function submitWorkTimeCorrection(bot, date, times, reason) {
  */
 export async function scrapeEmployeeInfo(bot, employeeId) {
   const profileUrl = `https://p.secure.freee.co.jp/employees/${employeeId}/profile`;
-  console.log(
-    chalk.blue(`[Bot] Navigating to employee profile: ${profileUrl}`),
-  );
+  console.log("[Bot] Navigating to employee profile");
+
+  const waitForProfileContentOrRedirect = async () => {
+    await bot.page.waitForFunction(
+      () => {
+        if (!window.location.href.includes("profile")) return true;
+        const text = document.body.innerText;
+        return ["氏名", "名前", "社員番号", "部門", "雇用形態"].some(
+          (label) => text.includes(label),
+        );
+      },
+      null,
+      { timeout: 10_000 },
+    ).catch(() => {});
+  };
 
   // First try the newer URL format
-  await bot.page.goto(profileUrl);
-  await bot.page.waitForTimeout(4000);
+  await bot.page.goto(profileUrl, {
+    waitUntil: "domcontentloaded",
+    timeout: 20_000,
+  });
+  await waitForProfileContentOrRedirect();
 
   // If redirected to a different page, try the hash-based format
   if (!bot.page.url().includes("profile")) {
     const altUrl = `https://p.secure.freee.co.jp/employees#${employeeId}/profile`;
-    console.log(chalk.blue(`[Bot] Trying alternative URL: ${altUrl}`));
-    await bot.page.goto(altUrl);
-    await bot.page.waitForTimeout(4000);
+    console.log("[Bot] Trying alternative employee profile route");
+    await bot.page.goto(altUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 20_000,
+    });
+    await waitForProfileContentOrRedirect();
   }
 
   // Extract employee info from the page
   const info = await bot.page.evaluate(() => {
     const result = {};
     const body = document.body.innerText;
+    const lines = body
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
 
     // Try to find common profile field patterns
     // freee profile pages typically show fields in label-value pairs
     const getFieldValue = (labels) => {
       for (const label of labels) {
-        // Look for patterns like "姓名\nValue" or label in a dd/dt structure
-        const regex = new RegExp(`${label}[\\s:：]*([^\\n]+)`, "i");
-        const match = body.match(regex);
-        if (match) return match[1].trim();
+        const normalizedLabel = label.toLocaleLowerCase();
+        for (let index = 0; index < lines.length; index += 1) {
+          const line = lines[index];
+          if (!line.toLocaleLowerCase().startsWith(normalizedLabel)) continue;
+          const suffix = line.slice(label.length);
+          if (suffix && !/^[\s:：]/.test(suffix)) continue;
+          const inlineValue = suffix.replace(/^[\s:：]+/, "").trim();
+          if (inlineValue) return inlineValue;
+          if (index + 1 < lines.length) return lines[index + 1];
+        }
       }
       return null;
     };
@@ -399,9 +788,7 @@ export async function scrapeEmployeeInfo(bot, employeeId) {
     return result;
   });
 
-  console.log(
-    chalk.green(`[Bot] Employee info scraped: ${JSON.stringify(info)}`),
-  );
+  console.log("[Bot] Employee info loaded");
   return info;
 }
 
@@ -411,18 +798,40 @@ export async function scrapeEmployeeInfo(bot, employeeId) {
  * @param {import('./punch-bot.js').PunchBot} bot
  * @param {string} type — e.g. 'PaidHoliday', 'SpecialHoliday', 'Absence', 'HolidayWork'
  * @param {string} date — YYYY-MM-DD
- * @param {object} options — { halfDay?: boolean, reason?: string }
- * @returns {{ success: boolean, error?: string }}
+ * @param {object} options — { reason?: string, startTime?: string, endTime?: string }
+ * @param {() => Promise<{ skip?: boolean, reason?: string }>} [preSubmitGuard]
+ * @param {{ employeeId?: string|null, companyId?: string|null }} [expectedIntent]
+ * @returns {{ success: boolean, error?: string, skipped?: boolean, reason?: string }}
  */
-export async function submitLeaveRequest(bot, type, date, options = {}) {
-  const freeeType =
-    APPROVAL_TYPE_MAP[type] || `ApprovalRequest::${type}`;
-  const formUrl = `https://p.secure.freee.co.jp/approval_requests#/requests/new?type=${freeeType}&target_date=${date}`;
-  console.log(
-    chalk.blue(`[Bot] Navigating to leave request form: ${formUrl}`),
-  );
+export async function submitLeaveRequest(
+  bot,
+  type,
+  date,
+  options = {},
+  preSubmitGuard = null,
+  expectedIntent = {},
+) {
+  const freeeType = approvalTypeFor(type);
+  if (!freeeType) {
+    const error = new Error("Unsupported freee Web approval request type.");
+    error.code = "WEB_FORM_TYPE_UNSUPPORTED";
+    throw error;
+  }
+  if (
+    type === "SpecialHoliday" ||
+    (type === "PaidHoliday" && options.holidayType && options.holidayType !== "full")
+  ) {
+    const error = new Error(
+      "The requested leave fields cannot be confirmed in freee Web automation.",
+    );
+    error.code = "WEB_FORM_FIELDS_UNSUPPORTED";
+    throw error;
+  }
+  const params = new URLSearchParams({ type: freeeType, target_date: date });
+  const formUrl = `https://p.secure.freee.co.jp/approval_requests#/requests/new?${params}`;
+  console.log("[Bot] Navigating to leave request form");
 
-  await bot.navigateToSpaForm(formUrl, { finalWaitMs: 4000 });
+  await bot.navigateToSpaForm(formUrl);
 
   // Wait for date input to appear
   const dateInput = bot.page.locator("#approval-request-fields-date");
@@ -431,86 +840,124 @@ export async function submitLeaveRequest(bot, type, date, options = {}) {
     formUrl,
     { debugPrefix: `leave-${type}-${date}` },
   );
+  assertApprovalFormTarget(
+    await observeApprovalFormTarget(bot.page, dateInput),
+    freeeType,
+    date,
+  );
+
+  const requiredFields = [];
 
   // Fill time fields if provided (for OvertimeWork, PaidHoliday half/hour)
   if (options.startTime) {
     const startInput = bot.page.locator(
       "#approval-request-fields-started-at",
     );
-    if ((await startInput.count()) > 0) {
-      await startInput.click();
-      await bot.page.waitForTimeout(200);
-      await startInput.fill(options.startTime);
-      await bot.page.keyboard.press("Tab");
-      await bot.page.waitForTimeout(200);
-    }
+    await fillAndConfirmFormField(bot, startInput, options.startTime, { tab: true });
+    requiredFields.push([startInput, options.startTime]);
   }
   if (options.endTime) {
     const endInput = bot.page.locator("#approval-request-fields-end-at");
-    if ((await endInput.count()) > 0) {
-      await endInput.click();
-      await bot.page.waitForTimeout(200);
-      await endInput.fill(options.endTime);
-      await bot.page.keyboard.press("Tab");
-      await bot.page.waitForTimeout(200);
-    }
+    await fillAndConfirmFormField(bot, endInput, options.endTime, { tab: true });
+    requiredFields.push([endInput, options.endTime]);
   }
 
   // Fill reason if provided
   if (options.reason) {
     const reasonInput = bot.page.locator('[data-testid="申請理由"]');
-    if ((await reasonInput.count()) > 0) {
-      await reasonInput.click();
-      await bot.page.waitForTimeout(200);
-      await reasonInput.fill(options.reason);
-      await bot.page.waitForTimeout(200);
-    }
+    await fillAndConfirmFormField(bot, reasonInput, options.reason);
+    requiredFields.push([reasonInput, options.reason]);
   }
 
   // Select approval route if available
   const routeSelect = bot.page.locator("#approval-request-fields-route-id");
-  if ((await routeSelect.count()) > 0 && options.routeId) {
-    await routeSelect.selectOption(String(options.routeId));
+  if (options.routeId) {
+    await requireSingleFormField(routeSelect);
+    const selected = await routeSelect.selectOption(String(options.routeId));
+    if (!selected.includes(String(options.routeId))) {
+      const error = new Error("freee Web approval route selection could not be confirmed.");
+      error.code = "WEB_APPROVER_SELECTION_REQUIRED";
+      throw error;
+    }
     await bot.page.waitForTimeout(300);
+    requiredFields.push([routeSelect, String(options.routeId)]);
   }
 
-  // Select approver if needed
+  // Selecting an arbitrary first approver is unsafe. API-provided approver IDs
+  // cannot be verified against this custom combobox without a stable DOM contract.
   if (options.approverId) {
-    const approverInput = bot.page.locator(
-      "#approval-request-fields-approver_id",
-    );
-    if ((await approverInput.count()) > 0) {
-      await approverInput.click();
-      await bot.page.waitForTimeout(500);
-      await approverInput.fill("");
-      await bot.page.waitForTimeout(500);
-      // Select first option from the dropdown
-      const listboxId = await approverInput.getAttribute("aria-controls");
-      if (listboxId) {
-        const firstOption = bot.page
-          .locator(`#${listboxId} [role="option"]`)
-          .first();
-        if ((await firstOption.count()) > 0) {
-          await firstOption.click();
-          await bot.page.waitForTimeout(300);
-        }
-      }
-    }
+    const error = new Error("freee Web approver selection could not be confirmed.");
+    error.code = "WEB_APPROVER_SELECTION_REQUIRED";
+    throw error;
+  }
+
+  assertApprovalFormTarget(
+    await observeApprovalFormTarget(bot.page, dateInput),
+    freeeType,
+    date,
+  );
+  for (const [field, expected] of requiredFields) {
+    await assertFormFieldValue(field, expected);
   }
 
   const screenshots = bot.takeScreenshots(`leave-${type}-${date}`);
   await screenshots.before();
 
   // Submit
-  console.log(chalk.blue(`[Bot] Submitting ${type} leave for ${date}...`));
+  console.log(`[Bot] Submitting ${type} leave request`);
   const submitBtn = bot.page
     .locator('button[type="submit"]')
     .filter({ hasText: "申請" });
   if ((await submitBtn.count()) === 0) {
     throw new Error("Submit button not found");
   }
-  await submitBtn.click();
-  await bot.page.waitForTimeout(5000);
+  const preSubmitUrl = bot.page.url();
+  if (typeof preSubmitGuard !== 'function') {
+    const error = new Error('The Web leave pre-submit guard is unavailable.');
+    error.code = 'WEB_WORK_RECORD_UNCONFIRMED';
+    throw error;
+  }
+  assertApprovalFormTarget(
+    await observeApprovalFormTarget(bot.page, dateInput),
+    freeeType,
+    date,
+  );
+  for (const [field, expected] of requiredFields) {
+    await assertFormFieldValue(field, expected);
+  }
+  requireMutationDispatchGuard(bot);
+  try {
+    await bot.dispatchGuardedMutation(submitBtn, {
+      validateRequest: (request) => assertApprovalMutationRequest(request, {
+        requestType: freeeType,
+        date,
+        employeeId: expectedIntent.employeeId ?? null,
+        companyId: expectedIntent.companyId ?? null,
+      }),
+      beforeDispatch: async () => {
+        const guardResult = await preSubmitGuard();
+        if (guardResult?.skip === true) {
+          const error = new Error("The leave request is no longer eligible for submission.");
+          error.code = WEB_LEAVE_MUTATION_SKIPPED;
+          error.disposition = {
+            skip: true,
+            reason: guardResult.reason || "already_non_working_day",
+          };
+          throw error;
+        }
+      },
+    });
+  } catch (error) {
+    if (error?.code !== WEB_LEAVE_MUTATION_SKIPPED) throw error;
+    return {
+      success: true,
+      skipped: true,
+      reason: error.disposition.reason,
+    };
+  }
+  const submissionOutcome = await waitForSubmissionOutcome(bot, preSubmitUrl, {
+    targetConfirmed: true,
+  });
 
   await screenshots.after();
 
@@ -520,9 +967,9 @@ export async function submitLeaveRequest(bot, type, date, options = {}) {
     return { success: false, error: result.error };
   }
 
-  console.log(
-    chalk.green(`[Bot] Leave request submitted: ${type} for ${date}`),
-  );
+  assertSubmissionConfirmed(submissionOutcome);
+
+  console.log(`[Bot] ${type} leave request submitted`);
   return { success: true };
 }
 
@@ -533,24 +980,40 @@ export async function submitLeaveRequest(bot, type, date, options = {}) {
  * @param {import('./punch-bot.js').PunchBot} bot
  * @param {string} type — freee type e.g. 'PaidHoliday', 'WorkTime', 'OvertimeWork'
  * @param {string|number} requestId — freee approval request ID
+ * @param {{ employeeId?: string|null, companyId?: string|null }} [expectedIntent]
  * @returns {{ success: boolean, error?: string }}
  */
-export async function withdrawApprovalRequest(bot, type, requestId) {
-  const freeeType =
-    APPROVAL_TYPE_MAP[type] || `ApprovalRequest::${type}`;
-  const detailUrl = `https://p.secure.freee.co.jp/approval_requests#requests/${requestId}?type=${encodeURIComponent(freeeType)}`;
-  console.log(
-    chalk.blue(`[Bot] Navigating to approval request detail: ${detailUrl}`),
-  );
+export async function withdrawApprovalRequest(
+  bot,
+  type,
+  requestId,
+  expectedIntent = {},
+) {
+  const freeeType = approvalTypeFor(type);
+  const normalizedRequestId = String(requestId || "").trim();
+  if (!freeeType) {
+    const error = new Error("Unsupported freee Web approval request type.");
+    error.code = "WEB_FORM_TYPE_UNSUPPORTED";
+    throw error;
+  }
+  if (!/^\d+$/.test(normalizedRequestId)) {
+    const error = new Error("freee Web approval request target could not be confirmed.");
+    error.code = "WEB_FORM_TARGET_MISMATCH";
+    throw error;
+  }
+  const detailUrl = `https://p.secure.freee.co.jp/approval_requests#requests/${normalizedRequestId}?type=${encodeURIComponent(freeeType)}`;
+  console.log("[Bot] Navigating to approval request detail");
 
-  await bot.navigateToSpaForm(detailUrl, {
-    finalWaitMs: 4000,
-    useLocationHref: true,
-  });
+  await bot.navigateToSpaForm(detailUrl, { useLocationHref: true });
 
-  // Wait for detail page — look for withdraw button text or request status
+  const withdrawBtn = bot.page
+    .locator("button, a")
+    .filter({ hasText: /^\s*(?:取り下げ|取下げ|取り下げる|取下げる)\s*$/ });
+
+  // A rendered status may be present even when withdrawal is no longer available.
   await bot.waitForElement(
     async () => {
+      if ((await withdrawBtn.count()) > 0) return true;
       const bodyText = await bot.page
         .evaluate(() => document.body.innerText.substring(0, 3000))
         .catch(() => "");
@@ -565,33 +1028,25 @@ export async function withdrawApprovalRequest(bot, type, requestId) {
     { debugPrefix: `withdraw-${type}-${requestId}` },
   );
 
+  const preWithdrawTarget = await observeWithdrawalTarget(bot.page, withdrawBtn);
+  if (preWithdrawTarget.actionCount > 0) {
+    assertWithdrawalTarget(
+      preWithdrawTarget,
+      normalizedRequestId,
+      freeeType,
+      { requireAction: true },
+    );
+  } else {
+    assertWithdrawalTarget(preWithdrawTarget, normalizedRequestId, freeeType);
+  }
+
   const screenshots = bot.takeScreenshots(
     `withdraw-${type}-${requestId}`,
   );
   const beforePath = await screenshots.before();
 
-  // Find and click the 取下げ button
-  let withdrawBtn = bot.page
-    .locator("button")
-    .filter({ hasText: "取り下げ" });
   if ((await withdrawBtn.count()) === 0) {
-    withdrawBtn = bot.page.locator("button").filter({ hasText: "取下げ" });
-  }
-  if ((await withdrawBtn.count()) === 0) {
-    withdrawBtn = bot.page
-      .locator("a, button")
-      .filter({ hasText: /取り?下げ/ });
-  }
-
-  if ((await withdrawBtn.count()) === 0) {
-    const bodyText = await bot.page
-      .evaluate(() => document.body.innerText.substring(0, 2000))
-      .catch(() => "");
-    console.log(
-      chalk.red(
-        `[Bot] Withdraw button not found. Page text: ${bodyText.substring(0, 300)}`,
-      ),
-    );
+    console.log("[Bot] Withdraw button not found");
     return {
       success: false,
       error: "Withdraw button (取下げ) not found on page",
@@ -599,19 +1054,46 @@ export async function withdrawApprovalRequest(bot, type, requestId) {
     };
   }
 
-  console.log(chalk.blue(`[Bot] Clicking withdraw button...`));
-  await withdrawBtn.first().click();
-  await bot.page.waitForTimeout(2000);
-
-  // Handle confirmation dialog
+  console.log(`[Bot] Clicking withdraw button...`);
+  const preWithdrawUrl = bot.page.url();
   const confirmBtn = bot.page
-    .locator("button")
+    .locator('[role="dialog"] button, [aria-modal="true"] button')
     .filter({ hasText: /^(OK|はい|確認|取り下げ(する|る)?|取下げ)$/ });
-  if ((await confirmBtn.count()) > 0) {
-    console.log(chalk.blue(`[Bot] Clicking confirm button in dialog...`));
-    await confirmBtn.first().click();
-    await bot.page.waitForTimeout(3000);
-  }
+  requireMutationDispatchGuard(bot);
+  await bot.dispatchGuardedMutation({
+    click: async () => {
+      await withdrawBtn.first().click();
+      await confirmBtn.first().waitFor({ state: "visible", timeout: 3_000 }).catch(() => {});
+      if ((await confirmBtn.count()) === 0) return;
+      assertWithdrawalTarget(
+        await observeWithdrawalTarget(bot.page, confirmBtn),
+        normalizedRequestId,
+        freeeType,
+        { requireAction: true },
+      );
+      console.log(`[Bot] Clicking confirm button in dialog...`);
+      await confirmBtn.first().click();
+    },
+  }, {
+    validateRequest: (request) => assertApprovalWithdrawalMutationRequest(
+      request,
+      {
+        requestId: normalizedRequestId,
+        requestType: freeeType,
+        employeeId: expectedIntent.employeeId ?? null,
+        companyId: expectedIntent.companyId ?? null,
+      },
+    ),
+  });
+  const submissionOutcome = await waitForSubmissionOutcome(bot, preWithdrawUrl, {
+    successIndicators: [
+      "取り下げました",
+      "取下げました",
+      "取り下げ済み",
+      "取下げ済み",
+    ],
+    includeDefaultSuccessIndicators: false,
+  });
 
   const afterPath = await screenshots.after();
 
@@ -620,7 +1102,7 @@ export async function withdrawApprovalRequest(bot, type, requestId) {
     extraIndicators: ["取り下げできません", "削除できない"],
   });
   if (!result.success) {
-    console.log(chalk.red(`[Bot] Withdrawal failed: ${result.error}`));
+    console.log(`[Bot] Withdrawal failed: ${result.error}`);
     return {
       success: false,
       error: result.error,
@@ -629,11 +1111,15 @@ export async function withdrawApprovalRequest(bot, type, requestId) {
     };
   }
 
-  console.log(
-    chalk.green(
-      `[Bot] Approval request ${type}-${requestId} withdrawn successfully`,
-    ),
+  assertWithdrawalTarget(
+    await observeWithdrawalTarget(bot.page),
+    normalizedRequestId,
+    freeeType,
   );
+  submissionOutcome.targetConfirmed = true;
+  assertSubmissionConfirmed(submissionOutcome);
+
+  console.log("[Bot] Approval request withdrawn successfully");
   return {
     success: true,
     screenshotBefore: beforePath,
@@ -652,13 +1138,17 @@ export async function withdrawApprovalRequest(bot, type, requestId) {
  * @param {import('./punch-bot.js').PunchBot} bot
  * @param {number|string} year — e.g. 2026
  * @param {number|string} month — e.g. 2
+ * @param {{ employeeId?: string|null, companyId?: string|null }} [expectedIntent]
  * @returns {{ success: boolean, screenshotBefore: string, screenshotAfter: string }}
  */
-export async function submitMonthlyClosingWeb(bot, year, month) {
+export async function submitMonthlyClosingWeb(
+  bot,
+  year,
+  month,
+  expectedIntent = {},
+) {
   const formUrl = `https://p.secure.freee.co.jp/approval_requests#/requests/new?type=ApprovalRequest::MonthlyAttendance&target_year=${year}&target_month=${month}`;
-  console.log(
-    chalk.blue(`[Bot] Navigating to monthly closing form: ${formUrl}`),
-  );
+  console.log("[Bot] Navigating to monthly closing form");
 
   await bot.navigateToSpaForm(formUrl);
 
@@ -671,57 +1161,51 @@ export async function submitMonthlyClosingWeb(bot, year, month) {
     formUrl,
     { debugPrefix: `monthly-closing-${year}-${month}` },
   );
+  assertMonthlyClosingRoute(bot.page.url(), year, month);
+  assertMonthlyClosingTarget(
+    await observeMonthlyClosingTarget(bot.page),
+    year,
+    month,
+  );
 
   const screenshots = bot.takeScreenshots(
     `monthly-closing-${year}-${month}`,
   );
   const beforePath = await screenshots.before();
 
-  console.log(
-    chalk.blue(
-      `[Bot] Clicking 申請 button for ${year}-${month} monthly closing`,
-    ),
-  );
-  await submitBtn.click();
-  await bot.page.waitForTimeout(3000);
+  console.log("[Bot] Submitting monthly attendance closing");
+  const preSubmitUrl = bot.page.url();
+  requireMutationDispatchGuard(bot);
+  await bot.dispatchGuardedMutation(submitBtn, {
+    validateRequest: (request) => assertMonthlyClosingMutationRequest(request, {
+      year,
+      month,
+      employeeId: expectedIntent.employeeId ?? null,
+      companyId: expectedIntent.companyId ?? null,
+    }),
+  });
+  const submissionOutcome = await waitForSubmissionOutcome(bot, preSubmitUrl, {
+    acceptedIndicators: [FREEE_ERROR_MESSAGES.MONTHLY_CLOSING_ALREADY_SUBMITTED],
+    targetConfirmed: true,
+  });
 
   const afterPath = await screenshots.after();
 
-  // If still on the form page, check whether freee blocked it as duplicate
-  const finalUrl = bot.page.url();
-  if (finalUrl.includes("/requests/new")) {
-    const bodyText = await bot.page
-      .evaluate(() => document.body.innerText.substring(0, 2000))
-      .catch(() => "");
+  assertSubmissionConfirmed(submissionOutcome, { allowAccepted: true });
 
-    if (
-      bodyText.includes(
-        FREEE_ERROR_MESSAGES.MONTHLY_CLOSING_ALREADY_SUBMITTED,
-      )
-    ) {
-      console.log(
-        chalk.green(
-          `[Bot] Monthly closing already exists for ${year}-${month} — treating as success (already_submitted)`,
-        ),
-      );
-      return {
-        success: true,
-        alreadySubmitted: true,
-        screenshotBefore: beforePath,
-        screenshotAfter: afterPath,
-      };
-    }
-
-    throw new Error(
-      `Monthly closing submission may have failed — still on form page. Content: ${bodyText.substring(0, 200)}`,
+  if (submissionOutcome.acceptedIndicator) {
+    console.log(
+      "[Bot] Monthly closing already exists; treating as success",
     );
+    return {
+      success: true,
+      alreadySubmitted: true,
+      screenshotBefore: beforePath,
+      screenshotAfter: afterPath,
+    };
   }
 
-  console.log(
-    chalk.green(
-      `[Bot] Monthly closing submitted successfully for ${year}-${month}`,
-    ),
-  );
+  console.log("[Bot] Monthly closing submitted successfully");
   return {
     success: true,
     alreadySubmitted: false,

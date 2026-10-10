@@ -4,7 +4,7 @@ import { Card, Switch, Alert, Typography, Space } from 'antd';
 import { BugOutlined } from '@ant-design/icons';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { toggleDebug } from '../../store/configSlice';
-import { notifySuccess } from '../../utils/notify';
+import { notifySuccess, notifyError } from '../../utils/notify';
 
 const { Title } = Typography;
 
@@ -14,8 +14,12 @@ const MockModeCard: React.FC = () => {
   const { debugMode, autoEnabled } = useAppSelector((state) => state.config);
 
   const handleToggle = async () => {
-    await dispatch(toggleDebug());
-    notifySuccess(debugMode ? t('settings.mockDisabled') : t('settings.mockEnabled'));
+    try {
+      const result = await dispatch(toggleDebug()).unwrap();
+      notifySuccess(result.debug_mode ? t('settings.mockEnabled') : t('settings.mockDisabled'));
+    } catch {
+      notifyError(t('common.error'));
+    }
   };
 
   return (

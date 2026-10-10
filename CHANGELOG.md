@@ -5,6 +5,84 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-10
+
+### Fixed
+- Restored automatic skipping for approved full-day leave returned through freee's current `paid_holidays` work-record schema, including numeric special leave and combined leave entries.
+- Re-checked approved leave immediately before each scheduled action through the Public API when available or the authenticated Web attendance view in Browser-only deployments.
+- Made Web punches and forms fail closed unless login, company, attendance state, server-side punch writes, target dates, and form submission outcomes can be positively confirmed, including a final target-date record check immediately before leave submission.
+- Prevented a stale Chromium disconnect event from invalidating a newer browser process.
+- Rejected malformed approval request identifiers before starting batch withdrawal work.
+- Limited approval withdrawal to the current user's own cancellable requests and stopped when request details could not be confirmed.
+- Prevented duplicate leave and work-time correction submissions when a matching request for the same type and date is already pending.
+- Stopped unclassified Public API client errors from triggering a Web write fallback.
+- Kept dashboard status and attendance logs isolated to the initiating company, including manual actions that finish during an account change, and bounded log pagination inputs.
+- Rechecked scheduler authorization at the final API dispatch boundary, including after state queries and token refresh, while keeping cancelled pre-dispatch actions eligible for the updated schedule.
+- Paused Browser-mode schedules until the configured freee employee identity is verified, including existing installations upgraded to this release.
+- Bounded browser cleanup and terminated the service if Chromium could not be stopped safely after an operation timeout.
+- Paused automatic actions when freee work-record or time-clock fields do not match a supported response schema instead of treating malformed data as an empty working day.
+- Matched existing special leave by its exact setting and full-day unit before treating a request as already completed.
+- Bound approval and cancellation decisions and success to the expected request identity, company, actor, type, status, action log, and current authoritative read-back.
+- Persisted each historical correction result before processing the next date so completed entries remain auditable after interruption.
+- Used the configured Tokyo calendar date for attendance capability and correction-strategy probes around UTC day boundaries.
+- Ran a just-past check-in immediately when startup analysis keeps it inside the existing five-minute grace window instead of discarding it as an ordinary past-due action.
+
+### Security
+- Stored one-way hashes instead of reusable session tokens and transparently migrated active legacy sessions.
+- Equalized password-hash verification for known and unknown usernames to reduce login account-enumeration timing signals.
+- Replaced the shared default administrator password with a high-entropy one-time keystore bootstrap that is removed after first password change.
+- Disabled browser screenshots by default, protected opt-in screenshot access, and removed credential-page captures and raw page text from browser errors.
+- Restricted screenshot retention cleanup to a private, explicitly claimed PunchPilot directory and refused unrecognized shared-directory content.
+- Tightened AES-GCM input validation, authentication-tag handling, application-secret validation, and keystore permissions.
+- Enforced private ownership and permissions for the SQLite database, WAL, SHM, and data directory, and rejected symbolic-link database paths.
+- Moved OAuth popup behavior to a CSP-compatible external script.
+- Anchored OAuth callbacks and state-changing request checks to a configured canonical public origin, required an application marker for cookie-authenticated writes without browser metadata, rejected insecure external origins, and marked authenticated screenshot responses as private and non-cacheable.
+- Derived Secure session cookies and HSTS from the validated canonical HTTPS origin so TLS-terminating proxy deployments do not depend on untrusted forwarded-protocol headers.
+- Sanitized browser, API, and release errors to use stable failure codes without exposing upstream page content or local paths.
+- Validated configuration input types, rejected incomplete or duplicate OAuth company and employee identities, and retained only the minimum OAuth company metadata needed by the application.
+- Blocked dependency lifecycle scripts during installation and verified the bundled `better-sqlite3` N-API addon without an install-time rebuild.
+- Bound API-to-Web mutations to an immutable OAuth company and employee snapshot, validated intercepted punch, leave, correction, withdrawal, and monthly-closing requests against the intended action, request ID, date, year, month, and identity at dispatch, rechecked the selected company immediately before final writes, and rejected ambiguous or changed identities.
+- Restricted the Chromium child process to browser runtime environment variables instead of inheriting application credentials and encryption secrets.
+- Serialized OAuth token refreshes and rejected stale refresh writes or conflicting persisted company selections.
+- Hardened public release integrity checks to bind artifacts to an exact reviewed commit and annotated tag, rebuild and scan images before publication, and reject stale vulnerability exceptions.
+- Enabled Chromium namespace/seccomp sandboxing in the standard Compose deployment with a pinned Playwright profile, minimal startup capabilities, and `no-new-privileges`.
+- Updated the pinned Chromium seccomp profile for current Node.js and `runc` process and procfs handling while retaining capability drops and `no-new-privileges`.
+- Rejected zero or invalid container user IDs and verified the runtime privilege drop.
+- Bound Browser-only automation to a verified freee employee identity instead of relying on company name alone.
+- Derived stable, one-way log partitions from the installation key so reauthorization preserves the same account history without exposing account identifiers or mixing histories across accounts.
+- Expanded public-release privacy checks across reachable commit history and metadata to cover quoted configuration and HTTP credentials, local home paths including value-terminating paths, private network data, forbidden hosts, and unclassified hexadecimal credentials from 32 characters without echoing blocked content.
+- Made public promotion carry the exporter's filtered tree (`exportedTree`) and provenance record, while keeping source-only commit history outside the public lineage.
+- Bound source CI authority checks to exact successful Gitea Actions runs and jobs when synthetic status-creator metadata is unavailable.
+- Enforced a seven-day dependency release-age gate from immutable npm tarball metadata, with exact and time-bounded exceptions restricted to public security advisories.
+- Updated the runtime SQLite library to `libsqlite3-0` 3.53.4-2 with architecture-specific checksum pins.
+- Hardened unfixed Debian `perl-base` and `libxml2` exposure by removing unused Perl interpreter entrypoints, guarding every browser context, enforcing bounded Web-operation deadlines, and measuring disconnect recovery in the final image.
+- Replaced the count-based security lint allowance with an exact tool-, configuration-, and whole-source-context-bound finding baseline that disallows source-level lint overrides and rejects new, removed, changed, or high-confidence findings.
+- Updated the checksum-pinned Trivy scanner to 0.75.0, including go-getter 1.8.9's removal of special permission bits when extracting the vulnerability database and built-in checks archives.
+- Separated public platform reads from publication writes, compared shared protection fields without volatile API metadata, and required administrator bypass to be explicitly disabled.
+- Removed the expired npm release-age exception after its package passed the normal seven-day eligibility window.
+
+### Changed
+- Standardized local development, CI, and container builds on Node.js 24.21 LTS and npm 12.2, retaining the Node 24.15+ compatibility floor and install-time script restrictions.
+- Updated the scheduler runtime to `node-cron` 4.6.0.
+- Updated build tooling to Vite 8.3.2, TypeScript 7.0.2, and `es-module-lexer` 3.0.2; removed the direct Rolldown override so Vite owns its compatible bundler dependencies.
+- Updated client dependencies to Redux Toolkit 2.13.0, i18next 26.4.2, react-i18next 17.0.15, React Router 8.4.0, React 19.3, and `@types/node` 24.19.0; replaced Axios with the shared native Fetch client.
+- Updated test tooling to Vitest 5.0.3 and `@vitest/coverage-v8` 5.0.3, with test files running in parallel by default, and upgraded `eslint-plugin-security` to 4.2.0.
+- Reused the checksum-verified Node installer across both forges, removed `actions/setup-node`, and pinned the reviewed security updates Buildx 0.37.2 and BuildKit 0.33.1 alongside QEMU 10.2.3 and Trivy 0.75.0; prepared public CI for Ubuntu 26.04 LTS on both architectures.
+- Consolidated installation paths, calendar dates, schedule parameters, account identities, freee response contracts, and persisted task checkpoints into shared modules; removed unused Chalk and dotenv dependencies.
+- Reused the Chromium process and in-memory Web session across nearby serialized operations, removed artificial slow motion from the core punch flow, and added bounded queue and operation deadlines.
+- Replaced fixed post-submit browser delays with bounded state-based waits for correction, leave, withdrawal, and monthly closing forms.
+- Added coordinated graceful shutdown that stops new work and drains in-flight scheduler, browser, batch, account, and HTTP operations before the container exits.
+- Removed non-atomic sequential time-clock writes from historical batch correction; corrections now use direct updates, approval requests, or verified Web forms.
+- Installed only Chromium Headless Shell for headless automation to reduce image and CI download weight.
+- Split server/browser dependencies from the client build so unchanged Chromium and native dependency layers are reused across ordinary source and UI image builds.
+- Refreshed final runtime OS packages on every container CI and release build while retaining dependency and Chromium build caches.
+- Validated release candidates with privacy, dependency, test, E2E, security, and amd64/arm64 container checks, using target-architecture BuildKit evidence for emulated source builds and native arm64 browser verification before public publishing.
+- Scoped routine pull-request Docker validation to Linux amd64 while keeping published images multi-architecture.
+- Required every Docker Node base stage to match the reviewed local and CI runtime version so automated image updates cannot silently downgrade the application runtime.
+- Configured routine dependency updates with a seven-day release-age buffer while keeping vulnerability alerts and security updates immediate and isolated.
+- Split version-update grouping by runtime, build, test, and lint toolchains so unrelated release-age checks do not hold back eligible updates.
+- Aligned source-tag validation with the separate public promotion lineage while retaining full history scans for public updates.
+
 ## [0.4.14] - 2026-07-01
 
 ### Fixed
@@ -41,8 +119,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Disabled Docker Buildx build-record uploads in CI and release workflows.
-- Updated repository ignore rules for local runtime output.
-- Refined auxiliary test helper selectors.
 
 ## [0.4.10] - 2026-05-17
 

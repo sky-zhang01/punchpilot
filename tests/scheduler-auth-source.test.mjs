@@ -15,19 +15,19 @@ describe('scheduler auth failure guardrails', () => {
   const publicApiSrc = fs.readFileSync(path.join(PROJECT_ROOT, 'server', 'automation', 'public-api.js'), 'utf8');
 
   it('keeps auth failure code visible to scheduler decisions', () => {
-    expect(publicApiSrc).toContain('errorCode: error.code || null');
+    expect(publicApiSrc).toContain('errorCode: failure.code');
     expect(schedulerSrc).toContain("resultErrorCode(result) === FREEE_AUTH_ERROR_CODES.AUTH_REQUIRED");
     expect(schedulerSrc).toContain("resultErrorCode(result) === FREEE_AUTH_ERROR_CODES.AUTH_TRANSIENT");
   });
 
   it('does not mark failed scheduled actions as executed unconditionally', () => {
-    expect(schedulerSrc).toContain("markDailyScheduleExecuted(today, actionType, 'success'");
+    expect(schedulerSrc).toContain("this.markTerminalAction(today, actionType, 'success'");
     expect(schedulerSrc).toContain("updateDailyScheduleStatus(today, actionType, 'failure'");
-    expect(schedulerSrc).not.toContain('markDailyScheduleExecuted(today, actionType);\n');
+    expect(schedulerSrc).not.toContain("this.markTerminalAction(today, actionType, 'failure'");
   });
 
   it('records the smart-schedule unknown fall-through as an execution log', () => {
-    expect(schedulerSrc).toContain('recordSmartScheduleSkip(plan)');
+    expect(schedulerSrc).toContain('recordSmartScheduleSkip(plan, context)');
     expect(schedulerSrc).toContain("action_type: 'daily_resolution'");
     expect(schedulerSrc).toContain("trigger_type: 'scheduler'");
   });

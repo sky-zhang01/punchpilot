@@ -3,12 +3,76 @@ import { FreeeApiClient } from "../../freee-api.js";
 import {
   log,
   sanitizeError,
-  toFreeeTime,
   requireOAuth,
-  findAttendanceRouteId,
+  findAttendanceRouteIds,
 } from "./utils.js";
+import { safeErrorMetadata } from "../../logger.js";
+import { todayStringInTz } from "../../timezone.js";
+import {
+  getWorkRecordLeaveCoverage,
+  getWorkRecordNonWorkingDayStatus,
+  isEditableWorkRecord,
+} from "../../work-record-status.js";
 
 const router = Router();
+
+function parseYearMonth(rawYear, rawMonth) {
+  if (
+    !/^\d{4}$/.test(String(rawYear || "")) ||
+    !/^(?:[1-9]|1[0-2])$/.test(String(rawMonth || ""))
+  ) {
+    return null;
+  }
+  const year = Number(rawYear);
+  const month = Number(rawMonth);
+  return year >= 2000 && year <= 2100 ? { year, month } : null;
+}
+
+function numericValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+export function mapWorkRecordForClient(record) {
+  const source = record && typeof record === "object" ? record : {};
+  const nonWorking = getWorkRecordNonWorkingDayStatus(source);
+  const leave = getWorkRecordLeaveCoverage(source);
+  const paidHolidayDays = Array.isArray(source.paid_holidays)
+    ? source.paid_holidays.reduce(
+      (total, entry) => total + Math.max(0, numericValue(entry?.days)),
+      0,
+    )
+    : 0;
+  const breakRecords = Array.isArray(source.break_records)
+    ? source.break_records
+    : [];
+
+  return {
+    date: source.date,
+    clock_in: source.clock_in_at || null,
+    clock_out: source.clock_out_at || null,
+    day_pattern: source.day_pattern || "normal_day",
+    schedule_pattern: source.schedule_pattern || "",
+    is_holiday:
+      source.day_pattern === "prescribed_holiday" ||
+      source.day_pattern === "legal_holiday",
+    is_absence: source.is_absence === true,
+    is_editable: source.is_editable === true,
+    is_non_working_day: nonWorking.isNonWorkingDay,
+    non_working_day_code: nonWorking.code,
+    has_leave: leave.hasAnyLeave,
+    total_work_mins: numericValue(source.normal_work_mins),
+    total_overtime_mins: numericValue(source.total_overtime_work_mins),
+    lateness_mins: numericValue(source.lateness_mins),
+    early_leaving_mins: numericValue(source.early_leaving_mins),
+    paid_holiday: Math.max(numericValue(source.paid_holiday), paidHolidayDays),
+    note: typeof source.note === "string" ? source.note : "",
+    break_records: breakRecords.map((breakRecord) => ({
+      clock_in: breakRecord?.clock_in_at || null,
+      clock_out: breakRecord?.clock_out_at || null,
+    })),
+  };
+}
 
 // ===================================================================
 //  Capabilities Detection — universal, not company-specific
@@ -20,11 +84,7 @@ const router = Router();
  * Returns:
  *   direct_edit: boolean    — can PUT work records directly (is_editable based)
  *   approval: boolean       — has AttendanceWorkflow approval routes
- *   approval_route_id: number|null
- *   role: string            — user role in this company (self_only, company_admin, etc.)
- *
- * This lets the frontend dynamically show available options without
- * hardcoding assumptions about any particular company's setup.
+ *   approval_route_verified: boolean
  */
 router.get("/capabilities", async (req, res) => {
   const oauth = requireOAuth(res);
@@ -32,60 +92,40 @@ router.get("/capabilities", async (req, res) => {
   const { companyId, employeeId } = oauth;
 
   try {
-    const client = new FreeeApiClient();
+    const client = new FreeeApiClient({ identityBinding: oauth });
     await client.ensureValidToken();
 
-    // 1. Get user role
-    const userInfo = await client.apiRequest("GET", "/users/me");
-    const company = (userInfo.companies || []).find(
-      (c) => String(c.id) === String(companyId),
-    );
-    const role = company ? company.role : "unknown";
-
-    // 2. Check if approval routes exist
-    const routeId = await findAttendanceRouteId(client, companyId);
-
-    // 3. Probe whether the company actually allows employee direct PUT.
-    //    Some companies have "従業員による勤怠修正" disabled at company level,
-    //    meaning PUT always returns 400 regardless of is_editable flag.
-    //    We do a dry-run PUT with empty body to detect this.
-    let directEdit = true;
+    const routeInfo = await findAttendanceRouteIds(client, companyId);
+    const approval =
+      routeInfo.lookupVerified &&
+      !!(routeInfo.primaryRouteId || routeInfo.fallbackRouteId);
+    let directEdit = false;
     try {
-      // Try PUT today's record with minimal body — if company disables direct edit,
-      // this will return 400 with "勤怠修正が設定で無効"
-      const today = new Date().toISOString().slice(0, 10);
-      await client.apiRequest(
+      const today = todayStringInTz();
+      const record = await client.apiRequest(
         "GET",
         `/employees/${employeeId}/work_records/${today}?company_id=${companyId}`,
       );
-      // If GET works, try to check if PUT is allowed by examining the record's flags
-      // Actually, the safest detection is to let the batch endpoint handle fallback
-      // We'll just check the company role — self_only users at companies with approval
-      // workflows typically can't do direct PUT
+      directEdit = isEditableWorkRecord(record, today);
     } catch {
-      // GET failing is unusual, keep directEdit = true as default
-    }
-    // Better approach: if the company HAS an approval route AND role is self_only,
-    // direct edit is likely disabled. But we can't be 100% sure without trying PUT.
-    // We let capabilities report it, and the batch endpoint does auto-fallback.
-    if (routeId && role === "self_only") {
-      directEdit = false; // Conservative: companies with approval + self_only likely need approval
+      directEdit = false;
     }
 
-    log.info(
-      `Capabilities for company ${companyId}: role=${role}, approval=${!!routeId}, direct=${directEdit}`,
-    );
+    log.info("Attendance capabilities detected", {
+      approval,
+      approvalRouteVerified: routeInfo.lookupVerified,
+      directEdit,
+    });
 
     res.json({
       direct_edit: directEdit,
-      approval: !!routeId,
-      approval_route_id: routeId,
-      role,
-      company_name: company ? company.name : null,
-      display_name: company ? company.display_name : null,
+      approval,
+      approval_route_verified: routeInfo.lookupVerified,
     });
   } catch (err) {
-    log.error(`Failed to detect capabilities: ${err.message}`);
+    log.error("Failed to detect capabilities", {
+      error: safeErrorMetadata(err),
+    });
     res.status(500).json({ error: sanitizeError(err) });
   }
 });
@@ -105,8 +145,9 @@ router.get("/capabilities", async (req, res) => {
  */
 router.get("/records", async (req, res) => {
   const { year, month } = req.query;
-  if (!year || !month) {
-    return res.status(400).json({ error: "year and month are required" });
+  const target = parseYearMonth(year, month);
+  if (!target) {
+    return res.status(400).json({ error: "valid year and month are required" });
   }
 
   const oauth = requireOAuth(res);
@@ -114,11 +155,10 @@ router.get("/records", async (req, res) => {
   const { companyId, employeeId } = oauth;
 
   try {
-    const client = new FreeeApiClient();
+    const client = new FreeeApiClient({ identityBinding: oauth });
     await client.ensureValidToken();
 
-    const y = parseInt(year, 10);
-    const m = parseInt(month, 10);
+    const { year: y, month: m } = target;
     const targetStartDate = `${y}-${String(m).padStart(2, "0")}-01`;
 
     log.info(
@@ -155,37 +195,23 @@ router.get("/records", async (req, res) => {
           break;
         }
       } catch (err) {
-        log.debug(`Period probe ${tryYear}/${tryM} failed: ${err.message}`);
+        log.debug(`Period probe ${tryYear}/${tryM} failed`, {
+          error: safeErrorMetadata(err),
+        });
       }
     }
 
     if (!data) {
       log.warn(`Could not find matching payroll period for ${y}-${m}`);
-      return res.json({ records: [], summary: null, year: y, month: m });
+      return res.status(502).json({ error: 'The requested payroll period could not be confirmed', code: 'WORK_RECORD_PERIOD_UNCONFIRMED' });
+    }
+
+    if (!Array.isArray(data.work_records)) {
+      return res.status(502).json({ error: 'Attendance records could not be confirmed', code: 'WORK_RECORD_RESPONSE_INVALID' });
     }
 
     // Extract daily records
-    const records = (data.work_records || []).map((record) => ({
-      date: record.date,
-      clock_in: record.clock_in_at || null,
-      clock_out: record.clock_out_at || null,
-      day_pattern: record.day_pattern || "normal_day",
-      is_holiday:
-        record.day_pattern === "prescribed_holiday" ||
-        record.day_pattern === "legal_holiday",
-      is_absence: record.is_absence || false,
-      is_editable: record.is_editable || false,
-      total_work_mins: record.normal_work_mins || 0,
-      total_overtime_mins: record.total_overtime_work_mins || 0,
-      lateness_mins: record.lateness_mins || 0,
-      early_leaving_mins: record.early_leaving_mins || 0,
-      paid_holiday: record.paid_holiday || 0,
-      note: record.note || "",
-      break_records: (record.break_records || []).map((br) => ({
-        clock_in: br.clock_in_at || null,
-        clock_out: br.clock_out_at || null,
-      })),
-    }));
+    const records = (data.work_records || []).map(mapWorkRecordForClient);
 
     // Extract monthly summary
     const summary = {
@@ -220,61 +246,7 @@ router.get("/records", async (req, res) => {
 
     res.json({ records, summary, year: y, month: m });
   } catch (err) {
-    log.error(`Failed to fetch records: ${err.message}`);
-    res.status(500).json({ error: sanitizeError(err) });
-  }
-});
-
-/**
- * PUT /api/attendance/records/:date - Update work record for a specific date (direct write)
- * Body: { clock_in_at, clock_out_at, break_records }
- * Times: ISO 8601 with timezone (e.g., 2026-02-02T09:00:00+09:00) or freee format
- *
- * This is the "direct write" mode — no approval needed.
- * Whether a date is editable depends on the company's settings (is_editable flag).
- */
-router.put("/records/:date", async (req, res) => {
-  const { date } = req.params;
-  const { clock_in_at, clock_out_at, break_records } = req.body;
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return res
-      .status(400)
-      .json({ error: "Invalid date format. Use YYYY-MM-DD." });
-  }
-
-  const oauth = requireOAuth(res);
-  if (!oauth) return;
-  const { companyId, employeeId } = oauth;
-
-  try {
-    const client = new FreeeApiClient();
-    await client.ensureValidToken();
-
-    const body = { company_id: parseInt(companyId, 10) };
-    if (clock_in_at) body.clock_in_at = toFreeeTime(clock_in_at, date);
-    if (clock_out_at) body.clock_out_at = toFreeeTime(clock_out_at, date);
-    if (break_records && break_records.length > 0) {
-      body.break_records = break_records.map((br) => ({
-        clock_in_at: toFreeeTime(br.clock_in_at, date),
-        clock_out_at: toFreeeTime(br.clock_out_at, date),
-      }));
-    }
-
-    log.info(
-      `Updating work record for ${date}: in=${body.clock_in_at}, out=${body.clock_out_at}`,
-    );
-
-    const result = await client.apiRequest(
-      "PUT",
-      `/employees/${employeeId}/work_records/${date}?company_id=${companyId}`,
-      body,
-    );
-
-    log.info(`Work record updated for ${date}`);
-    res.json({ success: true, date, result });
-  } catch (err) {
-    log.error(`Failed to update record for ${date}: ${err.message}`);
+    log.error("Failed to fetch records", { error: safeErrorMetadata(err) });
     res.status(500).json({ error: sanitizeError(err) });
   }
 });

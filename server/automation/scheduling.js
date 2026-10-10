@@ -95,8 +95,11 @@ export function determineActionsForToday(
 
   // --- Step 1: Derive data from punch records ---
 
+  const punchHistoryVerified = Array.isArray(todayPunchTimes);
+  const punchRecords = punchHistoryVerified ? todayPunchTimes : [];
+
   // Actions already completed today (from freee time_clocks)
-  const completedActions = new Set(todayPunchTimes.map((p) => p.type));
+  const completedActions = new Set(punchRecords.map((p) => p.type));
 
   // For re-checkin scenarios (checkout then checkin again), the effective state is
   // what matters — not historical completedActions. If currentState is 'working' but
@@ -104,7 +107,7 @@ export function determineActionsForToday(
   const isEffectivelyCheckedOut = currentState === FREEE_STATE.CHECKED_OUT;
 
   // Effective checkin time: last checkin record (supports re-checkin scenarios), or scheduled time
-  const checkinRecords = todayPunchTimes.filter((p) => p.type === "checkin");
+  const checkinRecords = punchRecords.filter((p) => p.type === "checkin");
   const lastCheckinRecord =
     checkinRecords.length > 0
       ? checkinRecords[checkinRecords.length - 1]
@@ -116,7 +119,13 @@ export function determineActionsForToday(
       : null;
 
   // Is this person effectively checked in? (either completed a checkin, or about to be checked in)
-  const hasCheckedIn = completedActions.has("checkin");
+  const hasCheckedIn =
+    completedActions.has("checkin") ||
+    [FREEE_STATE.WORKING, FREEE_STATE.ON_BREAK, FREEE_STATE.CHECKED_OUT].includes(
+      currentState,
+    );
+  const hasStartedBreak =
+    completedActions.has("break_start") || currentState === FREEE_STATE.ON_BREAK;
 
   // Expected work duration = scheduled checkout - effective checkin
   const checkoutMin = schedule.checkout ? toMin(schedule.checkout) : null;
@@ -151,9 +160,11 @@ export function determineActionsForToday(
   const willBeCheckedIn = result.execute.includes("checkin") || hasCheckedIn;
 
   // BREAK_START
-  if (completedActions.has("break_start")) {
+  if (hasStartedBreak) {
     result.skip.push("break_start");
   } else if (isEffectivelyCheckedOut) {
+    result.skip.push("break_start");
+  } else if (!punchHistoryVerified && currentState === FREEE_STATE.WORKING) {
     result.skip.push("break_start");
   } else if (!willBeCheckedIn) {
     // No checkin today → no break needed
@@ -170,21 +181,30 @@ export function determineActionsForToday(
     result.skip.push("break_end");
   } else if (isEffectivelyCheckedOut) {
     result.skip.push("break_end");
+  } else if (!punchHistoryVerified && currentState === FREEE_STATE.WORKING) {
+    result.skip.push("break_end");
   } else if (
     !result.execute.includes("break_start") &&
-    !completedActions.has("break_start")
+    !hasStartedBreak
   ) {
     // No break_start planned or completed → no break_end needed
     result.skip.push("break_end");
   } else if (currentState === FREEE_STATE.ON_BREAK) {
     // Currently on break — check if overdue (>60min from actual break_start)
-    const breakStartRecord = todayPunchTimes
+    const breakStartRecord = punchRecords
       .filter((p) => p.type === "break_start")
       .pop();
     const actualBreakStartMin = breakStartRecord
       ? toMin(breakStartRecord.time)
       : null;
-    if (actualBreakStartMin != null && curMin - actualBreakStartMin > 90) {
+    const scheduledBreakEndPassed =
+      !punchHistoryVerified &&
+      schedule.break_end &&
+      curMin >= toMin(schedule.break_end);
+    if (
+      (actualBreakStartMin != null && curMin - actualBreakStartMin > 90) ||
+      scheduledBreakEndPassed
+    ) {
       // Break exceeded 90 minutes → end immediately
       result.immediateActions.push("break_end");
     } else {
@@ -235,6 +255,9 @@ export function determineActionsForToday(
       reasons.push(
         `Break skipped (expected work ${expectedWorkMinutes}min < ${BREAK_THRESHOLD_MINUTES}min threshold)`,
       );
+    }
+    if (!punchHistoryVerified) {
+      reasons.push("Punch history unavailable; duplicate-prone break actions paused");
     }
   }
   result.reason = reasons.join(". ");

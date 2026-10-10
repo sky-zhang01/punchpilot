@@ -6,113 +6,703 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
+
+concurrency:
+  group: punchpilot-public-release
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   DOCKER_BUILD_RECORD_UPLOAD: "false"
+  NODE_VERSION: 24.21.0
+  NPM_VERSION: 12.2.0
+  GH_VERSION: 2.101.0
+  BUILDX_VERSION: v0.37.2
+  BUILDKIT_IMAGE: moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
 
 jobs:
-  build-and-push:
-    name: Build & Push (Multi-Arch)
-    runs-on: ubuntu-latest
-    if: github.server_url == 'https://github.com' && github.repository == 'sky-zhang01/punchpilot'
+  build-and-scan:
+    name: Build & Scan (Multi-Arch)
+    runs-on: ubuntu-26.04
+    if: github.server_url == 'https://github.com' && github.repository == 'sky-zhang01/punchpilot' && github.actor == 'punchpilot-release-bot[bot]' && (github.triggering_actor == 'punchpilot-release-bot[bot]' || github.triggering_actor == github.repository_owner) && vars.PUNCHPILOT_PUBLICATION_ENABLED == 'true'
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+      attestations: read
+    outputs:
+      publication_run_attempt: ${{ steps.publication-policy.outputs.run_attempt }}
+      release_commit: ${{ steps.candidate.outputs.commit }}
+      release_tag_object: ${{ steps.candidate.outputs.tag_object }}
+      public_base_commit: ${{ steps.candidate.outputs.public_base }}
+      recovery_mode: ${{ steps.recovery.outputs.resume }}
+      recovery_manifest_digest: ${{ steps.recovery.outputs.manifest_digest }}
+      recovery_amd64_digest: ${{ steps.recovery.outputs.amd64_digest }}
+      recovery_arm64_digest: ${{ steps.recovery.outputs.arm64_digest }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Release metadata check
-        run: node scripts/ci/release-metadata-check.mjs --tag "$GITHUB_REF_NAME" --mode public --require-handoff
+      - name: Install reviewed Node.js
+        run: bash scripts/ci/install-reviewed-node.sh
 
-      - name: Public release privacy gate
-        env:
-          PUBLIC_RELEASE_FORBIDDEN_HOSTS: ${{ secrets.PUBLIC_RELEASE_FORBIDDEN_HOSTS }}
-        run: python3 scripts/ci/public-release-privacy-gate.py --root . --repo-name "$GITHUB_REPOSITORY" --require-forbidden-hosts
+      - name: Use reviewed npm CLI
+        run: bash scripts/ci/use-reviewed-npm.sh
 
-      - name: Set up QEMU (for cross-platform builds)
-        uses: docker/setup-qemu-action@v4
+      - name: Install reviewed GitHub CLI
+        run: bash scripts/ci/install-reviewed-gh.sh
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
-
-      - name: Build and push (amd64 + arm64)
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Extract changelog for this version
-        id: changelog
-        run: |
-          # Extract the section for the current version from CHANGELOG.md
-          # Matches from "## [x.y.z]" to the next "## [" or end of file
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          NOTES=$(awk -v ver="$VERSION" '
-            /^## \[/ {
-              if (found) exit
-              if (index($0, "[" ver "]")) found=1
-              next
-            }
-            found { print }
-          ' CHANGELOG.md)
-
-          # Write to file for gh release (avoids quoting issues)
-          echo "$NOTES" > /tmp/release-notes.md
-
-          # Append platform info
-          cat >> /tmp/release-notes.md << 'EOF'
-
-          ---
-
-          ## Docker Image
-
-          ```bash
-          docker pull ghcr.io/${{ github.repository }}:${{ steps.version.outputs.VERSION }}
-          ```
-
-          ### Supported Platforms
-
-          | Architecture | Platform | Example Hardware |
-          |---|---|---|
-          | `linux/amd64` | x86_64 | Intel/AMD servers, PCs, most cloud VMs |
-          | `linux/arm64` | aarch64 | Apple M-series, AWS Graviton, Raspberry Pi 4+ |
-
-          > Windows and macOS users run the same image through Docker Desktop (Linux VM).
-          EOF
-
-      - name: Create GitHub Release
+      - name: Bind release candidate
+        id: candidate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "PunchPilot $GITHUB_REF_NAME" \
-            --notes-file /tmp/release-notes.md
+          set -euo pipefail
+          if ! printf '%s\n' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Invalid release tag." >&2
+            exit 1
+          fi
+          tag_ref="refs/tags/${GITHUB_REF_NAME}"
+          test "$(git cat-file -t "$tag_ref")" = "tag"
+          tag_object=$(git rev-parse --verify "$tag_ref")
+          commit=$(git rev-parse "${tag_ref}^{commit}")
+          test "$commit" = "$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          git fetch --no-tags --force origin main:refs/remotes/origin/main
+          public_main=$(git rev-parse "refs/remotes/origin/main^{commit}")
+          test "$commit" = "$public_main"
+          latest_tag=$(git tag --list --sort=-version:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | head -n 1 || true)
+          test "$GITHUB_REF_NAME" = "$latest_tag"
+          releases=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100")
+          previous_release_tag=$(jq -er --arg current "$GITHUB_REF_NAME" '
+            [.[]
+              | select(.draft == false and .prerelease == false)
+              | select(.tag_name != $current)]
+            | first
+            | .tag_name
+          ' <<< "$releases")
+          if ! printf '%s\n' "$previous_release_tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Latest published GitHub Release has an invalid tag." >&2
+            exit 1
+          fi
+          git fetch --no-tags --force origin \
+            "refs/tags/${previous_release_tag}:refs/tags/${previous_release_tag}"
+          public_base=$(git rev-parse "refs/tags/${previous_release_tag}^{commit}")
+          test "$public_base" != "$commit"
+          git merge-base --is-ancestor "$public_base" "$commit"
+          {
+            printf 'commit=%s\n' "$commit"
+            printf 'tag_object=%s\n' "$tag_object"
+            printf 'public_base=%s\n' "$public_base"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Require successful public CI for release commit
+        env:
+          RELEASE_COMMIT: ${{ steps.candidate.outputs.commit }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ready=false
+          for ((attempt=1; attempt<=120; attempt++)); do
+            runs=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?branch=main&event=push&head_sha=${RELEASE_COMMIT}&per_page=100")
+            latest_run=$(jq -c --arg commit "$RELEASE_COMMIT" '
+              [.workflow_runs[]? | select(.head_sha == $commit and .event == "push" and .head_branch == "main")]
+              | sort_by([.run_number, .run_attempt, .id]) | last
+            ' <<< "$runs")
+            if [ "$latest_run" != "null" ]; then
+              if [ "$(jq -r '.status' <<< "$latest_run")" = "completed" ]; then
+                test "$(jq -r '.conclusion' <<< "$latest_run")" = "success"
+                ready=true
+                break
+              fi
+            fi
+            sleep 5
+          done
+          test "$ready" = true
+
+      - name: Release metadata check
+        run: node scripts/ci/release-metadata-check.mjs --tag "$GITHUB_REF_NAME" --mode public
+
+      - name: Enforce dependency release-age policy
+        run: node scripts/ci/dependency-release-age-check.mjs
+
+      - name: Publication preflight
+        env:
+          PUBLIC_BASE_COMMIT: ${{ steps.candidate.outputs.public_base }}
+          PUBLIC_RELEASE_FORBIDDEN_HOSTS: ${{ secrets.PUBLIC_RELEASE_FORBIDDEN_HOSTS }}
+        run: |
+          node scripts/ci/publication-preflight.mjs \
+            --head "$GITHUB_REF_NAME" \
+            --base "$PUBLIC_BASE_COMMIT" \
+            --require-forbidden-hosts \
+            --repo-name "$GITHUB_REPOSITORY"
+
+      - name: Bind publication policy to run attempt
+        id: publication-policy
+        run: printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          image: tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+
+      - name: Install pinned Trivy
+        run: bash scripts/ci/install-trivy.sh
+
+      - name: Authenticate only read-only registry recovery
+        env:
+          GHCR_READ_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_READ_TOKEN" | docker login "$REGISTRY" --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Recover signed immutable candidates before rebuilding
+        id: recovery
+        env:
+          EXPECTED_COMMIT: ${{ steps.candidate.outputs.commit }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          version_ref="${REGISTRY}/${IMAGE_NAME}:${version}"
+          if ! docker buildx imagetools inspect --raw "$version_ref" \
+            > /tmp/recovery-manifest.json 2>/tmp/recovery-inspect.err; then
+            if grep -Fqx "ERROR: ${version_ref}: not found" /tmp/recovery-inspect.err; then
+              printf 'resume=false\n' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Immutable registry release state is unavailable." >&2
+            exit 1
+          fi
+          jq -e '
+            .schemaVersion == 2
+            and (.manifests | length == 2)
+            and ([.manifests[] | [.platform.os, .platform.architecture]] | sort
+              == [["linux", "amd64"], ["linux", "arm64"]])
+            and all(.manifests[]; .digest | test("^sha256:[0-9a-f]{64}$"))
+          ' /tmp/recovery-manifest.json >/dev/null
+          manifest_digest="sha256:$(sha256sum /tmp/recovery-manifest.json | cut -d' ' -f1)"
+          for architecture in amd64 arm64; do
+            digest=$(jq -er --arg architecture "$architecture" '
+              .manifests[] | select(.platform.os == "linux" and .platform.architecture == $architecture) | .digest
+            ' /tmp/recovery-manifest.json)
+            image="${REGISTRY}/${IMAGE_NAME}@${digest}"
+            # An existing version is accepted only with the prior platform
+            # SBOM signatures, which precede immutable manifest creation.
+            gh attestation verify "oci://${image}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/docker-publish.yml" \
+              --signer-digest "$EXPECTED_COMMIT" \
+              --source-digest "$EXPECTED_COMMIT" --source-ref "$GITHUB_REF" \
+              --predicate-type https://cyclonedx.org/bom \
+              --deny-self-hosted-runners --format json \
+              > "/tmp/recovered-${architecture}-sbom-attestations.json"
+            jq -e 'length > 0' "/tmp/recovered-${architecture}-sbom-attestations.json" >/dev/null
+            docker buildx imagetools inspect --raw "$image" > "/tmp/recovered-${architecture}-manifest.json"
+            config_digest=$(jq -er '.config.digest | select(test("^sha256:[0-9a-f]{64}$"))' "/tmp/recovered-${architecture}-manifest.json")
+            docker pull --platform "linux/${architecture}" "$image" >/dev/null
+            test "$(docker image inspect "$image" --format '{{.Id}}')" = "$config_digest"
+            test "$(docker image inspect "$image" --format '{{.Architecture}}')" = "$architecture"
+            test "$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$EXPECTED_COMMIT"
+            docker tag "$image" "punchpilot-release-scan:${architecture}"
+          done
+          # The recovered bytes are scanned and uploaded by this attempt;
+          # no prior-attempt artifact or immutable replacement is admitted.
+          {
+            printf 'resume=true\n'
+            printf 'manifest_digest=%s\n' "$manifest_digest"
+            jq -r '.manifests[] | "\(.platform.architecture)_digest=\(.digest)"' /tmp/recovery-manifest.json
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build amd64 release candidate once
+        if: steps.recovery.outputs.resume == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: punchpilot-release-scan:amd64
+          build-args: VCS_REF=${{ steps.candidate.outputs.commit }}
+          cache-from: type=gha,scope=release-amd64
+          cache-to: type=gha,mode=max,scope=release-amd64
+          pull: true
+          no-cache-filters: runtime
+
+      - name: Scan amd64 candidate and generate SBOM
+        run: |
+          bash scripts/ci/container-image-security-gate.sh punchpilot-release-scan:amd64 /tmp/trivy-amd64.json linux/amd64
+          trivy image --disable-telemetry --format cyclonedx --output /tmp/sbom-amd64.cdx.json punchpilot-release-scan:amd64
+
+      - name: Build arm64 release candidate once
+        if: steps.recovery.outputs.resume == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/arm64
+          push: false
+          load: true
+          tags: punchpilot-release-scan:arm64
+          build-args: VCS_REF=${{ steps.candidate.outputs.commit }}
+          cache-from: type=gha,scope=release-arm64
+          cache-to: type=gha,mode=max,scope=release-arm64
+          pull: true
+          no-cache-filters: runtime
+
+      - name: Scan arm64 candidate and generate SBOM
+        run: |
+          bash scripts/ci/container-image-security-gate.sh punchpilot-release-scan:arm64 /tmp/trivy-arm64.json linux/arm64
+          trivy image --disable-telemetry --format cyclonedx --output /tmp/sbom-arm64.cdx.json punchpilot-release-scan:arm64
+
+      - name: Package scanned release candidates
+        run: |
+          set -euo pipefail
+          docker save punchpilot-release-scan:amd64 | zstd -T0 -10 -o /tmp/punchpilot-amd64.tar.zst
+          docker save punchpilot-release-scan:arm64 | zstd -T0 -10 -o /tmp/punchpilot-arm64.tar.zst
+          (
+            cd /tmp
+            sha256sum punchpilot-amd64.tar.zst sbom-amd64.cdx.json > punchpilot-amd64.sha256
+            sha256sum punchpilot-arm64.tar.zst sbom-arm64.cdx.json > punchpilot-arm64.sha256
+          )
+
+      - name: Upload scanned amd64 candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: punchpilot-release-amd64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/punchpilot-amd64.tar.zst
+            /tmp/sbom-amd64.cdx.json
+            /tmp/punchpilot-amd64.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload scanned arm64 candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: punchpilot-release-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/punchpilot-arm64.tar.zst
+            /tmp/sbom-arm64.cdx.json
+            /tmp/punchpilot-arm64.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  verify-arm64-runtime:
+    name: Verify Chromium Runtime (arm64 native)
+    needs: build-and-scan
+    runs-on: ubuntu-26.04-arm
+    if: github.server_url == 'https://github.com' && github.repository == 'sky-zhang01/punchpilot' && github.actor == 'punchpilot-release-bot[bot]' && (github.triggering_actor == 'punchpilot-release-bot[bot]' || github.triggering_actor == github.repository_owner) && vars.PUNCHPILOT_PUBLICATION_ENABLED == 'true'
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Bind native verification to release commit
+        env:
+          EXPECTED_COMMIT: ${{ needs.build-and-scan.outputs.release_commit }}
+        run: test "$(git rev-parse 'HEAD^{commit}')" = "$EXPECTED_COMMIT"
+
+      - name: Download scanned arm64 candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: punchpilot-release-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/release/arm64
+
+      - name: Verify and load arm64 candidate
+        run: |
+          cd /tmp/release/arm64
+          sha256sum --check punchpilot-arm64.sha256
+          zstd --test punchpilot-arm64.tar.zst
+          zstd --decompress punchpilot-arm64.tar.zst --output punchpilot-arm64.tar
+          docker load --input punchpilot-arm64.tar
+          test "$(docker image inspect punchpilot-release-scan:arm64 --format '{{.Architecture}}')" = "arm64"
+
+      - name: Install pinned Trivy
+        run: bash scripts/ci/install-trivy.sh
+
+      - name: Require native arm64 Chromium sandbox smoke
+        run: bash scripts/ci/container-image-security-gate.sh punchpilot-release-scan:arm64 /tmp/trivy-arm64-native.json linux/arm64 --require-native-browser
+
+  publish-image:
+    name: Publish Scanned Image
+    needs: [build-and-scan, verify-arm64-runtime]
+    runs-on: ubuntu-26.04
+    environment: public-release
+    env:
+      PUBLICATION_COMMIT: ${{ needs.build-and-scan.outputs.release_commit }}
+      PUBLICATION_ADMISSION_SHA256: ${{ vars.PUNCHPILOT_PUBLICATION_ADMISSION_SHA256 }}
+      PUNCHPILOT_PUBLICATION_READ_TOKEN: ${{ secrets.PUNCHPILOT_PUBLICATION_READ_TOKEN }}
+    if: github.server_url == 'https://github.com' && github.repository == 'sky-zhang01/punchpilot' && github.actor == 'punchpilot-release-bot[bot]' && (github.triggering_actor == 'punchpilot-release-bot[bot]' || github.triggering_actor == github.repository_owner) && vars.PUNCHPILOT_PUBLICATION_ENABLED == 'true'
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    outputs:
+      manifest_digest: ${{ steps.manifest.outputs.digest }}
+    steps:
+      - name: Require current-attempt publication policy
+        env:
+          PUBLICATION_RUN_ATTEMPT: ${{ needs.build-and-scan.outputs.publication_run_attempt }}
+        run: test "$PUBLICATION_RUN_ATTEMPT" = "$GITHUB_RUN_ATTEMPT"
+
+      - name: Checkout the exact public publication commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.build-and-scan.outputs.release_commit }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify public tool snapshot commit
+        env:
+          EXPECTED_COMMIT: ${{ needs.build-and-scan.outputs.release_commit }}
+        run: test "$(git rev-parse 'HEAD^{commit}')" = "$EXPECTED_COMMIT"
+
+      - name: Install reviewed GitHub CLI
+        run: bash scripts/ci/install-reviewed-gh.sh
+
+      - name: Install reviewed Node runtime for publication gates
+        run: bash scripts/ci/install-reviewed-node.sh
+
+      - name: Load independently approved publication receipt
+        env:
+          PUBLICATION_ADMISSION_JSON: ${{ secrets.PUNCHPILOT_PUBLICATION_ADMISSION }}
+          PUBLICATION_ADMISSION_FILE: ${{ runner.temp }}/punchpilot-publication-admission.json
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$PUBLICATION_ADMISSION_JSON"
+          printf '%s' "$PUBLICATION_ADMISSION_JSON" > "$PUBLICATION_ADMISSION_FILE"
+          chmod 600 "$PUBLICATION_ADMISSION_FILE"
+          printf 'PUBLICATION_ADMISSION_FILE=%s\n' "$PUBLICATION_ADMISSION_FILE" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+
+      - name: Download scanned amd64 candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: punchpilot-release-amd64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/release/amd64
+
+      - name: Download scanned arm64 candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: punchpilot-release-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/release/arm64
+
+      - name: Verify and load scanned candidates
+        run: |
+          set -euo pipefail
+          (
+            cd /tmp/release/amd64
+            sha256sum --check punchpilot-amd64.sha256
+            zstd --test punchpilot-amd64.tar.zst
+            zstd --decompress punchpilot-amd64.tar.zst --output punchpilot-amd64.tar
+          )
+          (
+            cd /tmp/release/arm64
+            sha256sum --check punchpilot-arm64.sha256
+            zstd --test punchpilot-arm64.tar.zst
+            zstd --decompress punchpilot-arm64.tar.zst --output punchpilot-arm64.tar
+          )
+          docker load --input /tmp/release/amd64/punchpilot-amd64.tar
+          docker load --input /tmp/release/arm64/punchpilot-arm64.tar
+          docker image inspect punchpilot-release-scan:amd64 >/dev/null
+          docker image inspect punchpilot-release-scan:arm64 >/dev/null
+          docker buildx version
+
+      - name: Inspect resumable release state before registry write
+        id: registry
+        env:
+          EXPECTED_COMMIT: ${{ needs.build-and-scan.outputs.release_commit }}
+          EXPECTED_TAG_OBJECT: ${{ needs.build-and-scan.outputs.release_tag_object }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RECOVERY_MODE: ${{ needs.build-and-scan.outputs.recovery_mode }}
+          RECOVERY_MANIFEST_DIGEST: ${{ needs.build-and-scan.outputs.recovery_manifest_digest }}
+          RECOVERY_AMD64_DIGEST: ${{ needs.build-and-scan.outputs.recovery_amd64_digest }}
+          RECOVERY_ARM64_DIGEST: ${{ needs.build-and-scan.outputs.recovery_arm64_digest }}
+        run: |
+          set -euo pipefail
+          current_main=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)
+          test "$current_main" = "$EXPECTED_COMMIT"
+
+          tag_ref=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}")
+          current_tag_object=$(jq -er '.object.sha' <<< "$tag_ref")
+          test "$(jq -er '.object.type' <<< "$tag_ref")" = "tag"
+          test "$current_tag_object" = "$EXPECTED_TAG_OBJECT"
+          tag_object=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${current_tag_object}")
+          test "$(jq -er '.object.type' <<< "$tag_object")" = "commit"
+          test "$(jq -er '.object.sha' <<< "$tag_object")" = "$EXPECTED_COMMIT"
+
+          runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?branch=main&event=push&head_sha=${EXPECTED_COMMIT}&per_page=100")
+          latest_run=$(jq -cer --arg commit "$EXPECTED_COMMIT" '
+            [.workflow_runs[]? | select(.head_sha == $commit and .event == "push" and .head_branch == "main")]
+            | sort_by([.run_number, .run_attempt, .id]) | last
+          ' <<< "$runs")
+          test "$(jq -r '.status' <<< "$latest_run")" = "completed"
+          test "$(jq -r '.conclusion' <<< "$latest_run")" = "success"
+
+          version="${GITHUB_REF_NAME#v}"
+          version_ref="${REGISTRY}/${IMAGE_NAME}:${version}"
+          if docker buildx imagetools inspect --raw "$version_ref" \
+            > /tmp/existing-release-manifest.json 2>/tmp/registry-inspect.err; then
+            manifest_digest="sha256:$(sha256sum /tmp/existing-release-manifest.json | cut -d' ' -f1)"
+            test "$RECOVERY_MODE" = true
+            test "$manifest_digest" = "$RECOVERY_MANIFEST_DIGEST"
+            jq -e '
+              .schemaVersion == 2
+              and (.manifests | length == 2)
+              and ([.manifests[] | [.platform.os, .platform.architecture]] | sort
+                == [["linux", "amd64"], ["linux", "arm64"]])
+              and all(.manifests[]; .digest | test("^sha256:[0-9a-f]{64}$"))
+            ' /tmp/existing-release-manifest.json >/dev/null
+            amd64_digest=$(jq -er '
+              [.manifests[]? | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest]
+              | if length == 1 then .[0] else error("invalid amd64 manifest") end
+            ' /tmp/existing-release-manifest.json)
+            arm64_digest=$(jq -er '
+              [.manifests[]? | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest]
+              | if length == 1 then .[0] else error("invalid arm64 manifest") end
+            ' /tmp/existing-release-manifest.json)
+            test "$amd64_digest" = "$RECOVERY_AMD64_DIGEST"
+            test "$arm64_digest" = "$RECOVERY_ARM64_DIGEST"
+            for platform_digest in "amd64:$amd64_digest" "arm64:$arm64_digest"; do
+              architecture=${platform_digest%%:*}
+              digest=${platform_digest#*:}
+              image_by_digest="${REGISTRY}/${IMAGE_NAME}@${digest}"
+              docker buildx imagetools inspect --raw "$image_by_digest" > "/tmp/existing-${architecture}-manifest.json"
+              config_digest=$(jq -er '.config.digest | select(test("^sha256:[0-9a-f]{64}$"))' "/tmp/existing-${architecture}-manifest.json")
+              test "$(docker image inspect "punchpilot-release-scan:${architecture}" --format '{{.Id}}')" = "$config_digest"
+              docker pull --platform "linux/${architecture}" "$image_by_digest" >/dev/null
+              test "$(docker image inspect "$image_by_digest" --format '{{.Architecture}}')" = "$architecture"
+              revision=$(docker image inspect "$image_by_digest" \
+                --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+              test "$revision" = "$EXPECTED_COMMIT"
+            done
+            {
+              printf 'resume=true\n'
+              printf 'manifest_digest=%s\n' "$manifest_digest"
+              printf 'amd64_digest=%s\n' "$amd64_digest"
+              printf 'arm64_digest=%s\n' "$arm64_digest"
+            } >> "$GITHUB_OUTPUT"
+          else
+            if ! grep -Fqx "ERROR: ${version_ref}: not found" /tmp/registry-inspect.err; then
+              echo "Could not determine immutable registry release state." >&2
+              exit 1
+            fi
+            test "$RECOVERY_MODE" = false
+            printf 'resume=false\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Revalidate publication authority before registry credentials
+        run: node scripts/ci/isolated-publisher.mjs public-authority
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login "$REGISTRY" --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Push the scanned platform images
+        id: platforms
+        if: steps.registry.outputs.resume == 'false'
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          staging="${version}-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          amd64_tag="${REGISTRY}/${IMAGE_NAME}:${staging}-amd64"
+          arm64_tag="${REGISTRY}/${IMAGE_NAME}:${staging}-arm64"
+          docker tag punchpilot-release-scan:amd64 "$amd64_tag"
+          docker tag punchpilot-release-scan:arm64 "$arm64_tag"
+          node scripts/ci/isolated-publisher.mjs public-authority
+          docker push "$amd64_tag" 2>&1 | tee /tmp/docker-push-amd64.log
+          node scripts/ci/isolated-publisher.mjs public-authority
+          docker push "$arm64_tag" 2>&1 | tee /tmp/docker-push-arm64.log
+
+          extract_push_digest() {
+            local output_file="$1"
+            local digests
+            digests=$(sed -nE \
+              's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p' \
+              "$output_file" | sort -u)
+            test "$(printf '%s\n' "$digests" | sed '/^$/d' | wc -l)" -eq 1
+            printf '%s\n' "$digests"
+          }
+          amd64_digest=$(extract_push_digest /tmp/docker-push-amd64.log)
+          arm64_digest=$(extract_push_digest /tmp/docker-push-arm64.log)
+          printf 'amd64_digest=%s\n' "$amd64_digest" >> "$GITHUB_OUTPUT"
+          printf 'arm64_digest=%s\n' "$arm64_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Select verified platform subjects
+        id: subjects
+        env:
+          RESUME: ${{ steps.registry.outputs.resume }}
+          EXISTING_AMD64: ${{ steps.registry.outputs.amd64_digest }}
+          EXISTING_ARM64: ${{ steps.registry.outputs.arm64_digest }}
+          NEW_AMD64: ${{ steps.platforms.outputs.amd64_digest }}
+          NEW_ARM64: ${{ steps.platforms.outputs.arm64_digest }}
+        run: |
+          if [ "$RESUME" = "true" ]; then
+            amd64_digest=$EXISTING_AMD64
+            arm64_digest=$EXISTING_ARM64
+          else
+            amd64_digest=$NEW_AMD64
+            arm64_digest=$NEW_ARM64
+          fi
+          for digest in "$amd64_digest" "$arm64_digest"; do
+            printf '%s\n' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          done
+          printf 'amd64_digest=%s\n' "$amd64_digest" >> "$GITHUB_OUTPUT"
+          printf 'arm64_digest=%s\n' "$arm64_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Revalidate publication authority before amd64 attestation
+        run: node scripts/ci/isolated-publisher.mjs public-authority
+
+      - name: Attest amd64 SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.subjects.outputs.amd64_digest }}
+          sbom-path: /tmp/release/amd64/sbom-amd64.cdx.json
+          push-to-registry: true
+
+      - name: Revalidate publication authority before arm64 attestation
+        run: node scripts/ci/isolated-publisher.mjs public-authority
+
+      - name: Attest arm64 SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.subjects.outputs.arm64_digest }}
+          sbom-path: /tmp/release/arm64/sbom-arm64.cdx.json
+          push-to-registry: true
+
+      - name: Publish immutable version manifest
+        id: manifest
+        env:
+          RESUME: ${{ steps.registry.outputs.resume }}
+          EXISTING_MANIFEST_DIGEST: ${{ steps.registry.outputs.manifest_digest }}
+          AMD64_DIGEST: ${{ steps.subjects.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.subjects.outputs.arm64_digest }}
+        run: |
+          if [ "$RESUME" = "true" ]; then
+            printf 'digest=%s\n' "$EXISTING_MANIFEST_DIGEST" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          node scripts/ci/isolated-publisher.mjs public-authority
+          docker buildx imagetools create \
+            --tag "${REGISTRY}/${IMAGE_NAME}:${version}" \
+            --metadata-file /tmp/release-manifest-metadata.json \
+            "${REGISTRY}/${IMAGE_NAME}@${AMD64_DIGEST}" \
+            "${REGISTRY}/${IMAGE_NAME}@${ARM64_DIGEST}"
+
+          digest=$(jq -er '
+            ."containerimage.descriptor".digest
+            | select(test("^sha256:[0-9a-f]{64}$"))
+          ' /tmp/release-manifest-metadata.json)
+          docker buildx imagetools inspect --raw \
+            "${REGISTRY}/${IMAGE_NAME}@${digest}" > /tmp/release-manifest.json
+          jq -e --arg amd64 "$AMD64_DIGEST" --arg arm64 "$ARM64_DIGEST" '
+            [.manifests[]? | select(.platform.os == "linux") | {arch: .platform.architecture, digest}] as $items
+            | any($items[]; .arch == "amd64" and .digest == $amd64)
+              and any($items[]; .arch == "arm64" and .digest == $arm64)
+          ' /tmp/release-manifest.json
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Revalidate publication authority before manifest attestation
+        run: node scripts/ci/isolated-publisher.mjs public-authority
+
+      - name: Attest multi-architecture build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+
+      - name: Verify current multi-architecture provenance
+        env:
+          EXPECTED_COMMIT: ${{ needs.build-and-scan.outputs.release_commit }}
+          MANIFEST_DIGEST: ${{ steps.manifest.outputs.digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh attestation verify \
+            "oci://${REGISTRY}/${IMAGE_NAME}@${MANIFEST_DIGEST}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/docker-publish.yml" \
+            --source-digest "$EXPECTED_COMMIT" \
+            --source-ref "$GITHUB_REF" \
+            --deny-self-hosted-runners \
+            --format json > /tmp/current-release-provenance.json
+          jq -e 'length > 0' /tmp/current-release-provenance.json >/dev/null
+
+      - name: Revalidate publication authority before mutable aliases
+        env:
+          EXPECTED_COMMIT: ${{ needs.build-and-scan.outputs.release_commit }}
+          EXPECTED_TAG_OBJECT: ${{ needs.build-and-scan.outputs.release_tag_object }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/isolated-publisher.mjs public-authority
+
+      - name: Publish platform and mutable aliases from attested manifest
+        env:
+          MANIFEST_DIGEST: ${{ steps.manifest.outputs.digest }}
+          AMD64_DIGEST: ${{ steps.subjects.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.subjects.outputs.arm64_digest }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          minor="${version%.*}"
+          node scripts/ci/isolated-publisher.mjs public-authority
+          docker buildx imagetools create \
+            --prefer-index=false \
+            --tag "${REGISTRY}/${IMAGE_NAME}:${version}-amd64" \
+            "${REGISTRY}/${IMAGE_NAME}@${AMD64_DIGEST}"
+          node scripts/ci/isolated-publisher.mjs public-authority
+          docker buildx imagetools create \
+            --prefer-index=false \
+            --tag "${REGISTRY}/${IMAGE_NAME}:${version}-arm64" \
+            "${REGISTRY}/${IMAGE_NAME}@${ARM64_DIGEST}"
+          for alias in "$minor" latest; do
+            node scripts/ci/isolated-publisher.mjs public-authority
+            docker buildx imagetools create \
+              --tag "${REGISTRY}/${IMAGE_NAME}:${alias}" \
+              "${REGISTRY}/${IMAGE_NAME}@${MANIFEST_DIGEST}"
+            docker buildx imagetools inspect --raw \
+              "${REGISTRY}/${IMAGE_NAME}:${alias}" > "/tmp/${alias}-manifest.json"
+            alias_digest="sha256:$(sha256sum "/tmp/${alias}-manifest.json" | cut -d' ' -f1)"
+            test "$alias_digest" = "$MANIFEST_DIGEST"
+          done
+          for platform_digest in "amd64:$AMD64_DIGEST" "arm64:$ARM64_DIGEST"; do
+            architecture=${platform_digest%%:*}
+            expected=${platform_digest#*:}
+            docker buildx imagetools inspect --raw \
+              "${REGISTRY}/${IMAGE_NAME}:${version}-${architecture}" \
+              > "/tmp/${architecture}-manifest.json"
+            actual="sha256:$(sha256sum "/tmp/${architecture}-manifest.json" | cut -d' ' -f1)"
+            test "$actual" = "$expected"
+          done

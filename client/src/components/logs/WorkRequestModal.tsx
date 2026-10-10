@@ -1,10 +1,14 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Modal, Select, DatePicker, Input, Space, Typography, TimePicker, Switch, Tag } from 'antd';
+import { Modal, Select, DatePicker, Input, Space, Typography, TimePicker, Switch, Tag, Alert } from 'antd';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import api from '../../api';
 import { notifySuccess, notifyError } from '../../utils/notify';
+import { taskFailure, type TaskDTO } from '../../tasks';
+import { TaskResultSummary } from './TaskRecoveryPanel';
+import { useAppSelector } from '../../store/hooks';
+import { isTimeString } from '../../../../shared/date-time.js';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -22,34 +26,47 @@ const WORK_TYPES = [
 
 const WorkRequestModal: React.FC<WorkRequestModalProps> = ({ open, onClose, preSelectedDates }) => {
   const { t } = useTranslation();
+  const schedules = useAppSelector(state => state.config.schedules);
+  const initialized = React.useRef(false);
   const [type, setType] = useState<string>('HolidayWork');
   const [date, setDate] = useState<Dayjs | null>(null);
   const hasPreSelectedDates = preSelectedDates && preSelectedDates.length > 0;
   const [reason, setReason] = useState('');
-  const [clockIn, setClockIn] = useState<Dayjs | null>(dayjs().hour(10).minute(0));
-  const [clockOut, setClockOut] = useState<Dayjs | null>(dayjs().hour(19).minute(0));
+  const [clockIn, setClockIn] = useState<Dayjs | null>(null);
+  const [clockOut, setClockOut] = useState<Dayjs | null>(null);
   const [includeBreak, setIncludeBreak] = useState(true);
-  const [breakStart, setBreakStart] = useState<Dayjs | null>(dayjs().hour(12).minute(0));
-  const [breakEnd, setBreakEnd] = useState<Dayjs | null>(dayjs().hour(13).minute(0));
+  const [breakStart, setBreakStart] = useState<Dayjs | null>(null);
+  const [breakEnd, setBreakEnd] = useState<Dayjs | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [task, setTask] = useState<TaskDTO | null>(null);
+  const [queryPaused, setQueryPaused] = useState(false);
+  const [admissionUnknown, setAdmissionUnknown] = useState(false);
 
-  // Sync pre-selected dates from calendar when modal opens
   React.useEffect(() => {
-    if (open && hasPreSelectedDates) {
-      // Use first pre-selected date as the selected date
-      setDate(dayjs(preSelectedDates[0]));
-    }
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!open) { initialized.current = false; return; }
+    if (hasPreSelectedDates) setDate(dayjs(preSelectedDates[0]));
+    if (initialized.current || schedules.length === 0) return;
+    initialized.current = true;
+    const savedTime = (action: string) => {
+      const time = schedules.find(schedule => schedule.action_type === action)?.fixed_time;
+      return isTimeString(time) ? dayjs(`2000-01-01T${time}:00`) : null;
+    };
+    setClockIn(savedTime('checkin')); setClockOut(savedTime('checkout'));
+    setBreakStart(savedTime('break_start')); setBreakEnd(savedTime('break_end'));
+  }, [open, schedules]);
 
   const resetForm = () => {
+    setTask(null);
+    setQueryPaused(false);
+    setAdmissionUnknown(false);
     setDate(null);
     setReason('');
     setType('HolidayWork');
-    setClockIn(dayjs().hour(10).minute(0));
-    setClockOut(dayjs().hour(19).minute(0));
+    setClockIn(null);
+    setClockOut(null);
     setIncludeBreak(true);
-    setBreakStart(dayjs().hour(12).minute(0));
-    setBreakEnd(dayjs().hour(13).minute(0));
+    setBreakStart(null);
+    setBreakEnd(null);
   };
 
   const handleSubmit = async () => {
@@ -58,45 +75,39 @@ const WorkRequestModal: React.FC<WorkRequestModalProps> = ({ open, onClose, preS
 
     setSubmitting(true);
     try {
-      let succeeded = 0;
-      let failed = 0;
-      for (const dateStr of datesToSubmit) {
-        try {
-          if (type === 'HolidayWork') {
-            await api.submitLeaveRequest({
-              type: 'HolidayWork',
+      const response = type === 'HolidayWork'
+        ? await api.submitBatchLeaveRequest({
+            type: 'HolidayWork',
+            dates: datesToSubmit,
+            reason: reason.trim() || undefined,
+          })
+        : await api.submitBatch({
+            entries: datesToSubmit.map(dateStr => ({
               date: dateStr,
-              reason: reason.trim() || undefined,
-            });
-          } else {
-            const data: Record<string, any> = {
-              date: dateStr,
-              clock_in_at: clockIn ? clockIn.format('HH:mm') : undefined,
-              clock_out_at: clockOut ? clockOut.format('HH:mm') : undefined,
-              reason: reason.trim() || undefined,
-            };
-            if (includeBreak && breakStart && breakEnd) {
-              data.break_records = [{
-                clock_in_at: breakStart.format('HH:mm'),
-                clock_out_at: breakEnd.format('HH:mm'),
-              }];
-            }
-            await api.submitWorkTimeCorrection(data);
-          }
-          succeeded++;
-        } catch {
-          failed++;
-        }
+              clock_in_at: clockIn?.format('HH:mm'),
+              clock_out_at: clockOut?.format('HH:mm'),
+              ...(includeBreak && breakStart && breakEnd
+                ? {
+                    break_records: [{
+                      clock_in_at: breakStart.format('HH:mm'),
+                      clock_out_at: breakEnd.format('HH:mm'),
+                    }],
+                  }
+                : {}),
+            })),
+            reason: reason.trim() || undefined,
+          });
+      setTask(response.data);
+      if (response.data.success) {
+        notifySuccess(`${response.data.succeeded} ${t('calendar.workRequestSubmitted')}`);
+        onClose();
+        resetForm();
       }
-      if (failed > 0) {
-        notifyError(`${succeeded}/${datesToSubmit.length} ${t('calendar.workRequestSubmitted')}, ${failed} ${t('common.failed')}`);
-      } else {
-        notifySuccess(`${succeeded} ${t('calendar.workRequestSubmitted')}`);
-      }
-      onClose();
-      resetForm();
     } catch (err: any) {
-      notifyError(err?.response?.data?.error || t('common.error'));
+      const failure = taskFailure(err);
+      if (err?.code === 'TASK_ADMISSION_UNKNOWN') { setQueryPaused(true); setAdmissionUnknown(true); }
+      if (failure) { setTask(failure.task); setQueryPaused(true); }
+      notifyError(err?.code === 'TASK_ADMISSION_UNKNOWN' ? t('tasks.admissionUnknown') : failure ? t('tasks.queryPaused') : err?.response?.data?.error || t('common.error'));
     } finally {
       setSubmitting(false);
     }
@@ -112,10 +123,12 @@ const WorkRequestModal: React.FC<WorkRequestModalProps> = ({ open, onClose, preS
       onOk={handleSubmit}
       confirmLoading={submitting}
       okText={hasPreSelectedDates && preSelectedDates.length > 1 ? `${t('calendar.batchSubmit')} (${preSelectedDates.length})` : t('common.confirm')}
-      okButtonProps={{ disabled: (!date && !hasPreSelectedDates) || !type || (isCorrection && (!clockIn || !clockOut)) }}
+      okButtonProps={{ disabled: !!task || queryPaused || submitting || (!date && !hasPreSelectedDates) || !type || (isCorrection && (!clockIn || !clockOut || (includeBreak && (!breakStart || !breakEnd)))) }}
       width={440}
     >
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        {task && <TaskResultSummary task={task} />}
+        {queryPaused && <Alert type="warning" showIcon message={t(admissionUnknown ? 'tasks.admissionUnknown' : 'tasks.queryPaused')} />}
         {/* Request type */}
         <div>
           <Text strong style={{ display: 'block', marginBottom: 4 }}>
@@ -236,6 +249,7 @@ const WorkRequestModal: React.FC<WorkRequestModalProps> = ({ open, onClose, preS
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             rows={2}
+            maxLength={255}
           />
         </div>
       </Space>

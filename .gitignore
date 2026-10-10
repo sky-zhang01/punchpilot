@@ -23,6 +23,7 @@ screenshots/
 *.log
 
 # Test output
+.vitest/
 test-results/
 playwright-report/
 coverage/
@@ -36,6 +37,8 @@ coverage/
 .claude/
 .scannerwork/
 zap.yaml
+__pycache__/
+*.py[cod]
 
 # Legacy config (not used by GUI mode)
 config.json

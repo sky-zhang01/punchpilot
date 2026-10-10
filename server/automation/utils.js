@@ -1,36 +1,39 @@
 import { getSetting } from "../db.js";
 import { decrypt } from "../crypto.js";
+import { resolveWebAccount } from "../web-account.js";
 
 /**
  * Get freee login credentials (GUI config takes priority over env)
  */
-export function getCredentials() {
-  const dbUsernameEnc = getSetting("freee_username_encrypted");
-  const dbPasswordEnc = getSetting("freee_password_encrypted");
-
-  if (dbUsernameEnc && dbPasswordEnc) {
-    const username = decrypt(dbUsernameEnc);
-    const password = decrypt(dbPasswordEnc);
-    if (username && password) {
-      return { username, password };
-    }
-  }
-
-  // Fallback to environment variables
-  return {
-    username: process.env.LOGIN_USERNAME || "",
-    password: process.env.LOGIN_PASSWORD || "",
-  };
+export function getWebAccountSnapshot() {
+  return resolveWebAccount(getSetting, decrypt);
 }
 
-/** Get the active connection mode — always 'api' now (browser mode disabled) */
+export function getCredentials() {
+  const account = getWebAccountSnapshot();
+  if (account.code) {
+    const error = new Error('Web credentials are incomplete or inconsistent; save or verify the account again.');
+    error.code = account.code;
+    throw error;
+  }
+  return { username: account.username, password: account.password };
+}
+
+/** Get the active connection mode. Browser mode remains supported for API-less accounts. */
 export function getConnectionMode() {
   return getSetting("connection_mode") || "api";
 }
 
-/** Check if credentials are configured — API (OAuth) only */
-export function hasCredentials() {
+/** Check whether OAuth credentials are configured for API reads or actions. */
+export function hasApiCredentials() {
   return getSetting("oauth_configured") === "1";
+}
+
+/** Check credentials for the currently selected action transport. */
+export function hasCredentials() {
+  return getConnectionMode() === "browser"
+    ? hasWebCredentials()
+    : hasApiCredentials();
 }
 
 /** Check if debug/mock mode is enabled */
@@ -40,6 +43,10 @@ export function isDebugMode() {
 
 /** Check if freee Web credentials are configured */
 export function hasWebCredentials() {
-  const creds = getCredentials();
-  return !!(creds.username && creds.password);
+  return getWebAccountSnapshot().valid;
+}
+
+/** Resolve the exact company name that Web automation must confirm before writes. */
+export function getWebCompanyName() {
+  return getWebAccountSnapshot().companyName;
 }

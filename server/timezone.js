@@ -14,20 +14,12 @@
 
 import { getSetting } from "./db.js";
 
-const DEFAULT_TZ = "Asia/Tokyo";
+import { resolveTimezone, partsInTimezone, dateInTimezone, instantForLocalTime } from '../shared/date-time.js';
 
-/**
- * Get the configured timezone string.
- * Priority: TZ env > DB setting 'app_timezone' > default Asia/Tokyo
- */
 export function getTimezone() {
-  if (process.env.TZ) return process.env.TZ;
-
-  try {
-    return getSetting("app_timezone") || DEFAULT_TZ;
-  } catch {
-    return DEFAULT_TZ;
-  }
+  let configured;
+  try { configured = getSetting('app_timezone'); } catch { /* DB not initialized yet. */ }
+  return resolveTimezone(process.env.TZ, configured);
 }
 
 /**
@@ -37,44 +29,14 @@ export function getTimezone() {
  * @param {Date} [date=new Date()] - Date to convert (defaults to now; injectable for testing)
  */
 export function nowInTz(date = new Date()) {
-  const tz = getTimezone();
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    // FIX: Use hourCycle 'h23' (range 0–23) instead of hour12:false.
-    // On Linux/Docker, hour12:false defaults to hourCycle 'h24' (range 1–24),
-    // which returns 24 at midnight. This caused curMin=1484 and false
-    // "Checkin window passed" on container startup at 00:xx JST.
-    hourCycle: "h23",
-    weekday: "short",
-  }).formatToParts(date);
-
-  const get = (type) => parts.find((p) => p.type === type)?.value || "";
-
-  const dayMap = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 0 };
-
-  return {
-    year: parseInt(get("year")),
-    month: parseInt(get("month")),
-    date: parseInt(get("day")),
-    hours: parseInt(get("hour")),
-    minutes: parseInt(get("minute")),
-    seconds: parseInt(get("second")),
-    day: dayMap[get("weekday")] ?? date.getDay(),
-  };
+  return partsInTimezone(date, getTimezone());
 }
 
 /**
  * Get today's date string in YYYY-MM-DD format in the configured timezone.
  */
 export function todayStringInTz() {
-  const { year, month, date } = nowInTz();
-  return `${year}-${String(month).padStart(2, "0")}-${String(date).padStart(2, "0")}`;
+  return dateInTimezone(new Date(), getTimezone());
 }
 
 /**
@@ -97,15 +59,7 @@ export function currentDayInTz() {
  * Returns negative if the time has already passed.
  */
 export function msUntilTimeInTz(timeStr) {
-  const { hours, minutes, seconds } = nowInTz();
-  const [targetH, targetM] = timeStr.split(":").map(Number);
-
-  const nowMinutesTotal = hours * 60 + minutes;
-  const targetMinutesTotal = targetH * 60 + targetM;
-
-  // Difference in minutes, then subtract elapsed seconds in current minute
-  const diffMinutes = targetMinutesTotal - nowMinutesTotal;
-  const diffMs = diffMinutes * 60 * 1000 - seconds * 1000;
-
-  return diffMs;
+  const now = new Date();
+  const tz = getTimezone();
+  return instantForLocalTime(dateInTimezone(now, tz), timeStr, tz, now).getTime() - now.getTime();
 }

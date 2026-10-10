@@ -1,599 +1,441 @@
+import { checkpointTaskResult, beginTaskItem, updateTask, trackTaskPromise } from "../../async-tasks.js";
+import { nowInTz } from "../../timezone.js";
+import { parseExternalId as positiveInteger } from "../../freee-values.js";
 import { Router } from "express";
-import { getSetting, setSetting, insertLog } from "../../db.js";
 import { FreeeApiClient } from "../../freee-api.js";
 import {
-  withdrawApprovalRequestWeb,
   hasWebCredentials,
-  scrapeEmployeeProfile,
+  withdrawApprovalRequestWeb,
 } from "../../automation/index.js";
 import {
-  log,
-  createTask,
-  updateTask,
-  sanitizeError,
-  toTimeOnly,
-  requireOAuth,
-  findAttendanceRouteId,
+  approveApprovalOperation,
+  hasExplicitApprover,
+  isCurrentApprover,
+  unwrapApprovalDetail,
+  withdrawApprovalOperation,
+} from "./approval-operation-service.js";
+import {
+  approvalRequestInMonth,
+  createApprovalMutationContext,
+  fetchApprovalRequestPages,
+  parseApprovalMutationContext,
+  parseApprovalMonth,
+} from "./approval-list-service.js";
+import {
   TYPE_TO_ENDPOINT,
-  TYPE_TO_RESPONSE_KEY,
+  approvalTypeEndpoint,
+  captureOperationIdentity,
+  acceptBatchTask,
+  log,
+  requireOAuth,
+  sanitizeError,
 } from "./utils.js";
+import { withAccountOperation } from "../../account-operation.js";
 
 const router = Router();
+const MAX_BATCH_REQUESTS = 50;
+const MAX_INCOMING_DETAIL_LOOKUPS = 50;
+const INCOMING_DETAIL_CONCURRENCY = 4;
 
-// ===================================================================
-//  Employee Info
-// ===================================================================
+function normalizeOperationRequests(value, { requireAction = false } = {}) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return { error: "requests must be a non-empty array" };
+  }
+  if (value.length > MAX_BATCH_REQUESTS) {
+    return { error: `Maximum ${MAX_BATCH_REQUESTS} requests per batch` };
+  }
 
-/**
- * GET /api/attendance/employee-info - Get employee info from freee
- * Returns whatever data is accessible with current permissions
- */
+  const normalized = [];
+  const keys = new Set();
+  for (const request of value) {
+    if (!request || typeof request !== "object" || Array.isArray(request)) {
+      return { error: "Each request must be an object" };
+    }
+    const id = positiveInteger(request.id);
+    if (!id) return { error: "Each request id must be a positive integer" };
+    if (!approvalTypeEndpoint(request.type)) {
+      return { error: "Each request type must be supported" };
+    }
+    if (requireAction && !["approve", "feedback"].includes(request.action)) {
+      return { error: "Each action must be approve or feedback" };
+    }
+    const expected = requireAction
+      ? parseApprovalMutationContext(request.expected)
+      : null;
+    if (requireAction && !expected) {
+      return { error: "Each request must include a valid expected approval context" };
+    }
+    const key = `${request.type}:${id}`;
+    if (keys.has(key)) return { error: "Duplicate approval requests are not allowed" };
+    keys.add(key);
+    normalized.push({
+      id,
+      type: request.type,
+      ...(requireAction ? { action: request.action, expected } : {}),
+    });
+  }
+  return { requests: normalized };
+}
+
+function stableText(value, maxLength, fallback = "-") {
+  if (typeof value !== "string") return fallback;
+  const text = value
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .trim()
+    .slice(0, maxLength);
+  return text || fallback;
+}
+
+function approvalRequestRange(detail) {
+  if (typeof detail?.target_date === "string") {
+    return parseApprovalMonth(
+      detail.target_date.slice(0, 4),
+      Number(detail.target_date.slice(5, 7)),
+    );
+  }
+  return parseApprovalMonth(detail?.target_year, detail?.target_month);
+}
+
+async function mapWithConcurrency(values, concurrency, operation) {
+  const pending = [...values];
+  const results = [];
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (pending.length > 0) {
+        const value = pending.shift();
+        if (value === undefined) return;
+        results.push(await operation(value));
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 router.get("/employee-info", async (req, res) => {
   const oauth = requireOAuth(res);
   if (!oauth) return;
   const { companyId, employeeId } = oauth;
 
   try {
-    const client = new FreeeApiClient();
+    const client = new FreeeApiClient({ identityBinding: oauth });
     await client.ensureValidToken();
-
-    // /users/me always works
     const userInfo = await client.apiRequest("GET", "/users/me");
-    const company = (userInfo.companies || []).find(
-      (c) => String(c.id) === String(companyId),
+    const company = (userInfo?.companies || []).find(
+      (item) => String(item?.id) === companyId,
     );
+    if (!company) {
+      return res.status(409).json({
+        error: "The selected company could not be confirmed for this OAuth user.",
+      });
+    }
 
     const result = {
-      user_id: userInfo.id,
-      employee_id: parseInt(employeeId, 10),
-      company_id: parseInt(companyId, 10),
-      company_name: company ? company.name : null,
-      display_name: company ? company.display_name : null,
-      role: company ? company.role : null,
-      // Fields from /employees/{id} — requires elevated permissions
+      company_name: company.name || null,
+      display_name: company.display_name || null,
       num: null,
       entry_date: null,
-      retire_date: null,
       employment_type: null,
       title: null,
-      birth_date: null,
+      data_source: "oauth",
     };
 
-    // Try to get detailed employee info (may fail with self_only role)
     try {
-      const empData = await client.apiRequest(
+      const now = nowInTz();
+      const employee = await client.apiRequest(
         "GET",
-        `/employees/${employeeId}?company_id=${companyId}&year=${new Date().getFullYear()}&month=${new Date().getMonth() + 1}`,
+        `/employees/${employeeId}?company_id=${companyId}&year=${now.year}&month=${now.month}`,
       );
-      if (empData) {
-        result.num = empData.num || null;
-        result.entry_date = empData.entry_date || null;
-        result.retire_date = empData.retire_date || null;
-        result.birth_date = empData.birth_date || null;
-        if (empData.profile_rule) {
-          result.employment_type = empData.profile_rule.employment_type || null;
-          result.title = empData.profile_rule.title || null;
-        }
-      }
-    } catch (empErr) {
-      log.info(
-        `Employee detail API not accessible (role=${result.role}): ${empErr.message.substring(0, 100)}`,
-      );
-
-      // Fallback: try to use cached data or web scraping
-      const forceRefresh = req.query.force === "true";
-      const cacheDate = getSetting("employee_info_cache_date");
-      const cacheData = getSetting("employee_info_cache");
-      const now = new Date();
-      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-
-      if (!forceRefresh && cacheDate === currentMonth && cacheData) {
-        // Use cached data
-        try {
-          const cached = JSON.parse(cacheData);
-          result.name = cached.name || null;
-          result.department = cached.department || null;
-          result.position = cached.position || null;
-          result.employment_type = cached.employment_type || null;
-          result.entry_date = cached.entry_date || null;
-          result.num = cached.employee_num || null;
-          result.data_source = "cache";
-          log.info("Using cached employee info from web scraping");
-        } catch {
-          /* ignore parse errors */
-        }
-      } else if (hasWebCredentials()) {
-        // Try web scraping
-        try {
-          log.info(
-            `Attempting employee info web scraping (employeeId=${employeeId})`,
-          );
-          const webInfo = await scrapeEmployeeProfile(employeeId);
-          if (webInfo) {
-            result.name = webInfo.name || null;
-            result.department = webInfo.department || null;
-            result.position = webInfo.position || null;
-            result.employment_type = webInfo.employment_type || null;
-            result.entry_date = webInfo.entry_date || null;
-            result.num = webInfo.employee_num || null;
-            result.data_source = "web";
-
-            // Cache the result
-            setSetting("employee_info_cache", JSON.stringify(webInfo));
-            setSetting("employee_info_cache_date", currentMonth);
-            log.info("Employee info scraped from web and cached");
-          }
-        } catch (webErr) {
-          log.warn(
-            `Employee info web scraping failed: ${webErr.message.substring(0, 100)}`,
-          );
-        }
-      }
-    }
-
-    res.json(result);
-  } catch (err) {
-    log.error(`Failed to fetch employee info: ${err.message}`);
-    res.status(500).json({ error: sanitizeError(err) });
-  }
-});
-
-// ===================================================================
-//  Legacy Batch Work-Time (backward compat)
-// ===================================================================
-
-// Keep legacy batch-work-time endpoint for backward compatibility
-router.post("/approval/batch-work-time", async (req, res) => {
-  const { entries, reason } = req.body;
-  if (!entries || !Array.isArray(entries) || entries.length === 0) {
-    return res
-      .status(400)
-      .json({ error: "entries array is required and must not be empty" });
-  }
-  if (entries.length > 50) {
-    return res
-      .status(400)
-      .json({ error: "Maximum 50 entries per batch request" });
-  }
-
-  const oauth = requireOAuth(res);
-  if (!oauth) return;
-  const { companyId } = oauth;
-
-  try {
-    const client = new FreeeApiClient();
-    await client.ensureValidToken();
-
-    const routeId = await findAttendanceRouteId(client, companyId);
-
-    log.info(
-      `Legacy batch-work-time: ${entries.length} entries (route=${routeId})`,
-    );
-
-    const results = [];
-    for (const entry of entries) {
-      try {
-        const body = {
-          company_id: parseInt(companyId, 10),
-          target_date: entry.date,
-        };
-        if (routeId) body.approval_flow_route_id = routeId;
-        // Approval API: work_records + break_records with time-only "HH:MM"
-        if (entry.clock_in_at || entry.clock_out_at) {
-          const workRecord = {};
-          if (entry.clock_in_at)
-            workRecord.clock_in_at = toTimeOnly(entry.clock_in_at);
-          if (entry.clock_out_at)
-            workRecord.clock_out_at = toTimeOnly(entry.clock_out_at);
-          body.work_records = [workRecord];
-        }
-        if (entry.break_records && entry.break_records.length > 0) {
-          body.break_records = entry.break_records.map((br) => ({
-            clock_in_at: toTimeOnly(br.clock_in_at),
-            clock_out_at: toTimeOnly(br.clock_out_at),
-          }));
-        }
-        if (reason) body.comment = reason;
-
-        const result = await client.apiRequest(
-          "POST",
-          "/approval_requests/work_times",
-          body,
-        );
-        results.push({
-          date: entry.date,
-          success: true,
-          id: result.id || null,
-        });
-      } catch (err) {
-        results.push({ date: entry.date, success: false, error: err.message });
-      }
-      await new Promise((r) => setTimeout(r, 200));
-    }
-
-    const succeeded = results.filter((r) => r.success).length;
-    const failed = results.filter((r) => !r.success).length;
-
-    res.json({ success: failed === 0, results, succeeded, failed });
-  } catch (err) {
-    res.status(500).json({ error: sanitizeError(err) });
-  }
-});
-
-// ===================================================================
-//  Batch Withdraw, Approve, and Incoming Requests
-// ===================================================================
-
-/**
- * POST /api/attendance/batch-withdraw - Withdraw multiple approval requests
- *
- * Body: {
- *   requests: [{ id: number, type: string }, ...]
- * }
- *
- * Uses cancel action → DELETE → Playwright web fallback (same as single withdraw).
- */
-router.post("/batch-withdraw", async (req, res) => {
-  const { requests } = req.body;
-  if (!requests || !Array.isArray(requests) || requests.length === 0) {
-    return res.status(400).json({ error: "requests array is required" });
-  }
-  if (requests.length > 50) {
-    return res.status(400).json({ error: "Maximum 50 requests per batch" });
-  }
-
-  const oauth = requireOAuth(res);
-  if (!oauth) return;
-  const { companyId } = oauth;
-
-  log.info(`Batch withdraw: ${requests.length} requests`);
-
-  // Return task_id immediately, process in background
-  const taskId = createTask("batch_withdraw");
-  res.json({ task_id: taskId, status: "running" });
-
-  (async () => {
-    const results = [];
-    let client;
-    try {
-      client = new FreeeApiClient();
-      await client.ensureValidToken();
-    } catch (err) {
-      updateTask(taskId, {
-        status: "failed",
-        error: "OAuth token error. Please reconfigure OAuth.",
+      result.num = employee?.num || null;
+      result.entry_date = employee?.entry_date || null;
+      result.employment_type = employee?.profile_rule?.employment_type || null;
+      result.title = employee?.profile_rule?.title || null;
+      result.data_source = "employee_api";
+    } catch (error) {
+      log.info("Employee detail API was not available", {
+        code: error?.code || "EMPLOYEE_DETAIL_UNAVAILABLE",
       });
-      return;
     }
-
-    for (const request of requests) {
-      const { id, type } = request;
-      const endpoint = TYPE_TO_ENDPOINT[type];
-      if (!endpoint) {
-        results.push({
-          id,
-          type,
-          success: false,
-          error: `Invalid type: ${type}`,
-        });
-        continue;
-      }
-
-      let succeeded = false;
-      let method = null;
-
-      // 1) Try cancel action
-      try {
-        const responseKey = TYPE_TO_RESPONSE_KEY[type];
-        let requestData;
-        try {
-          requestData = await client.apiRequest(
-            "GET",
-            `/approval_requests/${endpoint}/${id}?company_id=${companyId}`,
-          );
-        } catch {
-          /* ignore */
-        }
-
-        const detail = requestData?.[responseKey] || requestData;
-        const currentStep = detail?.current_step_id;
-        const currentRound = detail?.current_round || 1;
-
-        await client.apiRequest(
-          "POST",
-          `/approval_requests/${endpoint}/${id}/actions?company_id=${companyId}`,
-          {
-            approval_action: "cancel",
-            target_round: currentRound,
-            target_step_id: currentStep,
-          },
-        );
-        succeeded = true;
-        method = "cancel";
-      } catch (cancelErr) {
-        log.info(
-          `Batch withdraw: cancel failed for ${id} (${type}): ${cancelErr.message?.substring(0, 80)}`,
-        );
-      }
-
-      // 2) Try DELETE
-      if (!succeeded) {
-        try {
-          await client.apiRequest(
-            "DELETE",
-            `/approval_requests/${endpoint}/${id}?company_id=${companyId}`,
-          );
-          succeeded = true;
-          method = "delete";
-        } catch (deleteErr) {
-          log.info(
-            `Batch withdraw: DELETE failed for ${id} (${type}): ${deleteErr.message?.substring(0, 80)}`,
-          );
-        }
-      }
-
-      // 3) Playwright web fallback
-      if (!succeeded && hasWebCredentials()) {
-        try {
-          const webResult = await withdrawApprovalRequestWeb(type, id);
-          if (webResult.success) {
-            succeeded = true;
-            method = "web_withdraw";
-          }
-        } catch (webErr) {
-          log.error(
-            `Batch withdraw: web fallback failed for ${id}: ${webErr.message}`,
-          );
-        }
-      }
-
-      results.push({
-        id,
-        type,
-        success: succeeded,
-        method: method || "failed",
-      });
-      await new Promise((r) => setTimeout(r, 300));
-    }
-
-    const succeededCount = results.filter((r) => r.success).length;
-    const failedCount = results.filter((r) => !r.success).length;
-    log.info(
-      `Batch withdraw complete: ${succeededCount} succeeded, ${failedCount} failed`,
-    );
-    updateTask(taskId, {
-      status: "completed",
-      success: failedCount === 0,
-      results,
-      succeeded: succeededCount,
-      failed: failedCount,
+    return res.json(result);
+  } catch (error) {
+    return res.status(500).json({
+      error: sanitizeError(error, "Employee information could not be loaded"),
     });
-  })();
+  }
 });
 
-/**
- * POST /api/attendance/batch-approve - Batch approve or reject approval requests
- *
- * Body: {
- *   requests: [{ id: number, type: string, action: 'approve' | 'feedback' }, ...]
- * }
- *
- * 'approve' → approve, 'feedback' → reject/send back
- */
-router.post("/batch-approve", async (req, res) => {
-  const { requests } = req.body;
-  if (!requests || !Array.isArray(requests) || requests.length === 0) {
-    return res.status(400).json({ error: "requests array is required" });
-  }
-  if (requests.length > 50) {
-    return res.status(400).json({ error: "Maximum 50 requests per batch" });
-  }
-
+router.post("/batch-withdraw", async (req, res) => {
+  const normalized = normalizeOperationRequests(req.body?.requests);
+  if (normalized.error) return res.status(400).json({ error: normalized.error });
   const oauth = requireOAuth(res);
   if (!oauth) return;
-  const { companyId } = oauth;
+  const operationIdentity = captureOperationIdentity(oauth);
 
-  log.info(`Batch approve: ${requests.length} requests`);
+  const task = acceptBatchTask(res, "batch_withdraw", operationIdentity, normalized.requests.length);
+  if (!task) return;
 
-  let client;
-  try {
-    client = new FreeeApiClient();
-    await client.ensureValidToken();
-  } catch (err) {
-    return res
-      .status(500)
-      .json({ error: "OAuth token error. Please reconfigure OAuth." });
-  }
-
-  const results = [];
-
-  for (const request of requests) {
-    const { id, type, action } = request;
-    const endpoint = TYPE_TO_ENDPOINT[type];
-
-    if (!endpoint) {
-      results.push({
-        id,
-        type,
-        success: false,
-        error: `Invalid type: ${type}`,
-      });
-      continue;
-    }
-    if (!["approve", "feedback"].includes(action)) {
-      results.push({
-        id,
-        type,
-        success: false,
-        error: `Invalid action: ${action}. Must be 'approve' or 'feedback'`,
-      });
-      continue;
-    }
-
+  const taskPromise = (async () => {
     try {
-      // Get current step/round info
-      const responseKey = TYPE_TO_RESPONSE_KEY[type];
-      let requestData;
-      try {
-        requestData = await client.apiRequest(
-          "GET",
-          `/approval_requests/${endpoint}/${id}?company_id=${companyId}`,
-        );
-      } catch {
-        /* ignore */
+      const client = new FreeeApiClient({ identityBinding: oauth });
+      await client.ensureValidToken();
+      const me = await client.apiRequest("GET", "/users/me");
+      const currentUserId = positiveInteger(me?.id);
+      if (!currentUserId) {
+        throw Object.assign(new Error("OAuth user could not be confirmed"), {
+          code: "OAUTH_USER_UNCONFIRMED",
+        });
+      }
+      for (const request of normalized.requests) {
+        await withAccountOperation(async () => {
+          beginTaskItem(task, request);
+          const result = await withdrawApprovalOperation({
+            client,
+            companyId: oauth.companyId,
+            currentUserId,
+            ...request,
+            webCredentialsAvailable: hasWebCredentials(),
+            withdrawWeb: (type, requestId) =>
+              withdrawApprovalRequestWeb(type, requestId, oauth),
+          });
+          checkpointTaskResult(task, result);
+        });
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      updateTask(task, { status: "completed" });
+    } catch (error) {
+      log.error("Batch withdrawal task failed", {
+        code: error?.code || "BATCH_WITHDRAW_FAILED",
+      });
+      updateTask(task, {
+        status: "failed",
+        code: error?.code === "TASK_PERSISTENCE_FAILED" ? error.code : "BATCH_OPERATION_FAILED",
+        error: "Batch withdrawal stopped before all requests were processed.",
+      });
+    }
+  })();
+  void trackTaskPromise(task, taskPromise);
+});
+
+router.post("/batch-approve", async (req, res) => {
+  const normalized = normalizeOperationRequests(req.body?.requests, {
+    requireAction: true,
+  });
+  if (normalized.error) return res.status(400).json({ error: normalized.error });
+  const oauth = requireOAuth(res);
+  if (!oauth) return;
+  const operationIdentity = captureOperationIdentity(oauth);
+
+  const task = acceptBatchTask(res, "batch_approve", operationIdentity, normalized.requests.length);
+  if (!task) return;
+
+  const taskPromise = (async () => {
+    try {
+      const client = new FreeeApiClient({ identityBinding: oauth });
+      await client.ensureValidToken();
+      const me = await client.apiRequest("GET", "/users/me");
+      const currentUserId = positiveInteger(me?.id);
+      if (!currentUserId) {
+        throw Object.assign(new Error("OAuth user could not be confirmed"), {
+          code: "OAUTH_USER_UNCONFIRMED",
+        });
       }
 
-      const detail = requestData?.[responseKey] || requestData;
-      const currentStep = detail?.current_step_id;
-      const currentRound = detail?.current_round || 1;
-
-      const body = {
-        approval_action: action,
-        target_round: currentRound,
-        target_step_id: currentStep,
+      const confirmUnspecifiedApprover = async ({ id, type, detail }) => {
+        const range = approvalRequestRange(detail);
+        if (!range) return false;
+        const pageResult = await fetchApprovalRequestPages({
+          client,
+          companyId: oauth.companyId,
+          type,
+          status: "in_progress",
+          range,
+          approverId: currentUserId,
+        });
+        if (!pageResult.complete) return false;
+        return pageResult.items.some((item) =>
+          positiveInteger(item?.id) === positiveInteger(id) &&
+          positiveInteger(item?.company_id) === Number(oauth.companyId) &&
+          item?.status === "in_progress" &&
+          approvalRequestInMonth(item, range) &&
+          (isCurrentApprover(item, currentUserId) || !hasExplicitApprover(item)));
       };
 
-      await client.apiRequest(
-        "POST",
-        `/approval_requests/${endpoint}/${id}/actions?company_id=${companyId}`,
-        body,
-      );
-
-      results.push({ id, type, action, success: true });
-      log.info(`Batch approve: ${action} succeeded for ${id} (${type})`);
-    } catch (err) {
-      results.push({
-        id,
-        type,
-        action,
-        success: false,
-        error: err.message?.substring(0, 120),
+      for (const request of normalized.requests) {
+        await withAccountOperation(async () => {
+          beginTaskItem(task, request);
+          const result = await approveApprovalOperation({
+            client,
+            companyId: oauth.companyId,
+            currentUserId,
+            ...request,
+            confirmUnspecifiedApprover,
+          });
+          checkpointTaskResult(task, result);
+        });
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      updateTask(task, { status: "completed" });
+    } catch (error) {
+      log.error("Batch approval task failed", {
+        code: error?.code || "BATCH_APPROVAL_FAILED",
       });
-      log.error(
-        `Batch approve: ${action} failed for ${id} (${type}): ${err.message?.substring(0, 120)}`,
-      );
+      updateTask(task, {
+        status: "failed",
+        code: error?.code === "TASK_PERSISTENCE_FAILED" ? error.code : "BATCH_OPERATION_FAILED",
+        error: "Batch approval stopped before all requests were processed.",
+      });
     }
-
-    await new Promise((r) => setTimeout(r, 200));
-  }
-
-  const succeededCount = results.filter((r) => r.success).length;
-  const failedCount = results.filter((r) => !r.success).length;
-  log.info(
-    `Batch approve complete: ${succeededCount} succeeded, ${failedCount} failed`,
-  );
-  res.json({
-    success: failedCount === 0,
-    results,
-    succeeded: succeededCount,
-    failed: failedCount,
-  });
+  })();
+  void trackTaskPromise(task, taskPromise);
 });
 
-/**
- * GET /api/attendance/incoming-requests - Get approval requests pending the current user's approval
- *
- * Query: year, month
- *
- * Returns requests across all leave/work-time types where current user is the approver.
- */
 router.get("/incoming-requests", async (req, res) => {
-  const { year, month } = req.query;
-  if (!year || !month) {
-    return res
-      .status(400)
-      .json({ error: "year and month are required query parameters" });
+  const range = parseApprovalMonth(req.query.year, req.query.month);
+  if (!range) {
+    return res.status(400).json({
+      error: "year and month must identify a valid month",
+    });
   }
-
   const oauth = requireOAuth(res);
   if (!oauth) return;
-  const { companyId } = oauth;
 
   try {
-    const client = new FreeeApiClient();
+    const client = new FreeeApiClient({ identityBinding: oauth });
     await client.ensureValidToken();
-
-    // Get current user info to find their user ID
-    let currentUserId;
-    try {
-      const me = await client.apiRequest("GET", "/users/me");
-      currentUserId = me.id;
-    } catch (err) {
-      log.error(`Could not determine current user: ${err.message}`);
-      return res.status(500).json({
-        error:
-          "Could not determine current user. Please check OAuth configuration.",
-      });
+    const me = await client.apiRequest("GET", "/users/me");
+    const currentUserId = positiveInteger(me?.id);
+    if (!currentUserId) {
+      return res.status(503).json({ error: "The OAuth user could not be confirmed." });
     }
 
-    const allRequests = [];
-
-    for (const [type, endpoint] of Object.entries(TYPE_TO_ENDPOINT)) {
+    const requestsByKey = new Map();
+    const unavailableTypes = [];
+    let detailLookupCount = 0;
+    for (const type of Object.keys(TYPE_TO_ENDPOINT)) {
+      let typeComplete = true;
       try {
-        // Get in_progress requests for this type
-        const data = await client.apiRequest(
-          "GET",
-          `/approval_requests/${endpoint}?company_id=${companyId}&status=in_progress`,
-        );
-
-        const responseKey = `${TYPE_TO_RESPONSE_KEY[type]}s`; // plural
-        const requests = data?.[responseKey] || data || [];
-
-        if (!Array.isArray(requests)) continue;
-
-        for (const req of requests) {
-          // Filter: only include requests where current user is an approver on the current step
-          const approvers = req.approvers || req.current_step_approvers || [];
-          const isMyApproval = approvers.some(
-            (a) => a.id === currentUserId || a.user_id === currentUserId,
-          );
-
-          // Also check approval_steps for more detailed matching
-          const steps =
-            req.approval_flow_route?.usage_steps || req.approval_steps || [];
-          const currentStepId = req.current_step_id;
-          const currentStepApprovers = steps
-            .filter((s) => s.id === currentStepId)
-            .flatMap((s) => s.approvers || []);
-          const isMyStep = currentStepApprovers.some(
-            (a) => a.id === currentUserId || a.user_id === currentUserId,
-          );
-
-          if (isMyApproval || isMyStep || approvers.length === 0) {
-            allRequests.push({
-              id: req.id,
-              type,
-              status: req.status || "in_progress",
-              target_date: req.target_date,
-              applicant:
-                req.applicant?.display_name || req.applicant_name || "-",
-              applicant_id: req.applicant?.id || req.applicant_id,
-              comment: req.comment,
-              created_at: req.created_at,
-              current_round: req.current_round,
-              current_step_id: req.current_step_id,
-            });
+        const pageResult = await fetchApprovalRequestPages({
+          client,
+          companyId: oauth.companyId,
+          type,
+          status: "in_progress",
+          range,
+          approverId: currentUserId,
+        });
+        typeComplete = pageResult.complete;
+        const candidatesById = new Map();
+        for (const item of pageResult.items) {
+          const id = positiveInteger(item?.id);
+          if (
+            !id ||
+            positiveInteger(item?.company_id) !== Number(oauth.companyId) ||
+            item?.status !== "in_progress" ||
+            !approvalRequestInMonth(item, range) ||
+            (!isCurrentApprover(item, currentUserId) && hasExplicitApprover(item))
+          ) {
+            continue;
           }
+          candidatesById.set(id, item);
         }
-      } catch (err) {
-        log.warn(
-          `incoming-requests: failed to fetch ${type}: ${err.message?.substring(0, 80)}`,
+
+        const remainingLookups = Math.max(
+          0,
+          MAX_INCOMING_DETAIL_LOOKUPS - detailLookupCount,
         );
+        const allCandidates = [...candidatesById.values()];
+        if (allCandidates.length > remainingLookups) typeComplete = false;
+        const candidates = allCandidates.slice(0, remainingLookups);
+        detailLookupCount += candidates.length;
+        const detailResults = await mapWithConcurrency(
+          candidates,
+          INCOMING_DETAIL_CONCURRENCY,
+          async (item) => {
+            const id = positiveInteger(item?.id);
+            try {
+              const response = await client.apiRequest(
+                "GET",
+                `/approval_requests/${approvalTypeEndpoint(type)}/${id}?company_id=${oauth.companyId}`,
+              );
+              return { id, detail: unwrapApprovalDetail(type, response) };
+            } catch {
+              return { id, detail: null };
+            }
+          },
+        );
+
+        for (const { id, detail } of detailResults) {
+          if (
+            !id ||
+            positiveInteger(detail?.id) !== id ||
+            positiveInteger(detail?.company_id) !== Number(oauth.companyId) ||
+            detail?.status !== "in_progress" ||
+            !approvalRequestInMonth(detail, range) ||
+            (!isCurrentApprover(detail, currentUserId) && hasExplicitApprover(detail))
+          ) {
+            typeComplete = false;
+            continue;
+          }
+          const approvalContext = createApprovalMutationContext({
+            request: detail,
+            companyId: oauth.companyId,
+            currentUserId,
+            type,
+          });
+          if (!approvalContext) {
+            typeComplete = false;
+            continue;
+          }
+          requestsByKey.set(`${type}:${id}`, {
+            id,
+            type,
+            status: "in_progress",
+            target_date:
+              detail.target_date ||
+              `${detail.target_year}-${String(detail.target_month).padStart(2, "0")}`,
+            applicant: stableText(
+              detail.applicant?.display_name || detail.applicant_name,
+              100,
+            ),
+            comment:
+              typeof detail.comment === "string"
+                ? stableText(detail.comment, 255, "")
+                : null,
+            created_at: detail.created_at || detail.issue_date || null,
+            approval_context: approvalContext,
+          });
+        }
+      } catch (error) {
+        typeComplete = false;
+        log.warn("Incoming approval type could not be verified", {
+          type,
+          code: error?.code || "INCOMING_REQUEST_LOOKUP_FAILED",
+        });
       }
+      if (!typeComplete) unavailableTypes.push(type);
     }
 
-    // Sort by created_at descending
-    allRequests.sort((a, b) =>
+    const requests = [...requestsByKey.values()].sort((a, b) =>
       (b.created_at || "").localeCompare(a.created_at || ""),
     );
-
-    log.info(
-      `incoming-requests: found ${allRequests.length} requests for user ${currentUserId}`,
-    );
-    res.json({ requests: allRequests, count: allRequests.length });
-  } catch (err) {
-    log.error(`incoming-requests error: ${err.message}`);
-    res.status(500).json({ error: sanitizeError(err) });
+    if (
+      unavailableTypes.length === Object.keys(TYPE_TO_ENDPOINT).length &&
+      requests.length === 0
+    ) {
+      return res.status(503).json({
+        error: "Incoming approval requests could not be verified.",
+      });
+    }
+    return res.json({
+      requests,
+      count: requests.length,
+      complete: unavailableTypes.length === 0,
+      unavailable_types: unavailableTypes,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      error: sanitizeError(error, "Incoming approval requests could not be loaded"),
+    });
   }
 });
 

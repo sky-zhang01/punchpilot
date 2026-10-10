@@ -8,19 +8,21 @@ on:
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: 24.21.0
+
 jobs:
   dry-run:
     name: Merged Branch Dry Run
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
+      - name: Install reviewed Node.js
+        run: bash scripts/ci/install-reviewed-node.sh
 
       - name: Report merged branch cleanup candidates
-        run: npm run housekeeping:branches -- --fetch --remote origin
+        run: node scripts/ci/branch-housekeeping.mjs --fetch --remote origin

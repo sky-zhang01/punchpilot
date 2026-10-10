@@ -7,11 +7,13 @@ import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import api from '../../api';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
-import { fetchAttendance, fetchApprovalRequests, withdrawApprovalRequest, toggleDateSelection } from '../../store/attendanceSlice';
+import { fetchAttendance, fetchApprovalRequests, setYearMonth, withdrawApprovalRequest, toggleDateSelection } from '../../store/attendanceSlice';
 import { fetchStatus } from '../../store/statusSlice';
+import { isAttendanceNonWorking, isMissingPunch as canSelectMissingPunch, missingPunchContext } from '../../store/attendanceSlice';
 import type { AttendanceRecord, ApprovalRequest } from '../../store/attendanceSlice';
 import { notifySuccess, notifyError } from '../../utils/notify';
 import { snakeToCamel } from '../../utils/i18n-helpers';
+import { businessDate, formatLogTimestamp } from '../../utils/date-time';
 
 const { Text } = Typography;
 
@@ -53,8 +55,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({
   const { connectionMode, oauthConfigured, schedules, holidaySkipCountries } = useAppSelector((state) => state.config);
   const { records: attendanceRecords, selectedDates, approvalRequests } = useAppSelector((state) => state.attendance);
   const { data: statusData } = useAppSelector((state) => state.status);
+  const identity = useAppSelector((state) => state.identity);
+  const timezone = statusData?.timezone;
+  const logRequest = React.useRef(0);
+  const holidayRequest = React.useRef(0);
+  const dateWasSelected = React.useRef(false);
 
-  const [currentDate, setCurrentDate] = useState<Dayjs>(dayjs());
+  const [currentDate, setCurrentDate] = useState<Dayjs>(() => dayjs(businessDate(timezone)));
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [calendarData, setCalendarData] = useState<Record<string, any[]>>({});
   const [holidayMap, setHolidayMap] = useState<Record<string, HolidayInfo[]>>({});
@@ -62,71 +69,67 @@ const CalendarView: React.FC<CalendarViewProps> = ({
   const [maxHolidayYear, setMaxHolidayYear] = useState<number>(dayjs().year() + 1);
   const [refreshing, setRefreshing] = useState(false);
 
+  useEffect(() => {
+    setCalendarData({}); setSelectedDate(null);
+  }, [identity]);
+  useEffect(() => {
+    if (!dateWasSelected.current) setCurrentDate(dayjs(businessDate(timezone)));
+  }, [timezone]);
+
   // Countries selected for auto-punch skip — only these get holiday background colors
   const skipSet = new Set((holidaySkipCountries || 'jp').split(',').map(c => c.trim()).filter(Boolean));
 
   // Fetch punch logs for the current month (local logs)
   const fetchLogs = useCallback(async () => {
+    const request = ++logRequest.current;
     try {
       const year = currentDate.year();
       const month = currentDate.month() + 1;
       const res = await api.getCalendarData(year, month);
-      setCalendarData(res.data.days || {});
+      if (request === logRequest.current) setCalendarData(res.data.days || {});
     } catch {
-      setCalendarData({});
+      if (request === logRequest.current) setCalendarData({});
     }
-  }, [currentDate]);
+  }, [currentDate, identity]);
 
   // Fetch freee attendance records + approval requests via Redux
   const fetchAttendanceData = useCallback(async () => {
-    if (!oauthConfigured) return;
     const year = currentDate.year();
     const month = currentDate.month() + 1;
-    dispatch(fetchAttendance({ year, month }));
-    dispatch(fetchApprovalRequests({ year, month }));
-  }, [currentDate, oauthConfigured, dispatch]);
+    dispatch(setYearMonth({ year, month }));
+    if (!oauthConfigured) return;
+    await Promise.all([
+      dispatch(fetchAttendance({ year, month })),
+      dispatch(fetchApprovalRequests({ year, month })),
+    ]);
+  }, [currentDate, oauthConfigured, dispatch, identity]);
 
   // Fetch holidays for both JP and CN for the current year
   const fetchHolidays = useCallback(async () => {
+    const request = ++holidayRequest.current;
     const year = currentDate.year();
+    const [jp, cn, workdays] = await Promise.allSettled([
+      api.getHolidays({ year, country: 'jp' }), api.getHolidays({ year, country: 'cn' }), api.getCnWorkdays(year),
+    ]);
+    if (request !== holidayRequest.current) return;
     const map: Record<string, HolidayInfo[]> = {};
-
-    try {
-      const jpRes = await api.getHolidays({ year, country: 'jp' });
-      for (const h of jpRes.data.national || []) {
-        if (!map[h.date]) map[h.date] = [];
-        map[h.date].push({ date: h.date, name: h.name, country: 'jp' });
+    for (const [response, country] of [[jp, 'jp'], [cn, 'cn']] as const) {
+      if (response.status !== 'fulfilled') continue;
+      for (const holiday of response.value.data.national || []) {
+        (map[holiday.date] ||= []).push({ date: holiday.date, name: holiday.name, country });
       }
-    } catch { /* silent */ }
-
-    try {
-      const cnRes = await api.getHolidays({ year, country: 'cn' });
-      for (const h of cnRes.data.national || []) {
-        if (!map[h.date]) map[h.date] = [];
-        map[h.date].push({ date: h.date, name: h.name, country: 'cn' });
+    }
+    if (jp.status === 'fulfilled') {
+      for (const holiday of jp.value.data.custom || []) {
+        (map[holiday.date] ||= []).push({ date: holiday.date, name: holiday.description || holiday.name, country: 'custom' });
       }
-    } catch { /* silent */ }
-
-    try {
-      const customRes = await api.getHolidays({ year, country: 'jp' });
-      for (const h of customRes.data.custom || []) {
-        if (!map[h.date]) map[h.date] = [];
-        map[h.date].push({ date: h.date, name: h.description || h.name, country: 'custom' });
-      }
-    } catch { /* silent */ }
-
-    // Fetch CN 调休 (makeup workday) data
-    const wdMap: Record<string, WorkdayInfo> = {};
-    try {
-      const wdRes = await api.getCnWorkdays(year);
-      for (const wd of wdRes.data.workdays || []) {
-        wdMap[wd.date] = { date: wd.date, name: wd.name };
-      }
-    } catch { /* silent */ }
-
-    setHolidayMap(map);
-    setWorkdayMap(wdMap);
-  }, [currentDate]);
+    }
+    const workdayMap: Record<string, WorkdayInfo> = {};
+    if (workdays.status === 'fulfilled') {
+      for (const day of workdays.value.data.workdays || []) workdayMap[day.date] = day;
+    }
+    setHolidayMap(map); setWorkdayMap(workdayMap);
+  }, [currentDate, identity]);
 
   useEffect(() => {
     if (externalData) {
@@ -215,7 +218,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({
   const formatTime = (timeStr: string | null): string => {
     if (!timeStr) return '--:--';
     if (timeStr.includes('T')) {
-      return dayjs(timeStr).format('HH:mm');
+      return formatLogTimestamp(timeStr, timezone).time.slice(0, 5);
     }
     return timeStr;
   };
@@ -224,51 +227,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     return date.month() === currentDate.month() && date.year() === currentDate.year();
   };
 
-  // Check if today is past the auto check-in window end time
-  const isTodayPastCheckinTime = useCallback((): boolean => {
-    const checkinSchedule = schedules.find(s => s.action_type === 'checkin');
-    if (!checkinSchedule) return false;
-    const endTime = checkinSchedule.mode === 'random' ? checkinSchedule.window_end : checkinSchedule.fixed_time;
-    if (!endTime) return false;
-    const [h, m] = endTime.split(':').map(Number);
-    const now = dayjs();
-    return now.hour() > h || (now.hour() === h && now.minute() >= m);
-  }, [schedules]);
-
-  // Check if today has any punch activity (from status store's detected state or local logs).
-  // freee work_records.clock_in may be null even when time_clocks already has records,
-  // so we also check the scheduler's detected state from the /api/status endpoint.
-  const todayHasPunchActivity = (): boolean => {
-    const state = statusData?.startup_analysis?.state;
-    if (state && state !== 'not_checked_in' && state !== 'unknown' && state !== 'holiday' && state !== 'disabled') {
-      return true; // freee time_clocks indicate punch activity (working, on_break, checked_out)
-    }
-    // Also check if any successful punch log exists for today (checkin/break_start/break_end/checkout)
-    const punchTypes = new Set(['checkin', 'break_start', 'break_end', 'checkout']);
-    const todayLogs = statusData?.today_logs || [];
-    return todayLogs.some((log: any) => punchTypes.has(log.action_type) && log.status === 'success');
-  };
-
-  // Check if a date is a missing punch day (workday with no clock-in, not absence, not holiday, no pending/approved approval)
-  // Includes today if past check-in window time and no records
-  const isMissingPunch = (dateKey: string, attendance: AttendanceRecord | undefined): boolean => {
-    const today = dayjs().format('YYYY-MM-DD');
-    if (dateKey > today) return false; // Future dates not missing
-    if (dateKey === today && !isTodayPastCheckinTime()) return false; // Today but not past check-in time yet
-    if (!attendance) return false;
-    // Skip if there's a pending or approved approval request for this date
-    const approval = approvalRequests[dateKey];
-    if (approval && (approval.status === 'in_progress' || approval.status === 'approved')) return false;
-    // For today: also check real-time punch activity from time_clocks / local logs.
-    // freee work_records.clock_in can be null even when the user has already punched via time_clocks.
-    if (dateKey === today && todayHasPunchActivity()) return false;
-    return (
-      attendance.day_pattern === 'normal_day' &&
-      !attendance.clock_in &&
-      !attendance.is_absence &&
-      !attendance.is_holiday
-    );
-  };
+  const selectionContext = missingPunchContext(schedules, statusData);
+  const isMissingPunch = (date: string, record: AttendanceRecord | undefined) =>
+    canSelectMissingPunch(date, record, approvalRequests[date] || [], selectionContext);
 
   // Check if a date is selectable for batch punch or leave request
   const isSelectable = (dateKey: string): boolean => {
@@ -279,8 +240,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({
       // 3. Public holidays
       const attendance = attendanceRecords[dateKey];
       if (attendance?.clock_in) return false; // Already punched in
-      const approval = approvalRequests[dateKey];
-      if (approval?.status === 'approved') return false; // Already approved
+      if (attendance?.has_leave || isAttendanceNonWorking(attendance)) return false;
+      const approvals = approvalRequests[dateKey] || [];
+      if (approvals.some((approval) => approval.status === 'approved')) return false;
       const holidays = holidayMap[dateKey] || [];
       if (holidays.some(h => h.country === 'jp' || h.country === 'cn')) return false; // Public holiday
       return true;
@@ -313,7 +275,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     const dayLogs = calendarData[dateKey] || [];
     const holidays = holidayMap[dateKey] || [];
     const attendance = attendanceRecords[dateKey];
-    const todayStr = dayjs().format('YYYY-MM-DD');
+    const todayStr = businessDate(timezone);
     const isToday = dateKey === todayStr;
     const isSelected = dateKey === selectedDate && dateKey !== todayStr;
     const weekend = isWeekend(date);
@@ -432,9 +394,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     }
   };
 
-  const handleWithdraw = async (id: number) => {
+  const handleWithdraw = async (approval: ApprovalRequest) => {
     try {
-      await dispatch(withdrawApprovalRequest(id)).unwrap();
+      await dispatch(withdrawApprovalRequest({ id: approval.id, type: approval.type })).unwrap();
       notifySuccess(t('calendar.withdrawSuccess'));
     } catch (err: any) {
       notifyError(err?.message || t('common.error'));
@@ -452,6 +414,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({
             <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>#{approval.request_number}</Text>
           )}
         </div>
+        <div style={{ fontSize: 11, marginBottom: 2 }}>{approval.type}</div>
         {wr && (
           <div style={{ fontSize: 11, marginBottom: 2 }}>
             {formatTime(wr.clock_in_at)} - {formatTime(wr.clock_out_at)}
@@ -470,7 +433,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({
             danger
             size="small"
             style={{ fontSize: 11, marginTop: 4 }}
-            onClick={(e) => { e.stopPropagation(); handleWithdraw(approval.id); }}
+            onClick={(e) => { e.stopPropagation(); handleWithdraw(approval); }}
           >
             {t('calendar.withdrawApproval')}
           </Button>
@@ -488,7 +451,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     const holidays = holidayMap[dateKey] || [];
     const workday = workdayMap[dateKey];
     const attendance = attendanceRecords[dateKey];
-    const approval = approvalRequests[dateKey];
+    const approvals = approvalRequests[dateKey] || [];
+    const workTimeApproval = approvals.find((approval) => approval.type === 'WorkTime');
     const weekend = isWeekend(date);
     const missing = isMissingPunch(dateKey, attendance);
     const inCurrentMonth = isCurrentMonth(date);
@@ -544,20 +508,25 @@ const CalendarView: React.FC<CalendarViewProps> = ({
         )}
 
         {/* Approval request status tag */}
-        {approval && inCurrentMonth && (
-          <Popover
-            content={renderApprovalPopoverContent(approval)}
-            trigger="click"
-            placement="right"
-          >
-            <Tag
-              color={getApprovalTagColor(approval.status)}
-              style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', margin: 0, cursor: 'pointer' }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {getApprovalTagLabel(approval.status)}
-            </Tag>
-          </Popover>
+        {approvals.length > 0 && inCurrentMonth && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+            {approvals.map((approval) => (
+              <Popover
+                key={`${approval.type}:${approval.id}`}
+                content={renderApprovalPopoverContent(approval)}
+                trigger="click"
+                placement="right"
+              >
+                <Tag
+                  color={getApprovalTagColor(approval.status)}
+                  style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', margin: 0, cursor: 'pointer' }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {getApprovalTagLabel(approval.status)}
+                </Tag>
+              </Popover>
+            ))}
+          </div>
         )}
 
         {/* Freee attendance record */}
@@ -570,7 +539,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({
         )}
 
         {/* Today's real-time punch times from freee time_clocks (when work_records not yet updated) */}
-        {dateKey === dayjs().format('YYYY-MM-DD') && !attendance?.clock_in && (() => {
+        {dateKey === businessDate(timezone) && !attendance?.clock_in && (() => {
           const pts: { type: string; time: string }[] = statusData?.today_punch_times || [];
           if (pts.length === 0) return null;
           const clockIn = pts.find(p => p.type === 'checkin')?.time;
@@ -602,16 +571,16 @@ const CalendarView: React.FC<CalendarViewProps> = ({
         })()}
 
         {/* Approval request time display (when no freee attendance record exists) */}
-        {approval && !attendance?.clock_in && approval.work_records?.[0] && (
+        {workTimeApproval && !attendance?.clock_in && workTimeApproval.work_records?.[0] && (
           <div style={{ fontSize: 10, lineHeight: '14px', color: '#faad14', fontWeight: 500 }}>
-            {formatTime(approval.work_records[0].clock_in_at)} - {formatTime(approval.work_records[0].clock_out_at)}
+            {formatTime(workTimeApproval.work_records[0].clock_in_at)} - {formatTime(workTimeApproval.work_records[0].clock_out_at)}
           </div>
         )}
 
         {/* Approval break time display (when no freee attendance record exists) */}
-        {approval && !attendance?.clock_in && approval.break_records && approval.break_records.length > 0 && (
+        {workTimeApproval && !attendance?.clock_in && workTimeApproval.break_records && workTimeApproval.break_records.length > 0 && (
           <div style={{ fontSize: 9, lineHeight: '12px', color: '#d4a574' }}>
-            {approval.break_records.map((br: { clock_in_at: string | null; clock_out_at: string | null }, i: number) => (
+            {workTimeApproval.break_records.map((br: { clock_in_at: string | null; clock_out_at: string | null }, i: number) => (
               <div key={i}>
                 {t('calendar.break')}: {formatTime(br.clock_in_at)} - {formatTime(br.clock_out_at)}
               </div>
@@ -668,10 +637,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({
   };
 
   const handlePanelChange = (date: Dayjs) => {
+    dateWasSelected.current = true;
     setCurrentDate(date);
+    dispatch(setYearMonth({ year: date.year(), month: date.month() + 1 }));
   };
 
   const handleSelect = (date: Dayjs) => {
+    dateWasSelected.current = true;
     const dateStr = date.format('YYYY-MM-DD');
 
     // In selection mode (batch punch or leave) — toggle checkbox via cell click
@@ -691,6 +663,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     } else {
       setSelectedDate(dateStr);
       setCurrentDate(date);
+      dispatch(setYearMonth({ year: date.year(), month: date.month() + 1 }));
       if (onDateClick) {
         onDateClick(dateStr);
       }

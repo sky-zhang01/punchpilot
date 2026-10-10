@@ -37,9 +37,10 @@ import BatchPunchModal from '../components/logs/BatchPunchModal';
 import LeaveRequestModal from '../components/logs/LeaveRequestModal';
 import WorkRequestModal from '../components/logs/WorkRequestModal';
 import ApprovalSection from '../components/logs/ApprovalSection';
+import TaskRecoveryPanel from '../components/logs/TaskRecoveryPanel';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
 import { fetchConfig } from '../store/configSlice';
-import { selectAllMissingDates, clearDateSelection, fetchCapabilities } from '../store/attendanceSlice';
+import { selectAllMissingDates, clearDateSelection, fetchCapabilities, missingPunchContext } from '../store/attendanceSlice';
 
 const { Title, Text } = Typography;
 
@@ -52,8 +53,11 @@ const COUNTRY_FLAG_MAP: Record<string, string> = {
 const CalendarPage: React.FC = () => {
   const { t } = useTranslation();
   const dispatch = useAppDispatch();
-  const { holidaySkipCountries, autoEnabled, oauthConfigured } = useAppSelector((state) => state.config);
+  const { holidaySkipCountries, autoEnabled, oauthConfigured, schedules } = useAppSelector((state) => state.config);
   const { selectedDates } = useAppSelector((state) => state.attendance);
+  const identity = useAppSelector((state) => state.identity);
+  const statusData = useAppSelector((state) => state.status.data);
+  const holidayRequest = React.useRef(0);
 
   // Country options — use i18n labels
   const COUNTRY_OPTIONS = [
@@ -87,6 +91,11 @@ const CalendarPage: React.FC = () => {
   const [workModalOpen, setWorkModalOpen] = useState(false);
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
   const anyModeActive = selectionMode || leaveSelectionMode || workSelectionMode;
+
+  useEffect(() => {
+    setBatchModalOpen(false); setLeaveModalOpen(false); setWorkModalOpen(false);
+    setSelectionMode(false); setLeaveSelectionMode(false); setWorkSelectionMode(false);
+  }, [identity]);
 
   // Dynamic years from API
   const [availableYears, setAvailableYears] = useState<number[]>([]);
@@ -129,16 +138,19 @@ const CalendarPage: React.FC = () => {
   };
 
   const loadHolidays = useCallback(async () => {
+    const request = ++holidayRequest.current;
     setLoadingHolidays(true);
     try {
       const res = await api.getHolidays({ year, country });
+      if (request !== holidayRequest.current) return;
       setNationalHolidays(res.data.national || []);
       setCustomHolidays(res.data.custom || []);
     } catch (err) {
+      if (request !== holidayRequest.current) return;
       console.error('[CalendarPage] Failed to load holidays:', err);
       notifyError(t('holidays.loadFailed'));
     } finally {
-      setLoadingHolidays(false);
+      if (request === holidayRequest.current) setLoadingHolidays(false);
     }
   }, [year, country, t]);
 
@@ -151,7 +163,7 @@ const CalendarPage: React.FC = () => {
     if (oauthConfigured) {
       dispatch(fetchCapabilities());
     }
-  }, [oauthConfigured, dispatch]);
+  }, [oauthConfigured, dispatch, identity]);
 
   const handleAdd = async () => {
     if (!newDate || !newDesc.trim()) return;
@@ -219,7 +231,7 @@ const CalendarPage: React.FC = () => {
   };
 
   const handleSelectAllMissing = () => {
-    dispatch(selectAllMissingDates());
+    dispatch(selectAllMissingDates(missingPunchContext(schedules, statusData)));
   };
 
   const handleOpenBatchModal = () => {
@@ -420,11 +432,12 @@ const CalendarPage: React.FC = () => {
                   </Button>
                 </>
               )}
-              {/* Approval section only when no mode active */}
-              {!anyModeActive && <ApprovalSection />}
             </Space>
           )}
 
+          {!anyModeActive && <ApprovalSection />}
+
+          <TaskRecoveryPanel />
           <MonthlySummary />
           <Card>
             <CalendarView selectionMode={selectionMode} leaveSelectionMode={leaveSelectionMode || workSelectionMode} refreshKey={calendarRefreshKey} />
@@ -544,11 +557,11 @@ const CalendarPage: React.FC = () => {
       <Tabs defaultActiveKey="calendar" items={tabItems} />
 
       {/* Batch Punch Modal */}
-      <BatchPunchModal open={batchModalOpen} onClose={handleBatchModalClose} />
+      <BatchPunchModal key={`punch-${identity}`} open={batchModalOpen} onClose={handleBatchModalClose} />
 
       {/* Leave Request Modal */}
-      <LeaveRequestModal open={leaveModalOpen} onClose={handleLeaveModalClose} preSelectedDates={selectedDates} />
-      <WorkRequestModal open={workModalOpen} onClose={handleWorkModalClose} preSelectedDates={selectedDates} />
+      <LeaveRequestModal key={`leave-${identity}`} open={leaveModalOpen} onClose={handleLeaveModalClose} preSelectedDates={selectedDates} />
+      <WorkRequestModal key={`work-${identity}`} open={workModalOpen} onClose={handleWorkModalClose} preSelectedDates={selectedDates} />
 
       {/* Add custom holiday modal */}
       <Modal

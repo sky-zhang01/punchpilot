@@ -20,6 +20,9 @@ import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { updateSchedule, fetchConfig, toggleMaster } from '../../store/configSlice';
 import { notifySuccess, notifyError } from '../../utils/notify';
 import api from '../../api';
+import { isTimeString, timeToMinutes } from '../../../../shared/date-time.js';
+import type { ScheduleConfig, ScheduleUpdate } from '../../contracts';
+import { resolveBreakTimes } from '../../../../shared/schedule-policy.js';
 
 const { Title, Text } = Typography;
 
@@ -38,20 +41,14 @@ const ScheduleConfigCard: React.FC = () => {
   const { schedules, autoEnabled, holidaySkipCountries } = useAppSelector((state) => state.config);
 
   // Local state for editing
-  const [editState, setEditState] = useState<Record<string, any>>({});
+  const [editState, setEditState] = useState<Record<string, string>>({});
 
-  const getEditValue = (actionType: string, field: string, fallback: any) => {
+  const getEditValue = (actionType: string, field: string, fallback: string | null) => {
     return editState[`${actionType}.${field}`] ?? fallback;
   };
 
-  const setEditValue = (actionType: string, field: string, value: any) => {
+  const setEditValue = (actionType: string, field: string, value: string) => {
     setEditState((prev) => ({ ...prev, [`${actionType}.${field}`]: value }));
-  };
-
-  // Helper: convert "HH:mm" to total minutes
-  const timeToMinutes = (timeStr: string) => {
-    const [h, m] = timeStr.split(':').map(Number);
-    return h * 60 + m;
   };
 
   const handleSave = async (actionType: string) => {
@@ -59,72 +56,43 @@ const ScheduleConfigCard: React.FC = () => {
     if (!schedule) return;
 
     const mode = getEditValue(actionType, 'mode', schedule.mode);
-    const data: Record<string, any> = { mode };
+    if (mode !== 'fixed' && mode !== 'random') return;
+    const data: ScheduleUpdate = { mode };
 
     if (mode === 'fixed') {
-      data.fixed_time = getEditValue(actionType, 'fixed_time', schedule.fixed_time);
+      data.fixed_time = getEditValue(actionType, 'fixed_time', schedule.fixed_time) || '';
     } else {
-      data.window_start = getEditValue(actionType, 'window_start', schedule.window_start);
-      data.window_end = getEditValue(actionType, 'window_end', schedule.window_end);
+      data.window_start = getEditValue(actionType, 'window_start', schedule.window_start) || '';
+      data.window_end = getEditValue(actionType, 'window_end', schedule.window_end) || '';
     }
 
-    // Validate window_start < window_end for random mode
-    if (mode === 'random' && data.window_start && data.window_end) {
-      if (timeToMinutes(data.window_start) >= timeToMinutes(data.window_end)) {
-        notifyError(t('scheduleCard.windowStartBeforeEnd'));
+    const edited = { ...schedule, ...data };
+    const times = mode === 'fixed' ? [edited.fixed_time] : [edited.window_start, edited.window_end];
+    if (times.some(value => !isTimeString(value))) {
+      notifyError(t('scheduleCard.invalidTime'));
+      return;
+    }
+    if (mode === 'random' && timeToMinutes(edited.window_start!) >= timeToMinutes(edited.window_end!)) {
+      notifyError(t('scheduleCard.windowStartBeforeEnd'));
+      return;
+    }
+    if (actionType === 'break_start' || actionType === 'break_end') {
+      const start = actionType === 'break_start' ? edited : schedules.find(value => value.action_type === 'break_start');
+      const end = actionType === 'break_end' ? edited : schedules.find(value => value.action_type === 'break_end');
+      const range = (config: Pick<ScheduleConfig, 'mode' | 'fixed_time' | 'window_start' | 'window_end'>) => ({ ...config, fixed_time: config.fixed_time || '', window_start: config.window_start || '', window_end: config.window_end || '' });
+      if (!start || !end || [start, end].some(config => (config.mode === 'fixed'
+        ? [config.fixed_time] : [config.window_start, config.window_end]).some(value => !isTimeString(value)))) {
+        notifyError(t('scheduleCard.invalidTime'));
+        return;
+      }
+      if (!resolveBreakTimes(range(start), range(end), {}, () => 0)) {
+        notifyError(t('scheduleCard.breakMinDuration'));
         return;
       }
     }
 
-    // Validate break duration >= 60 minutes (both fixed and random modes)
-    // fixed: end.fixed - start.fixed >= 60
-    // random: end.window_end - start.window_start >= 60
-    //   (ensures at least 60 minutes of selectable break range)
-    if (actionType === 'break_start' || actionType === 'break_end') {
-      const breakStartSchedule = schedules.find((s) => s.action_type === 'break_start');
-      const breakEndSchedule = schedules.find((s) => s.action_type === 'break_end');
-      if (breakStartSchedule && breakEndSchedule) {
-        const startMode = actionType === 'break_start' ? mode : getEditValue('break_start', 'mode', breakStartSchedule.mode);
-        const endMode = actionType === 'break_end' ? mode : getEditValue('break_end', 'mode', breakEndSchedule.mode);
-
-        // "earliest possible start" of break
-        let earliestStart: string | undefined;
-        if (startMode === 'fixed') {
-          earliestStart = actionType === 'break_start'
-            ? (data.fixed_time || getEditValue('break_start', 'fixed_time', breakStartSchedule.fixed_time))
-            : getEditValue('break_start', 'fixed_time', breakStartSchedule.fixed_time);
-        } else {
-          // random: earliest start = window_start of break_start
-          earliestStart = actionType === 'break_start'
-            ? (data.window_start || getEditValue('break_start', 'window_start', breakStartSchedule.window_start))
-            : getEditValue('break_start', 'window_start', breakStartSchedule.window_start);
-        }
-
-        // "latest possible end" of break
-        let latestEnd: string | undefined;
-        if (endMode === 'fixed') {
-          latestEnd = actionType === 'break_end'
-            ? (data.fixed_time || getEditValue('break_end', 'fixed_time', breakEndSchedule.fixed_time))
-            : getEditValue('break_end', 'fixed_time', breakEndSchedule.fixed_time);
-        } else {
-          // random: latest end = window_end of break_end
-          latestEnd = actionType === 'break_end'
-            ? (data.window_end || getEditValue('break_end', 'window_end', breakEndSchedule.window_end))
-            : getEditValue('break_end', 'window_end', breakEndSchedule.window_end);
-        }
-
-        if (earliestStart && latestEnd) {
-          const duration = timeToMinutes(latestEnd) - timeToMinutes(earliestStart);
-          if (duration < 60) {
-            notifyError(t('scheduleCard.breakMinDuration'));
-            return;
-          }
-        }
-      }
-    }
-
     try {
-      await dispatch(updateSchedule({ actionType, data }));
+      await dispatch(updateSchedule({ actionType, data })).unwrap();
       notifySuccess(t('scheduleCard.saved'));
     } catch {
       notifyError(t('scheduleCard.saveFailed'));
@@ -132,9 +100,9 @@ const ScheduleConfigCard: React.FC = () => {
   };
 
   // Convert "HH:mm" string to dayjs for TimePicker value
-  const toDayjs = (timeStr: string | undefined) => {
-    if (!timeStr) return undefined;
-    return dayjs(timeStr, TIME_FORMAT);
+  const toDayjs = (timeStr: string | null | undefined) => {
+    if (!isTimeString(timeStr)) return undefined;
+    return dayjs(`2000-01-01T${timeStr}:00`);
   };
 
   // Convert dayjs to "HH:mm" string for storage
@@ -153,7 +121,7 @@ const ScheduleConfigCard: React.FC = () => {
     const countries = values.join(',') || 'jp';
     try {
       await api.setHolidaySkipCountries(countries);
-      dispatch(fetchConfig());
+      await dispatch(fetchConfig()).unwrap();
       notifySuccess(t('scheduleCard.saved'));
     } catch {
       notifyError(t('scheduleCard.saveFailed'));
@@ -179,7 +147,7 @@ const ScheduleConfigCard: React.FC = () => {
             </Text>
             <Switch
               checked={autoEnabled}
-              onChange={() => dispatch(toggleMaster())}
+              onChange={() => dispatch(toggleMaster()).unwrap().catch(() => notifyError(t('scheduleCard.saveFailed')))}
             />
           </Space>
         </div>

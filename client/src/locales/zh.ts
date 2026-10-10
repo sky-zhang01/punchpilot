@@ -1,4 +1,22 @@
 const zh = {
+  tasks: {
+    admissionUnknown: "无法确认本次提交是否已接收。请先核对freee和执行日志，勿重复提交。",
+    "title": "批量任务结果",
+    "running": "执行中",
+    "completed": "处理结束",
+    "failed": "发生错误后停止",
+    "interrupted": "任务已中断",
+    "counts": "成功 {{succeeded}} · 失败 {{failed}} · 结果未知 {{unknown}} · 未处理 {{unprocessed}}",
+    "totalUnknown": "未知",
+    "verifyUnknown": "结果未知的项目请先在 freee 核实，再决定是否重新提交。",
+    "queryPaused": "查询已停止，已记录结果仍保留。可继续查询，无需重新提交。",
+    "resume": "继续查询",
+    "dismiss": "从本次会话隐藏",
+    "batch_punch": "批量补卡",
+    "batch_leave": "批量休假",
+    "batch_withdraw": "批量撤回",
+    "batch_approve": "批量审批"
+  },
   // Navigation
   nav: {
     dashboard: "仪表盘",
@@ -67,6 +85,12 @@ const zh = {
 
   // Dashboard
   dashboard: {
+    schedulePaused: "自动打卡因配置暂停",
+    schedulePausedHint: "请检查排班设置后再恢复。",
+    scheduleWindowPast: "配置的时间已经过去，请检查排班。",
+    scheduleTimeNonexistent: "夏令时切换导致该本地时间不存在，请选择其他时间。",
+    breakWindowIncompatible: "休息时间窗口无法组成60–90分钟的休息。",
+
     title: "仪表盘",
     startupAnalysis: "状态",
     detectedState: "检测到的状态",
@@ -85,6 +109,9 @@ const zh = {
     authRequired: "freee 需要重新授权",
     authRequiredDesc: "OAuth 授权刷新前，自动打卡会暂停。",
     reauthorize: "重新授权",
+    calendarGuardUnavailable: "无法确认节假日状态",
+    calendarGuardUnavailableDesc:
+      "节假日数据不可用且没有已验证缓存时，自动打卡会暂停。",
   },
 
   // Startup Analysis (user-friendly messages)
@@ -200,13 +227,15 @@ const zh = {
     credsSaved: "凭据已保存",
     credsCleared: "凭据已清除",
     enterBoth: "请输入用户名和密码",
+    enterWebCompany: "请输入 freee 中显示的准确事务所名称",
     encryption: "您的凭据已安全加密存储",
     savedUsername: "已保存账号",
     singleUserNote:
       "本工具设计为单用户使用。在多个实例中使用同一考勤账户可能导致冲突。",
-    webAccountTitle: "freee 网页登录（备用）",
+    webAccountTitle: "freee 网页登录",
     webAccountDesc:
-      "用于 API 无法处理的操作，如部门审批路径、休假申请等。与 API 自动协同工作。",
+      "用于浏览器模式打卡和仅限网页的申请。修改考勤数据前会确认目标事务所名称。",
+    webCompanyPlaceholder: "freee 中显示的准确事务所名称",
     // 连接模式
     connectionModeTitle: "连接模式",
     modeBrowser: "浏览器模拟",
@@ -274,7 +303,7 @@ const zh = {
       "选择自动打卡时跳过哪些国家的法定节假日。日历上可以独立显示所有国家的假日。",
     holidaySkipPlaceholder: "选择国家",
     lunchBreak: "休息时间规则",
-    lunchBreakNote: "休息时间必须至少60分钟",
+    lunchBreakNote: "休息时间必须为60–90分钟",
   },
 
   // Schedule Card
@@ -291,7 +320,8 @@ const zh = {
     resolvedTime: "今日计划时间",
     saved: "配置已保存",
     saveFailed: "保存失败",
-    breakMinDuration: "休息时间必须至少60分钟",
+    breakMinDuration: "休息时间必须为60–90分钟",
+    invalidTime: "请输入有效的HH:mm时间",
     windowStartBeforeEnd: "开始时间必须早于结束时间",
     checkin: "签到",
     checkout: "签退",
@@ -301,6 +331,7 @@ const zh = {
 
   // Logs
   logs: {
+    timezoneUnrecorded: "未记录时区，保留原始本地时间",
     title: "执行日志",
     dateFilter: "日期",
     actionFilter: "操作",
@@ -310,6 +341,25 @@ const zh = {
     screenshotTitle: "截图",
     before: "执行前",
     after: "执行后",
+    errorCode: "错误代码",
+    failureStage: "失败阶段",
+    stages: {
+      accountQueue: "账户操作队列",
+      authorization: "授权守卫",
+      browserInit: "浏览器启动",
+      calendarGuard: "节假日日历守卫",
+      cleanup: "浏览器清理",
+      companyBinding: "事务所绑定",
+      credentials: "凭证检查",
+      employeeIdentity: "员工身份确认",
+      identityBinding: "账户身份绑定",
+      login: "网页登录",
+      mutation: "考勤写入",
+      operation: "自动化操作",
+      queue: "自动化队列",
+      stateRead: "考勤状态读取",
+      workRecordGuard: "工作记录与休假守卫",
+    },
   },
 
   // Calendar
@@ -394,6 +444,8 @@ const zh = {
     myRequests: "我的申请",
     incomingRequests: "待审批",
     noIncomingRequests: "暂无待审批的申请",
+    approvalListIncomplete:
+      "部分申请类型未能确认，操作前请同时检查 freee 网页。",
     batchWithdraw: "批量撤回",
     batchWithdrawConfirm: "确定要批量撤回选中的申请吗？",
     noWithdrawable: "未选择可撤回的申请",
@@ -410,6 +462,12 @@ const zh = {
     leaveType: "休假类型",
     paidHoliday: "带薪休假",
     specialHoliday: "特别休假",
+    specialHolidaySetting: "特别休假设置",
+    selectSpecialHolidaySetting: "选择可用设置",
+    specialHolidaySettingsUnavailable:
+      "无法获取该日期可用的特别休假设置。",
+    specialHolidaySingleDateOnly:
+      "特别休假请一次只申请一个日期。",
     absence: "缺勤",
     holidayWork: "假日出勤",
     overtimeWork: "加班申请",

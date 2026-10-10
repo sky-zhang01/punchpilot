@@ -1,14 +1,46 @@
 import { Router } from 'express';
+import { isDateString as isCalendarDate } from '../../shared/date-time.js';
+import { parseExternalId } from '../freee-values.js';
+import { nowInTz } from '../timezone.js';
 import { addCustomHoliday, deleteCustomHoliday } from '../db.js';
 import { getHolidaysForMonth, getHolidaysForYear, fetchNationalHolidays, getAvailableYears, getCnWorkdays } from '../holiday.js';
-import logger from '../logger.js';
+import logger, { safeErrorMetadata } from '../logger.js';
+import { scheduler } from '../scheduler.js';
+import { withAccountOperation } from '../account-operation.js';
 
 const log = logger.child('Holidays');
 
 const router = Router();
 
-const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const SUPPORTED_COUNTRIES = ['jp', 'cn'];
+
+async function mutateCalendarConfiguration(operation) {
+  scheduler.stopAll();
+  try {
+    const result = await withAccountOperation(operation);
+    await scheduler.initialize();
+    return result;
+  } catch (error) {
+    await scheduler.initialize().catch((schedulerError) => {
+      log.error('Scheduler recovery failed after calendar update error', {
+        error: safeErrorMetadata(schedulerError),
+      });
+    });
+    throw error;
+  }
+}
+
+function parseYear(value) {
+  if (!/^\d{4}$/.test(String(value || ''))) return null;
+  const year = Number(value);
+  return year >= 2000 && year <= 2100 ? year : null;
+}
+
+function parseMonth(value) {
+  if (!/^(?:[1-9]|1[0-2])$/.test(String(value || ''))) return null;
+  return Number(value);
+}
+
 
 /**
  * GET /api/holidays - Get holidays (national + custom)
@@ -17,8 +49,10 @@ const SUPPORTED_COUNTRIES = ['jp', 'cn'];
 router.get('/', async (req, res) => {
   const { year, month, country } = req.query;
 
-  if (!year) {
-    return res.status(400).json({ error: 'year is required' });
+  const parsedYear = parseYear(year);
+  const parsedMonth = month == null ? null : parseMonth(month);
+  if (!parsedYear || (month != null && !parsedMonth)) {
+    return res.status(400).json({ error: 'valid year and month are required' });
   }
 
   const countryCode = country || 'jp';
@@ -29,13 +63,13 @@ router.get('/', async (req, res) => {
   try {
     let holidays;
     if (month) {
-      holidays = await getHolidaysForMonth(parseInt(year, 10), parseInt(month, 10), countryCode);
+      holidays = await getHolidaysForMonth(parsedYear, parsedMonth, countryCode);
     } else {
-      holidays = await getHolidaysForYear(parseInt(year, 10), countryCode);
+      holidays = await getHolidaysForYear(parsedYear, countryCode);
     }
     res.json(holidays);
   } catch (error) {
-    log.error(`Failed to fetch holidays: ${error.message}`);
+    log.error('Failed to fetch holidays', { error: safeErrorMetadata(error) });
     res.status(500).json({ error: 'Failed to fetch holidays' });
   }
 });
@@ -48,7 +82,7 @@ router.get('/national', async (req, res) => {
     const holidays = await fetchNationalHolidays();
     res.json(holidays);
   } catch (error) {
-    log.error(`Failed to fetch national holidays: ${error.message}`);
+    log.error('Failed to fetch national holidays', { error: safeErrorMetadata(error) });
     res.status(500).json({ error: 'Failed to fetch national holidays' });
   }
 });
@@ -68,11 +102,11 @@ router.get('/available-years', async (req, res) => {
   try {
     const allYears = await getAvailableYears(countryCode);
     // Filter: show from (currentYear - 1) to the latest available year
-    const currentYear = new Date().getFullYear();
+    const currentYear = nowInTz().year;
     const years = allYears.filter(y => y >= currentYear - 1);
     res.json({ years, country: countryCode });
   } catch (error) {
-    log.error(`Failed to fetch available years: ${error.message}`);
+    log.error('Failed to fetch available years', { error: safeErrorMetadata(error) });
     res.status(500).json({ error: 'Failed to fetch available years' });
   }
 });
@@ -86,12 +120,13 @@ router.get('/available-years', async (req, res) => {
 router.get('/cn-workdays', async (req, res) => {
   const { year } = req.query;
 
-  if (!year) {
-    return res.status(400).json({ error: 'year is required' });
+  const parsedYear = parseYear(year);
+  if (!parsedYear) {
+    return res.status(400).json({ error: 'valid year is required' });
   }
 
   try {
-    const y = parseInt(year, 10);
+    const y = parsedYear;
     // Ensure CN data is fetched first (populates workday cache as side effect)
     await fetchNationalHolidays('cn', y);
     const workdays = getCnWorkdays(y);
@@ -99,7 +134,7 @@ router.get('/cn-workdays', async (req, res) => {
     result.sort((a, b) => a.date.localeCompare(b.date));
     res.json({ workdays: result, year: y });
   } catch (error) {
-    log.error(`Failed to fetch CN workdays: ${error.message}`);
+    log.error('Failed to fetch CN workdays', { error: safeErrorMetadata(error) });
     res.status(500).json({ error: 'Failed to fetch CN workdays' });
   }
 });
@@ -108,21 +143,29 @@ router.get('/cn-workdays', async (req, res) => {
  * POST /api/holidays/custom - Add a custom holiday
  * Body: { date: "YYYY-MM-DD", description: "string" }
  */
-router.post('/custom', (req, res) => {
+router.post('/custom', async (req, res) => {
   const { date, description } = req.body;
 
-  if (!date || !DATE_REGEX.test(date)) {
+  if (!date || !isCalendarDate(date)) {
     return res.status(400).json({ error: 'date is required in YYYY-MM-DD format' });
   }
+  if (
+    description != null &&
+    (typeof description !== 'string' || description.length > 200)
+  ) {
+    return res.status(400).json({ error: 'description must be 200 characters or less' });
+  }
+  const normalizedDescription = description || '';
 
   try {
-    const result = addCustomHoliday(date, description || '');
-    res.json({ id: result.lastInsertRowid, date, description: description || '' });
+    const result = await mutateCalendarConfiguration(() =>
+      addCustomHoliday(date, normalizedDescription));
+    res.json({ id: result.lastInsertRowid, date, description: normalizedDescription });
   } catch (error) {
     if (error.message.includes('UNIQUE')) {
       return res.status(409).json({ error: 'Holiday already exists for this date' });
     }
-    log.error(`Failed to add custom holiday: ${error.message}`);
+    log.error('Failed to add custom holiday', { error: safeErrorMetadata(error) });
     res.status(500).json({ error: 'Failed to add custom holiday' });
   }
 });
@@ -130,8 +173,12 @@ router.post('/custom', (req, res) => {
 /**
  * DELETE /api/holidays/custom/:id - Delete a custom holiday
  */
-router.delete('/custom/:id', (req, res) => {
-  const result = deleteCustomHoliday(parseInt(req.params.id, 10));
+router.delete('/custom/:id', async (req, res) => {
+  if (!parseExternalId(req.params.id)) {
+    return res.status(400).json({ error: 'Invalid holiday ID' });
+  }
+  const result = await mutateCalendarConfiguration(() =>
+    deleteCustomHoliday(parseExternalId(req.params.id)));
   if (result.changes === 0) {
     return res.status(404).json({ error: 'Holiday not found' });
   }

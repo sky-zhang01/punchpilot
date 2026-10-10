@@ -7,7 +7,7 @@ import {
   CloseCircleFilled,
 } from '@ant-design/icons';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { saveAccount, clearAccount } from '../../store/configSlice';
+import { saveAccount, clearAccount, fetchConfig } from '../../store/configSlice';
 import api from '../../api';
 import { notifySuccess, notifyError, notifyWarning } from '../../utils/notify';
 
@@ -16,22 +16,25 @@ const { Title, Text } = Typography;
 const BrowserAccountCard: React.FC = () => {
   const { t } = useTranslation();
   const dispatch = useAppDispatch();
-  const { freeeConfigured, freeeUsername } = useAppSelector((state) => state.config);
+  const { freeeConfigured, freeeUsername, webIdentityVerified } = useAppSelector(
+    (state) => state.config,
+  );
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [saving, setSaving] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [envUsername, setEnvUsername] = useState('');
+  const webCredentialsAvailable = freeeConfigured || Boolean(envUsername);
 
   useEffect(() => {
     api
       .getAccount()
       .then((res) => {
-        if (res.data.username) {
-          setUsername(res.data.username);
-          if (res.data.source === 'env') setEnvUsername(res.data.username);
-        }
+        if (res.data.freee_username) setUsername(res.data.freee_username);
+        if (res.data.freee_company_name) setCompanyName(res.data.freee_company_name);
+        if (res.data.has_env_credentials) setEnvUsername(res.data.env_username);
       })
       .catch(() => {});
   }, []);
@@ -42,9 +45,17 @@ const BrowserAccountCard: React.FC = () => {
       notifyWarning(t('settings.enterBoth'));
       return;
     }
+    if (!companyName.trim()) {
+      notifyWarning(t('settings.enterWebCompany'));
+      return;
+    }
     setSaving(true);
     try {
-      await dispatch(saveAccount({ username: username.trim(), password })).unwrap();
+      await dispatch(saveAccount({
+        username: username.trim(),
+        password,
+        companyName: companyName.trim(),
+      })).unwrap();
       setPassword('');
       notifySuccess(t('settings.credsSaved'));
       setSaving(false);
@@ -53,6 +64,7 @@ const BrowserAccountCard: React.FC = () => {
       setVerifying(true);
       try {
         const res = await api.verifyWebCredentials();
+        await dispatch(fetchConfig());
         if (res.data.valid) {
           notifySuccess(t('settings.verifySuccess'));
         } else {
@@ -70,10 +82,15 @@ const BrowserAccountCard: React.FC = () => {
   };
 
   const handleClear = async () => {
-    await dispatch(clearAccount());
-    setUsername('');
-    setPassword('');
-    notifySuccess(t('settings.credsCleared'));
+    try {
+      await dispatch(clearAccount()).unwrap();
+      setUsername('');
+      setPassword('');
+      setCompanyName('');
+      notifySuccess(t('settings.credsCleared'));
+    } catch (error: any) {
+      notifyError(error?.response?.data?.error || t('common.error'));
+    }
   };
 
   // Verify connection — separate action, checks res.data.valid (matches backend)
@@ -81,6 +98,7 @@ const BrowserAccountCard: React.FC = () => {
     setVerifying(true);
     try {
       const res = await api.verifyWebCredentials();
+      await dispatch(fetchConfig());
       if (res.data.valid) {
         notifySuccess(t('settings.verifySuccess'));
       } else {
@@ -95,15 +113,19 @@ const BrowserAccountCard: React.FC = () => {
 
   return (
     <Card>
-      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
         {/* Header with status tag */}
         <Space align="center">
           <Title level={5} style={{ margin: 0 }}>
             {t('settings.webAccountTitle')}
           </Title>
-          {freeeConfigured ? (
+          {webCredentialsAvailable && webIdentityVerified ? (
             <Tag icon={<CheckCircleFilled />} color="success">
               {t('settings.configured')}
+            </Tag>
+          ) : webCredentialsAvailable ? (
+            <Tag icon={<CloseCircleFilled />} color="warning">
+              {t('settings.verify')}
             </Tag>
           ) : (
             <Tag icon={<CloseCircleFilled />} color="error">
@@ -136,6 +158,13 @@ const BrowserAccountCard: React.FC = () => {
           </Space>
         )}
 
+        {webCredentialsAvailable && companyName && (
+          <Space size={8} align="center">
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.oauthCompany')}:</Text>
+            <Text code style={{ fontSize: 12 }}>{companyName}</Text>
+          </Space>
+        )}
+
         {/* Credentials form */}
         <Form layout="vertical" size="middle">
           <Form.Item label={t('settings.username')}>
@@ -152,6 +181,14 @@ const BrowserAccountCard: React.FC = () => {
               onChange={(e) => setPassword(e.target.value)}
             />
           </Form.Item>
+          <Form.Item label={t('settings.oauthCompany')}>
+            <Input
+              placeholder={t('settings.webCompanyPlaceholder')}
+              value={companyName}
+              maxLength={200}
+              onChange={(e) => setCompanyName(e.target.value)}
+            />
+          </Form.Item>
         </Form>
 
         {/* Action buttons */}
@@ -161,7 +198,7 @@ const BrowserAccountCard: React.FC = () => {
           </Button>
           <Button
             onClick={handleVerify}
-            disabled={verifying || !freeeConfigured}
+            disabled={verifying || !webCredentialsAvailable}
             loading={verifying}
           >
             {verifying ? t('settings.verifying') : t('settings.verify')}

@@ -22,7 +22,7 @@ const LoadingFallback: React.FC = () => (
 );
 
 // Auth guard component
-const AuthGuard: React.FC<{ children: React.ReactNode; allowMustChange?: boolean }> = ({
+export const AuthGuard: React.FC<{ children: React.ReactNode; allowMustChange?: boolean }> = ({
   children,
   allowMustChange = false,
 }) => {

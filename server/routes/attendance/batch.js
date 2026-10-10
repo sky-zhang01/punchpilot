@@ -1,23 +1,243 @@
+import { parseExternalId as positiveInteger } from "../../freee-values.js";
 import { Router } from "express";
-import { getStrategyCache, setStrategyCache, insertLog } from "../../db.js";
-import { FreeeApiClient } from "../../freee-api.js";
+import { getStrategyCache, setStrategyCache } from "../../db.js";
+import { beginTaskItem, clearTaskItem, checkpointTaskResult, updateTask, getTask, trackTaskPromise } from "../../async-tasks.js";
+import { isDateString } from "../../../shared/date-time.js";
+import { todayStringInTz } from "../../timezone.js";
+import {
+  FREEE_API_ERROR_CODES,
+  FreeeApiClient,
+} from "../../freee-api.js";
+import { safeErrorMetadata } from "../../logger.js";
+import {
+  getWorkRecordNonWorkingDayStatus,
+  hasWorkRecordClockTimes,
+  workRecordMatchesDate,
+} from "../../work-record-status.js";
 import {
   submitWebCorrections,
   hasWebCredentials,
 } from "../../automation/index.js";
 import {
   log,
-  createTask,
-  updateTask,
-  getTask,
+  captureOperationIdentity,
+  acceptBatchTask,
   sanitizeError,
   toFreeeTime,
   toTimeOnly,
   requireOAuth,
   findAttendanceRouteIds,
 } from "./utils.js";
+import {
+  fetchApprovalRequestPages,
+  parseApprovalMonth,
+} from "./approval-list-service.js";
+import {
+  acquireAccountOperation,
+  releaseAccountOperation,
+} from "../../account-operation.js";
 
 const router = Router();
+
+const DIRECT_WEB_FALLBACK_ERROR_CODES = new Set([
+  FREEE_API_ERROR_CODES.DIRECT_EDIT_DISABLED,
+  FREEE_API_ERROR_CODES.PERMISSION_DENIED,
+]);
+
+const APPROVAL_WEB_FALLBACK_ERROR_CODES = new Set([
+  FREEE_API_ERROR_CODES.PERMISSION_DENIED,
+  FREEE_API_ERROR_CODES.WEB_FORM_REQUIRED,
+]);
+
+const UNKNOWN_WEB_RESULT_CODES = new Set([
+  "web_result_unconfirmed", "web_form_submission_unconfirmed",
+  "web_account_identity_changed_outcome_unknown", "web_automation_outcome_unknown",
+  "web_automation_failed", "web_automation_paused_after_unconfirmed_outcome",
+]);
+
+function isValidEntryTime(value, date) {
+  if (typeof value !== "string") return false;
+  const normalized = toFreeeTime(value, date);
+  const match = normalized?.match(
+    /^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}):(\d{2})$/,
+  );
+  return !!match &&
+    match[1] === date &&
+    Number(match[2]) <= 23 &&
+    Number(match[3]) <= 59 &&
+    Number(match[4]) <= 59;
+}
+
+function entryTimeSeconds(value, date) {
+  const normalized = toFreeeTime(value, date);
+  const match = normalized?.match(/ (\d{2}):(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+}
+
+function evaluateExistingRecord(record, date) {
+  if (
+    !record ||
+    typeof record !== "object" ||
+    Array.isArray(record) ||
+    !workRecordMatchesDate(record, date)
+  ) {
+    return { confirmed: false, blocked: false, reason: null, editable: false };
+  }
+
+  const nonWorkingStatus = getWorkRecordNonWorkingDayStatus(record);
+  if (!nonWorkingStatus.confirmed) {
+    return { confirmed: false, blocked: false, reason: null, editable: false };
+  }
+  if (nonWorkingStatus.isNonWorkingDay) {
+    return {
+      confirmed: true,
+      blocked: true,
+      reason: "already_non_working_day",
+      editable: false,
+    };
+  }
+  if (hasWorkRecordClockTimes(record)) {
+    return {
+      confirmed: true,
+      blocked: true,
+      reason: "already_has_work_record",
+      editable: false,
+    };
+  }
+  return {
+    confirmed: true,
+    blocked: false,
+    reason: null,
+    editable: record.is_editable === true,
+  };
+}
+
+function isMutationOutcomeUnconfirmed(error) {
+  return (
+    error?.code === FREEE_API_ERROR_CODES.API_TRANSIENT ||
+    error?.code === FREEE_API_ERROR_CODES.API_RESPONSE_UNCONFIRMED ||
+    error?.code === "OAUTH_IDENTITY_CHANGED"
+  );
+}
+
+function allowsWebFallback(error, allowlist) {
+  return allowlist.has(error?.code);
+}
+
+function stableWebCorrectionError(value) {
+  const error = String(value || "");
+  return /^web_[a-z0-9_]{1,64}$/.test(error)
+    ? error
+    : "web_form_rejected";
+}
+
+function workRecordMatchesEntry(record, entry) {
+  const value = record?.work_record || record;
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    !workRecordMatchesDate(value, entry?.date)
+  ) {
+    return false;
+  }
+
+  const segmentArrays = [
+    value.employee_work_record_segments,
+    value.work_record_segments,
+  ].filter(Array.isArray);
+  if (segmentArrays.length > 1) return false;
+
+  let segment;
+  if (segmentArrays.length === 1) {
+    if (segmentArrays[0].length !== 1) return false;
+    [segment] = segmentArrays[0];
+  } else {
+    if (value.clock_in_at === undefined || value.clock_out_at === undefined) {
+      return false;
+    }
+    segment = value;
+  }
+  if (
+    toTimeOnly(segment?.clock_in_at) !== toTimeOnly(entry.clock_in_at) ||
+    toTimeOnly(segment?.clock_out_at) !== toTimeOnly(entry.clock_out_at)
+  ) {
+    return false;
+  }
+  const expectedBreaks = entry.break_records || [];
+  const actualBreaks = Array.isArray(value.break_records) ? value.break_records : [];
+  if (actualBreaks.length !== expectedBreaks.length) return false;
+  return expectedBreaks.every(
+    (expected, index) =>
+      toTimeOnly(actualBreaks[index]?.clock_in_at) ===
+        toTimeOnly(expected.clock_in_at) &&
+      toTimeOnly(actualBreaks[index]?.clock_out_at) ===
+        toTimeOnly(expected.clock_out_at),
+  );
+}
+
+function validateBatchEntries(entries) {
+  const dates = new Set();
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return "Each entry must be an object";
+    }
+    if (!isDateString(entry.date) || dates.has(entry.date)) {
+      return "Each entry must have a unique valid date";
+    }
+    dates.add(entry.date);
+    if (entry.is_editable !== undefined && typeof entry.is_editable !== "boolean") {
+      return "is_editable must be boolean";
+    }
+    if (entry.clock_in_at === undefined || entry.clock_out_at === undefined) {
+      return "Each entry must contain clock_in_at and clock_out_at";
+    }
+    if (
+      (entry.clock_in_at !== undefined && !isValidEntryTime(entry.clock_in_at, entry.date)) ||
+      (entry.clock_out_at !== undefined && !isValidEntryTime(entry.clock_out_at, entry.date))
+    ) {
+      return "Each supplied work time must be valid";
+    }
+    const clockIn = entryTimeSeconds(entry.clock_in_at, entry.date);
+    const clockOut = entryTimeSeconds(entry.clock_out_at, entry.date);
+    if (clockIn === null || clockOut === null || clockOut <= clockIn) {
+      return "clock_out_at must be after clock_in_at";
+    }
+    if (entry.break_records !== undefined && !Array.isArray(entry.break_records)) {
+      return "break_records must be an array";
+    }
+    if (entry.break_records?.length > 20) {
+      return "break_records must contain at most 20 entries";
+    }
+    let previousBreakEnd = null;
+    for (const record of entry.break_records || []) {
+      if (
+        !record ||
+        typeof record !== "object" ||
+        Array.isArray(record) ||
+        !isValidEntryTime(record.clock_in_at, entry.date) ||
+        !isValidEntryTime(record.clock_out_at, entry.date)
+      ) {
+        return "Each break record must contain valid start and end times";
+      }
+      const breakStart = entryTimeSeconds(record.clock_in_at, entry.date);
+      const breakEnd = entryTimeSeconds(record.clock_out_at, entry.date);
+      if (
+        breakStart === null ||
+        breakEnd === null ||
+        breakStart < clockIn ||
+        breakEnd > clockOut ||
+        breakEnd <= breakStart ||
+        (previousBreakEnd !== null && breakStart < previousBreakEnd)
+      ) {
+        return "Break records must be ordered, non-overlapping, and inside work time";
+      }
+      previousBreakEnd = breakEnd;
+    }
+  }
+  return null;
+}
 
 // ===================================================================
 //  Batch Operations — smart endpoint, auto-decides strategy per date
@@ -32,9 +252,9 @@ const router = Router();
  * }
  *
  * The server automatically decides per-date:
- *   - is_editable=true  → PUT /work_records (direct write, no approval)
- *   - is_editable=false → POST /approval_requests/work_times (needs approval)
- *   - No approval route → always try PUT regardless
+ *   - confirmed editable record → PUT /work_records (direct write)
+ *   - confirmed non-editable record → POST /approval_requests/work_times
+ *   - unavailable atomic API path → verified freee Web form fallback
  *
  * The frontend just sends dates + times. The backend handles the rest.
  * This is the user's one-click "batch punch" — they don't need to know
@@ -44,10 +264,13 @@ const router = Router();
  * GET /api/attendance/batch/status/:taskId - Poll async batch task status
  */
 router.get("/batch/status/:taskId", (req, res) => {
-  const task = getTask(req.params.taskId);
+  let task;
+  try { task = getTask(req.params.taskId); } catch {
+    return res.status(503).json({ error: "Task status could not be read. Try checking again.", code: "TASK_PERSISTENCE_FAILED" });
+  }
   if (!task) {
     return res.status(404).json({
-      error: "Task not found. It may have expired or the server was restarted. Check the execution logs for results.",
+      error: "Task not found for the selected account, or its result has expired. Check freee and the execution logs before retrying.",
       code: "TASK_NOT_FOUND",
     });
   }
@@ -55,7 +278,7 @@ router.get("/batch/status/:taskId", (req, res) => {
 });
 
 router.post("/batch", async (req, res) => {
-  const { entries, reason } = req.body;
+  const { entries, reason } = req.body || {};
 
   if (!entries || !Array.isArray(entries) || entries.length === 0) {
     return res
@@ -67,19 +290,40 @@ router.post("/batch", async (req, res) => {
       .status(400)
       .json({ error: "Maximum 50 entries per batch request" });
   }
+  const validationError = validateBatchEntries(entries);
+  if (validationError) {
+    return res.status(400).json({ error: validationError });
+  }
+  if (reason !== undefined && (typeof reason !== "string" || reason.length > 255)) {
+    return res.status(400).json({ error: "reason must be 255 characters or less" });
+  }
 
   const oauth = requireOAuth(res);
   if (!oauth) return;
   const { companyId, employeeId } = oauth;
+  const operationIdentity = captureOperationIdentity(oauth);
 
   // Return task_id immediately, process in background
-  const taskId = createTask("batch_punch");
-  res.json({ task_id: taskId, status: "running" });
+  const task = acceptBatchTask(res, "batch_punch", operationIdentity, entries.length);
+  if (!task) return;
+  const taskId = task.id;
 
   // Background processing (runs after response is sent)
-  (async () => {
+  const taskPromise = (async () => {
+    function checkpointResult(result) {
+      checkpointTaskResult(task, result, {
+        action_type: "batch_correction",
+        scheduled_time: result.date,
+        status: result.success ? "success" : "failure",
+        trigger_type: "batch",
+        error_message: result.success
+          ? `task_id=${taskId} | method=${result.method}`
+          : `task_id=${taskId} | method=${result.method} | ${result.error || "operation_failed"}`,
+      });
+    }
+
     try {
-      const client = new FreeeApiClient();
+      const client = new FreeeApiClient({ identityBinding: oauth });
       await client.ensureValidToken();
 
       // Probe once: does this company have approval workflows?
@@ -88,20 +332,20 @@ router.post("/batch", async (req, res) => {
         fallbackRouteId,
         primaryRouteUserId,
         primaryRouteNeedsApprover,
+        lookupVerified: approvalRouteLookupVerified,
       } = await findAttendanceRouteIds(client, companyId);
-      const routeId = primaryRouteId || fallbackRouteId;
+      const primaryId = positiveInteger(primaryRouteId);
+      const fallbackId = positiveInteger(fallbackRouteId);
+      const routeId = primaryId || fallbackId;
       const hasApproval = !!routeId;
-
-      // Get current user ID for self-approval (needed when route requires approver specification)
-      let selfUserId = null;
-      if (primaryRouteNeedsApprover) {
-        try {
-          const me = await client.apiRequest("GET", "/users/me");
-          selfUserId = me.id;
-        } catch {
-          /* ignore */
-        }
-      }
+      const configuredApproverId = positiveInteger(primaryRouteUserId);
+      const approvalRouteUsable =
+        hasApproval &&
+        !(
+          routeId === primaryId &&
+          primaryRouteNeedsApprover &&
+          !configuredApproverId
+        );
 
       // Helper: build the approval request body
       function buildApprovalBody(entry, useRouteId) {
@@ -112,9 +356,9 @@ router.post("/batch", async (req, res) => {
         };
 
         // Some routes require specifying an approver (e.g. "承認者を指定" type)
-        // Use the route's configured user_id, or fall back to self (admin can self-approve)
-        if (primaryRouteNeedsApprover && useRouteId === primaryRouteId) {
-          body.approver_id = primaryRouteUserId || selfUserId;
+        // Use only the approver explicitly supplied by the verified route.
+        if (primaryRouteNeedsApprover && useRouteId === primaryId) {
+          body.approver_id = configuredApproverId;
         }
 
         // work_records: array of { clock_in_at, clock_out_at } in "HH:MM" format
@@ -139,12 +383,93 @@ router.post("/batch", async (req, res) => {
         return body;
       }
 
+      async function precheckEntry(entry) {
+        try {
+          const existingRecord = await client.apiRequest(
+            "GET",
+            `/employees/${employeeId}/work_records/${entry.date}?company_id=${companyId}`,
+          );
+          return evaluateExistingRecord(existingRecord, entry.date);
+        } catch (error) {
+          log.warn(`[${entry.date}] Existing record could not be confirmed`, {
+            error: safeErrorMetadata(error),
+          });
+          return {
+            confirmed: false,
+            blocked: false,
+            reason: null,
+            editable: false,
+          };
+        }
+      }
+
+      let applicantIdPromise = null;
+
+      async function currentApplicantId() {
+        if (!applicantIdPromise) {
+          applicantIdPromise = client
+            .apiRequest("GET", "/users/me")
+            .then((me) => {
+              const id = positiveInteger(me?.id);
+              if (!id) {
+                const error = new Error("OAuth user could not be confirmed");
+                error.code = FREEE_API_ERROR_CODES.API_RESPONSE_UNCONFIRMED;
+                throw error;
+              }
+              return id;
+            });
+        }
+        return applicantIdPromise;
+      }
+
+      async function pendingWorkTimeDates(date) {
+        const applicantId = await currentApplicantId();
+        const company = positiveInteger(companyId);
+        const range = parseApprovalMonth(
+          date.slice(0, 4),
+          Number(date.slice(5, 7)),
+        );
+        if (!company || !range) {
+          const error = new Error("Pending WorkTime query was not confirmed");
+          error.code = FREEE_API_ERROR_CODES.API_RESPONSE_UNCONFIRMED;
+          throw error;
+        }
+        const pageResult = await fetchApprovalRequestPages({
+          client,
+          companyId: company,
+          type: "WorkTime",
+          status: "in_progress",
+          range,
+          applicantId,
+        });
+        if (!pageResult.complete) {
+          const error = new Error("Pending WorkTime query was incomplete");
+          error.code = FREEE_API_ERROR_CODES.API_RESPONSE_UNCONFIRMED;
+          throw error;
+        }
+
+        const dates = new Set();
+        for (const item of pageResult.items) {
+          if (
+            !positiveInteger(item?.id) ||
+            positiveInteger(item?.company_id) !== company ||
+            positiveInteger(item?.applicant_id) !== applicantId ||
+            item?.status !== "in_progress" ||
+            typeof item?.target_date !== "string" ||
+            !item.target_date.startsWith(`${range.prefix}-`)
+          ) {
+            const error = new Error("Pending WorkTime response was not confirmed");
+            error.code = FREEE_API_ERROR_CODES.API_RESPONSE_UNCONFIRMED;
+            throw error;
+          }
+          dates.add(item.target_date);
+        }
+        return dates;
+      }
+
       // Helper: submit one entry via approval request
       async function submitApproval(entry) {
-        const body = buildApprovalBody(
-          entry,
-          primaryRouteId || fallbackRouteId,
-        );
+        const body = buildApprovalBody(entry, routeId);
         return await client.apiRequest(
           "POST",
           "/approval_requests/work_times",
@@ -152,90 +477,34 @@ router.post("/batch", async (req, res) => {
         );
       }
 
-      // Helper: submit one entry via time_clocks (打刻 API)
-      // Sends sequential clock_in → break_begin → break_end → clock_out punches.
-      // For self_only users, datetime cannot be specified — only works for "now" punching.
-      // Past dates will fail with permission error; we catch and give a clear message.
-      async function submitTimeClock(entry) {
-        const cid = parseInt(companyId, 10);
-        const punches = [];
-
-        if (entry.clock_in_at) {
-          punches.push({
-            type: "clock_in",
-            datetime: toFreeeTime(entry.clock_in_at),
-            base_date: entry.date,
-          });
-        }
-        if (entry.break_records && entry.break_records.length > 0) {
-          for (const br of entry.break_records) {
-            if (br.clock_in_at)
-              punches.push({
-                type: "break_begin",
-                datetime: toFreeeTime(br.clock_in_at),
-                base_date: entry.date,
-              });
-            if (br.clock_out_at)
-              punches.push({
-                type: "break_end",
-                datetime: toFreeeTime(br.clock_out_at),
-                base_date: entry.date,
-              });
-          }
-        }
-        if (entry.clock_out_at) {
-          punches.push({
-            type: "clock_out",
-            datetime: toFreeeTime(entry.clock_out_at),
-            base_date: entry.date,
-          });
-        }
-
-        for (const punch of punches) {
-          await client.apiRequest(
-            "POST",
-            `/employees/${employeeId}/time_clocks`,
-            { company_id: cid, ...punch },
-          );
-          await new Promise((r) => setTimeout(r, 200));
-        }
-        return { method: "time_clock", punches: punches.length };
-      }
-
       // Track which strategies have failed at company level
-      let approvalRouteBlocked = false;
+      let approvalRouteBlocked = hasApproval && !approvalRouteUsable;
 
       // Check strategy cache for this month
-      const now = new Date();
-      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-      const cachedStrategy = getStrategyCache(currentMonth);
+      const currentMonth = todayStringInTz().slice(0, 7);
+      const cachedStrategy = getStrategyCache(
+        currentMonth,
+        operationIdentity.identityKey,
+      );
+      const cachedBestStrategy = ["direct", "approval", "web"].includes(
+        cachedStrategy?.best_strategy,
+      )
+        ? cachedStrategy.best_strategy
+        : null;
 
       log.info(
-        `Batch: ${entries.length} entries, approval=${hasApproval}${routeId ? ` (route=${routeId})` : ""}${cachedStrategy ? `, cached_best=${cachedStrategy.best_strategy}` : ""}`,
+        `Batch: ${entries.length} entries, approval=${hasApproval}${cachedBestStrategy ? `, cached_hint=${cachedBestStrategy}` : ""}`,
       );
 
-      const results = [];
       let webFallbackEntries = []; // Entries that need Strategy 4 (web fallback)
       // Company-level strategy detection: once a strategy fails for company-wide reasons,
-      // skip it for all remaining entries. Pre-seed from cache if available.
-      let directDisabled = cachedStrategy ? !cachedStrategy.direct_ok : false;
-      if (cachedStrategy && !cachedStrategy.approval_ok)
-        approvalRouteBlocked = true;
+      // skip it for remaining entries only after a current, allowlisted rejection.
+      let directDisabled = false;
 
-      // FAST PATH: If cached best strategy is 'web', skip API strategies 1-3 entirely
-      const skipApiStrategies = cachedStrategy?.best_strategy === "web";
-      if (skipApiStrategies) {
-        log.info(
-          `Cached best=web → skipping API strategies 1-3, sending all ${entries.length} entries directly to Strategy 4`,
-        );
-        webFallbackEntries = [...entries];
-      }
-
-      // Process each entry with 3-tier auto-fallback (skipped if cached best=web):
+      // Process each entry with atomic API strategies:
       //   1. PUT /work_records (direct write) — fastest, no approval needed
       //   2. POST /approval_requests/work_times (approval) — needs approval route
-      //   3. POST /time_clocks (clock punches) — last resort, simulates real-time clocking
-      for (let i = 0; !skipApiStrategies && i < entries.length; i++) {
+      for (let i = 0; i < entries.length; i++) {
         const entry = entries[i];
 
         // Refresh token periodically for large batches to avoid expiry mid-operation
@@ -243,220 +512,393 @@ router.post("/batch", async (req, res) => {
           try {
             await client.ensureValidToken();
           } catch (e) {
-            log.warn(`Token refresh at entry ${i}: ${e.message}`);
+            log.warn(`Token refresh failed at entry ${i}`, {
+              error: safeErrorMetadata(e),
+            });
           }
         }
 
-        // Pre-check: skip entries where freee already has a clock_in record
+        await acquireAccountOperation();
         try {
-          const existingRecord = await client.apiRequest(
-            "GET",
-            `/employees/${employeeId}/work_records/${entry.date}?company_id=${companyId}`,
-          );
-          if (existingRecord?.clock_in_at) {
-            results.push({
-              date: entry.date,
-              success: true,
-              method: "skipped",
-              reason: "Already has clock_in in freee",
-            });
-            log.info(`[${entry.date}] Skipped: already has clock_in in freee`);
-            continue;
-          }
-        } catch (e) {
-          log.warn(
-            `[${entry.date}] Pre-check failed (proceeding): ${e.message}`,
-          );
+        const precheck = await precheckEntry(entry);
+        if (!precheck.confirmed) {
+          checkpointResult({
+            date: entry.date,
+            success: false,
+            method: "precheck_failed",
+            error: "existing_record_unconfirmed",
+          });
+          continue;
+        }
+        if (precheck.blocked) {
+          checkpointResult({
+            date: entry.date,
+            success: true,
+            method: "skipped",
+            reason: precheck.reason,
+          });
+          log.info(`[${entry.date}] Skipped because freee already has protected data`);
+          continue;
+        }
+
+        let pendingDatesForEntry;
+        try {
+          pendingDatesForEntry = await pendingWorkTimeDates(entry.date);
+        } catch (error) {
+          checkpointResult({
+            date: entry.date,
+            success: false,
+            method: "pending_precheck_failed",
+            error: "pending_approval_unconfirmed",
+          });
+          log.warn(`[${entry.date}] Pending WorkTime could not be confirmed`, {
+            error: safeErrorMetadata(error),
+          });
+          continue;
+        }
+        if (pendingDatesForEntry.has(entry.date)) {
+          checkpointResult({
+            date: entry.date,
+            success: true,
+            method: "skipped",
+            reason: "already_pending_approval",
+          });
+          continue;
         }
 
         let succeeded = false;
-        const editable =
-          entry.is_editable !== undefined ? entry.is_editable : true;
+        let outcomeUnconfirmed = false;
+        let fallbackBlocked = false;
+        let webFallbackCode = null;
 
         // === Strategy 1: Direct PUT ===
-        if (!directDisabled && (editable || !hasApproval)) {
+        if (
+          !directDisabled &&
+          precheck.editable
+        ) {
           try {
-            const body = { company_id: parseInt(companyId, 10) };
-            if (entry.clock_in_at)
-              body.clock_in_at = toFreeeTime(entry.clock_in_at);
-            if (entry.clock_out_at)
-              body.clock_out_at = toFreeeTime(entry.clock_out_at);
+            const body = {
+              company_id: parseInt(companyId, 10),
+              work_record_segments: [
+                {
+                  clock_in_at: toFreeeTime(entry.clock_in_at, entry.date),
+                  clock_out_at: toFreeeTime(entry.clock_out_at, entry.date),
+                },
+              ],
+            };
             if (entry.break_records && entry.break_records.length > 0) {
               body.break_records = entry.break_records.map((br) => ({
-                clock_in_at: toFreeeTime(br.clock_in_at),
-                clock_out_at: toFreeeTime(br.clock_out_at),
+                clock_in_at: toFreeeTime(br.clock_in_at, entry.date),
+                clock_out_at: toFreeeTime(br.clock_out_at, entry.date),
               }));
             }
-            await client.apiRequest(
+            beginTaskItem(task, { date: entry.date });
+            const directResult = await client.apiRequest(
               "PUT",
               `/employees/${employeeId}/work_records/${entry.date}?company_id=${companyId}`,
               body,
             );
-            results.push({ date: entry.date, success: true, method: "direct" });
+            let directConfirmed = workRecordMatchesEntry(directResult, entry);
+            if (!directConfirmed) {
+              const confirmedRecord = await client.apiRequest(
+                "GET",
+                `/employees/${employeeId}/work_records/${entry.date}?company_id=${companyId}`,
+              );
+              directConfirmed = workRecordMatchesEntry(confirmedRecord, entry);
+            }
+            if (!directConfirmed) {
+              const error = new Error("Direct work-record update could not be confirmed");
+              error.code = FREEE_API_ERROR_CODES.API_RESPONSE_UNCONFIRMED;
+              throw error;
+            }
+            checkpointResult({ date: entry.date, success: true, method: "direct" });
             log.info(`[${entry.date}] Direct write succeeded`);
             succeeded = true;
           } catch (err) {
-            const errMsg = err.message || "";
-            if (errMsg.includes("勤怠修正") || errMsg.includes("無効")) {
-              directDisabled = true;
+            if (["TASK_PERSISTENCE_FAILED", "TASK_STATE_INVALID"].includes(err?.code)) throw err;
+            if (isMutationOutcomeUnconfirmed(err)) {
+              outcomeUnconfirmed = true;
+              checkpointResult({
+                date: entry.date,
+                success: false,
+                method: "direct_unconfirmed",
+                error: "mutation_outcome_unconfirmed",
+                unknown: true,
+              });
+              log.warn(`[${entry.date}] Direct write outcome is unconfirmed`, {
+                error: safeErrorMetadata(err),
+              });
+            } else if (allowsWebFallback(err, DIRECT_WEB_FALLBACK_ERROR_CODES)) {
+              webFallbackCode = err.code;
+              if (err.code === FREEE_API_ERROR_CODES.DIRECT_EDIT_DISABLED) {
+                directDisabled = true;
+              }
               log.info(
-                `[${entry.date}] Direct write disabled at company level, trying next strategy`,
+                `[${entry.date}] Direct write rejected with allowlisted code ${err.code}`,
               );
             } else {
-              log.warn(
-                `[${entry.date}] Direct write failed: ${errMsg.substring(0, 120)}`,
-              );
+              fallbackBlocked = true;
+              checkpointResult({
+                date: entry.date,
+                success: false,
+                method: "direct_failed",
+                error: "api_fallback_not_allowed",
+              });
+              log.warn(`[${entry.date}] Direct write failed`, {
+                error: safeErrorMetadata(err),
+              });
             }
           }
         }
 
         // === Strategy 2: Approval request ===
-        if (!succeeded && hasApproval && !approvalRouteBlocked) {
+        if (
+          !succeeded &&
+          !outcomeUnconfirmed &&
+          !fallbackBlocked &&
+          hasApproval &&
+          approvalRouteUsable &&
+          approvalRouteLookupVerified &&
+          !approvalRouteBlocked
+        ) {
           try {
+            beginTaskItem(task, { date: entry.date });
             const result = await submitApproval(entry);
-            results.push({
-              date: entry.date,
-              success: true,
-              method: "approval",
-              id: result.id || null,
-            });
-            log.info(`[${entry.date}] Approval request succeeded`);
-            succeeded = true;
+            const requestId = positiveInteger(result?.id || result?.work_time?.id);
+            if (!requestId) {
+              outcomeUnconfirmed = true;
+              checkpointResult({
+                date: entry.date,
+                success: false,
+                method: "approval_unconfirmed",
+                error: "mutation_outcome_unconfirmed",
+                unknown: true,
+              });
+              log.warn(`[${entry.date}] Approval response had no confirmed request ID`);
+            } else {
+              checkpointResult({
+                date: entry.date,
+                success: true,
+                method: "approval",
+                id: requestId,
+              });
+              log.info(`[${entry.date}] Approval request succeeded`);
+              pendingDatesForEntry.add(entry.date);
+              succeeded = true;
+            }
           } catch (err) {
-            const errMsg = err.message || "";
-            if (errMsg.includes("役職") || errMsg.includes("部門")) {
-              approvalRouteBlocked = true;
+            if (["TASK_PERSISTENCE_FAILED", "TASK_STATE_INVALID"].includes(err?.code)) throw err;
+            if (isMutationOutcomeUnconfirmed(err)) {
+              outcomeUnconfirmed = true;
+              checkpointResult({
+                date: entry.date,
+                success: false,
+                method: "approval_unconfirmed",
+                error: "mutation_outcome_unconfirmed",
+                unknown: true,
+              });
+              log.warn(`[${entry.date}] Approval submission is unconfirmed`, {
+                error: safeErrorMetadata(err),
+              });
+            } else if (allowsWebFallback(err, APPROVAL_WEB_FALLBACK_ERROR_CODES)) {
+              webFallbackCode = err.code;
+              if (err.code === FREEE_API_ERROR_CODES.WEB_FORM_REQUIRED) {
+                approvalRouteBlocked = true;
+              }
               log.info(
-                `[${entry.date}] Approval route uses dept/position (unsupported by API), trying time_clocks`,
+                `[${entry.date}] Approval rejected with allowlisted code ${err.code}`,
               );
             } else {
-              log.warn(
-                `[${entry.date}] Approval request failed: ${errMsg.substring(0, 120)}`,
-              );
+              fallbackBlocked = true;
+              checkpointResult({
+                date: entry.date,
+                success: false,
+                method: "approval_failed",
+                error: "api_fallback_not_allowed",
+              });
+              log.warn(`[${entry.date}] Approval request failed`, {
+                error: safeErrorMetadata(err),
+              });
             }
           }
         }
 
-        // === Strategy 3: Time clocks (打刻 API) ===
-        if (!succeeded) {
-          try {
-            await submitTimeClock(entry);
-            results.push({
-              date: entry.date,
-              success: true,
-              method: "time_clock",
-            });
-            log.info(`[${entry.date}] Time clock punches succeeded`);
-            succeeded = true;
-          } catch (err) {
-            const errMsg = err.message || "";
-            // Collect for Strategy 4 (web fallback)
+        // Sequential time-clock writes are intentionally excluded here: a partial
+        // failure cannot be rolled back and is unsafe for historical corrections.
+        if (!succeeded && !outcomeUnconfirmed && !fallbackBlocked) {
+          const noAtomicApiPath =
+            approvalRouteLookupVerified &&
+            (!precheck.editable || directDisabled) &&
+            (!hasApproval || !approvalRouteUsable || approvalRouteBlocked);
+          if (!webFallbackCode && noAtomicApiPath) {
+            webFallbackCode = "ATOMIC_API_UNAVAILABLE";
+          }
+          if (webFallbackCode) {
+            clearTaskItem(task);
             webFallbackEntries.push(entry);
-            log.warn(
-              `[${entry.date}] API strategies 1-3 all failed. Last error: ${errMsg.substring(0, 150)}`,
+            log.info(
+              `[${entry.date}] Queued for Web fallback after ${webFallbackCode}`,
             );
+          } else {
+            checkpointResult({
+              date: entry.date,
+              success: false,
+              method: "api_unavailable",
+              error: "api_fallback_not_allowed",
+            });
           }
         }
 
+        } finally {
+          releaseAccountOperation();
+        }
         await new Promise((r) => setTimeout(r, 200));
       }
 
       // === Strategy 4: Playwright Web fallback ===
-      // Pre-check web fallback entries: skip any that already have clock_in in freee
-      if (webFallbackEntries.length > 0) {
-        const filteredWebEntries = [];
-        for (const entry of webFallbackEntries) {
+      let webFallbackAttempted = false;
+      for (const entry of webFallbackEntries) {
+        await acquireAccountOperation();
+        try {
+          const precheck = await precheckEntry(entry);
+          if (!precheck.confirmed) {
+            checkpointResult({
+              date: entry.date,
+              success: false,
+              method: "precheck_failed",
+              error: "existing_record_unconfirmed",
+            });
+            continue;
+          }
+          if (precheck.blocked) {
+            checkpointResult({
+              date: entry.date,
+              success: true,
+              method: "skipped",
+              reason: precheck.reason,
+            });
+            continue;
+          }
+          if ((entry.break_records || []).length > 1) {
+            checkpointResult({
+              date: entry.date,
+              success: false,
+              method: "web_unsupported",
+              error: "web_multiple_breaks_unsupported",
+            });
+            continue;
+          }
+
           try {
-            const existingRecord = await client.apiRequest(
-              "GET",
-              `/employees/${employeeId}/work_records/${entry.date}?company_id=${companyId}`,
-            );
-            if (existingRecord?.clock_in_at) {
-              results.push({
+            const pendingDates = await pendingWorkTimeDates(entry.date);
+            if (pendingDates.has(entry.date)) {
+              checkpointResult({
                 date: entry.date,
                 success: true,
                 method: "skipped",
-                reason: "Already has clock_in in freee",
+                reason: "already_pending_approval",
               });
-              log.info(
-                `[${entry.date}] Web fallback skipped: already has clock_in in freee`,
-              );
               continue;
             }
-          } catch (e) {
-            log.warn(
-              `[${entry.date}] Web fallback pre-check failed (proceeding): ${e.message}`,
-            );
+          } catch (error) {
+            log.warn(`[${entry.date}] Pending WorkTime could not be confirmed`, {
+              error: safeErrorMetadata(error),
+            });
+            checkpointResult({
+              date: entry.date,
+              success: false,
+              method: "pending_precheck_failed",
+              error: "pending_approval_unconfirmed",
+            });
+            continue;
           }
-          filteredWebEntries.push(entry);
-        }
-        webFallbackEntries = filteredWebEntries;
-      }
 
-      // For entries where all API strategies failed, try submitting via freee Web form
-      if (webFallbackEntries.length > 0 && hasWebCredentials()) {
-        log.info(
-          `Strategy 4: Attempting ${webFallbackEntries.length} entries via freee Web (Playwright)...`,
-        );
-        try {
-          const webResults = await submitWebCorrections(
-            webFallbackEntries,
-            reason || "打刻漏れのため修正",
-          );
-          for (const wr of webResults) {
-            results.push(wr);
-            if (wr.success) {
-              log.info(`[${wr.date}] Web correction succeeded`);
-            } else {
-              log.error(`[${wr.date}] Web correction failed: ${wr.error}`);
-            }
-          }
-        } catch (err) {
-          log.error(`Strategy 4 (Web) failed entirely: ${err.message}`);
-          for (const entry of webFallbackEntries) {
-            results.push({
+          if (!hasWebCredentials()) {
+            log.warn(`[${entry.date}] Web correction requires configured credentials`);
+            checkpointResult({
               date: entry.date,
               success: false,
               method: "all_failed",
-              error: `Web fallback error: ${err.message}`,
+              error: "web_credentials_required",
+            });
+            continue;
+          }
+
+          webFallbackAttempted = true;
+          log.info(`[${entry.date}] Attempting correction via freee Web`);
+          try {
+            beginTaskItem(task, { date: entry.date });
+            const webResults = await submitWebCorrections(
+              [entry],
+              reason || "打刻漏れのため修正",
+              oauth,
+            );
+            const rows = Array.isArray(webResults) ? webResults : [];
+            const confirmed = rows.length === 1 && rows[0]?.date === entry.date
+              ? rows[0]
+              : null;
+            const webResult = confirmed
+              ? {
+                  date: entry.date,
+                  success: confirmed.success === true,
+                  method: "web_correction",
+                  ...(confirmed.success === true
+                    ? {}
+                    : { error: stableWebCorrectionError(confirmed.error) }),
+                }
+              : {
+                  date: entry.date,
+                  success: false,
+                  method: "web_correction",
+                  error: "web_result_unconfirmed",
+                  unknown: true,
+                };
+            if (!webResult.success && UNKNOWN_WEB_RESULT_CODES.has(webResult.error)) webResult.unknown = true;
+            checkpointResult(webResult);
+            log[webResult.success ? "info" : "error"](
+              `[${entry.date}] Web correction ${webResult.success ? "succeeded" : "failed"}`,
+              webResult.success ? undefined : { errorCode: webResult.error },
+            );
+          } catch (err) {
+            if (["TASK_PERSISTENCE_FAILED", "TASK_STATE_INVALID"].includes(err?.code)) throw err;
+            log.error(`[${entry.date}] Web correction failed`, {
+              error: safeErrorMetadata(err),
+            });
+            checkpointResult({
+              date: entry.date,
+              success: false,
+              method: "all_failed",
+              error: "web_automation_failed",
+              unknown: true,
             });
           }
+        } finally {
+          releaseAccountOperation();
         }
-      } else if (webFallbackEntries.length > 0) {
-        // No web credentials — report as freee_web_required so frontend shows setup prompt
-        log.warn(
-          `Strategy 4 skipped: ${webFallbackEntries.length} entries need web credentials`,
-        );
-        for (const entry of webFallbackEntries) {
-          results.push({
-            date: entry.date,
-            success: false,
-            method: "all_failed",
-            error: "web_credentials_required",
-          });
-        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
       }
 
       // Update strategy cache based on what we learned during this batch
-      const methodsUsed = results.map((r) => r.method);
       const newCacheData = {
         direct_ok: !directDisabled,
-        approval_ok: !approvalRouteBlocked && hasApproval,
-        time_clock_ok:
-          methodsUsed.includes("time_clock") ||
-          (cachedStrategy ? !!cachedStrategy.time_clock_ok : true),
-        best_strategy: directDisabled
-          ? approvalRouteBlocked
-            ? hasWebCredentials()
-              ? "web"
-              : "time_clock"
-            : "approval"
-          : "direct",
+        approval_ok:
+          approvalRouteLookupVerified && !approvalRouteBlocked && hasApproval,
+        time_clock_ok: false,
+        best_strategy: !directDisabled
+          ? "direct"
+          : approvalRouteLookupVerified && !approvalRouteBlocked && hasApproval
+            ? "approval"
+            : "web",
       };
-      setStrategyCache(currentMonth, newCacheData);
+      if (approvalRouteLookupVerified) {
+        setStrategyCache(
+          currentMonth,
+          newCacheData,
+          operationIdentity.identityKey,
+        );
+      }
 
-      const succeededCount = results.filter((r) => r.success).length;
-      const failedCount = results.filter((r) => !r.success).length;
+      const { results, succeeded: succeededCount } = getTask(taskId, operationIdentity.identityKey);
       const methods = {};
       for (const r of results) {
         methods[r.method] = (methods[r.method] || 0) + 1;
@@ -465,25 +907,6 @@ router.post("/batch", async (req, res) => {
         `Batch complete: ${succeededCount}/${results.length} succeeded (${JSON.stringify(methods)})`,
       );
 
-      // Log each batch result to execution_log for audit trail
-      for (const r of results) {
-        try {
-          insertLog({
-            action_type: "batch_correction",
-            scheduled_time: r.date,
-            status: r.success ? "success" : "failure",
-            trigger_type: "batch",
-            error_message: r.success
-              ? `method=${r.method}`
-              : `method=${r.method} | ${r.error || "Unknown error"}`,
-          });
-        } catch (logErr) {
-          log.warn(
-            `Failed to write batch log for ${r.date}: ${logErr.message}`,
-          );
-        }
-      }
-
       // Include strategy info for frontend
       const webCredsInvalid = results.some(
         (r) => r.error === "web_credentials_invalid",
@@ -491,24 +914,29 @@ router.post("/batch", async (req, res) => {
       const strategyInfo = {
         direct_disabled: directDisabled,
         approval_route_blocked: approvalRouteBlocked,
-        web_fallback_used: webFallbackEntries.length > 0 && hasWebCredentials(),
+        approval_route_verified: approvalRouteLookupVerified,
+        web_fallback_used: webFallbackAttempted,
         web_credentials_configured: hasWebCredentials(),
         web_credentials_invalid: webCredsInvalid,
       };
 
-      updateTask(taskId, {
+      updateTask(task, {
         status: "completed",
-        success: failedCount === 0,
-        results,
-        succeeded: succeededCount,
-        failed: failedCount,
         strategy_info: strategyInfo,
       });
     } catch (err) {
-      log.error(`Batch failed: ${err.message}`);
-      updateTask(taskId, { status: "failed", error: sanitizeError(err) });
+      log.error("Batch failed", { error: safeErrorMetadata(err) });
+      updateTask(task, {
+        status: "failed",
+        code: err?.code === "TASK_PERSISTENCE_FAILED" ? err.code : "BATCH_CORRECTION_FAILED",
+        error: sanitizeError(
+          err,
+          "Batch correction stopped before all entries were processed.",
+        ),
+      });
     }
   })();
+  void trackTaskPromise(task, taskPromise);
 });
 
 export default router;

@@ -1,16 +1,19 @@
 import { Router } from 'express';
+import { ACTION_TYPES as VALID_ACTIONS } from '../../shared/schedule-policy.js';
+import { todayStringInTz } from '../timezone.js';
 import { scheduler } from '../scheduler.js';
+import logger, { safeErrorMetadata } from '../logger.js';
 
 const router = Router();
+const log = logger.child('Schedule');
 
-const VALID_ACTIONS = ['checkin', 'checkout', 'break_start', 'break_end'];
 
 /**
  * GET /api/schedule - Get today's resolved schedule
  */
 router.get('/', (req, res) => {
   const schedule = scheduler.getTodaySchedule();
-  res.json({ date: new Date().toISOString().split('T')[0], schedule });
+  res.json({ date: todayStringInTz(), schedule });
 });
 
 /**
@@ -29,7 +32,11 @@ router.post('/trigger/:actionType', async (req, res) => {
     const result = await scheduler.triggerManual(actionType);
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    log.error('Manual trigger failed', { error: safeErrorMetadata(error) });
+    res.status(500).json({
+      error: 'Manual attendance action failed',
+      code: error?.code || 'MANUAL_ACTION_FAILED',
+    });
   }
 });
 

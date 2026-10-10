@@ -1,7 +1,11 @@
+import { parseExternalId as positiveInteger } from "../../freee-values.js";
 import { Router } from "express";
-import { insertLog } from "../../db.js";
+import { getSetting, insertLog } from "../../db.js";
 import { FREEE_ERROR_MESSAGES } from "../../constants.js";
-import { FreeeApiClient } from "../../freee-api.js";
+import {
+  FREEE_API_ERROR_CODES,
+  FreeeApiClient,
+} from "../../freee-api.js";
 import {
   withdrawApprovalRequestWeb,
   hasWebCredentials,
@@ -10,32 +14,132 @@ import {
 import {
   log,
   sanitizeError,
-  toTimeOnly,
   requireOAuth,
   findAttendanceRouteIds,
-  findAttendanceRouteId,
   TYPE_TO_ENDPOINT,
-  TYPE_TO_RESPONSE_KEY,
+  approvalTypeEndpoint,
 } from "./utils.js";
+import { safeErrorMetadata } from "../../logger.js";
+import { withdrawApprovalOperation } from "./approval-operation-service.js";
+import {
+  approvalRequestInMonth,
+  fetchApprovalRequestPages,
+  parseApprovalMonth,
+} from "./approval-list-service.js";
+import { withAccountOperation } from "../../account-operation.js";
 
 const router = Router();
+
+function stableApprovalText(value, maxLength, fallback = "") {
+  if (typeof value !== "string") return fallback;
+  return value
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
 
 function monthlyClosingScheduledTime(year, month) {
   return `${year}-${String(month).padStart(2, "0")}-01`;
 }
 
+function parseMonthlyClosingTarget(rawYear, rawMonth) {
+  const yearText = String(rawYear ?? "");
+  const monthText = String(rawMonth ?? "");
+  if (!/^\d{4}$/.test(yearText) || !/^(?:[1-9]|1[0-2])$/.test(monthText)) {
+    return null;
+  }
+
+  const year = Number(yearText);
+  const month = Number(monthText);
+  if (!Number.isSafeInteger(year) || year < 2000) return null;
+  return { year, month };
+}
+
+function recordMonthlyClosing(year, month, status, errorMessage = null) {
+  try {
+    insertLog({
+      action_type: "monthly_closing",
+      scheduled_time: monthlyClosingScheduledTime(year, month),
+      status,
+      trigger_type: "manual",
+      ...(errorMessage ? { error_message: errorMessage } : {}),
+    });
+  } catch {
+    // A logging failure must not change the submission result.
+  }
+}
+
 function isMonthlyClosingAlreadySubmitted(err) {
-  return err.message?.includes(
-    FREEE_ERROR_MESSAGES.MONTHLY_CLOSING_ALREADY_SUBMITTED,
+  return (
+    err?.code === FREEE_API_ERROR_CODES.MONTHLY_CLOSING_ALREADY_SUBMITTED ||
+    err?.message?.includes(
+      FREEE_ERROR_MESSAGES.MONTHLY_CLOSING_ALREADY_SUBMITTED,
+    )
   );
 }
 
 function requiresMonthlyClosingWebFallback(err) {
   return (
-    err.message?.includes("役職") ||
-    err.message?.includes("部門") ||
-    err.message?.includes("Webから申請")
+    err?.code === FREEE_API_ERROR_CODES.WEB_FORM_REQUIRED ||
+    err?.code === FREEE_API_ERROR_CODES.PERMISSION_DENIED ||
+    err?.message?.includes("役職") ||
+    err?.message?.includes("部門") ||
+    err?.message?.includes("Webから申請")
   );
+}
+
+async function submitMonthlyClosingViaWeb(res, year, month, expectedCompany) {
+  let webResult;
+  try {
+    webResult = await submitMonthlyAttendanceClosingWeb(year, month, expectedCompany);
+  } catch {
+    webResult = { success: false, error: "web_automation_failed" };
+  }
+
+  if (webResult.success) {
+    recordMonthlyClosing(year, month, "success");
+    return res.json({ success: true, via: "web" });
+  }
+
+  const stableError = String(webResult.error || "web_automation_failed");
+  log.error(`Monthly closing Web submission failed: ${stableError}`);
+  recordMonthlyClosing(year, month, "failure", stableError.substring(0, 100));
+
+  if (stableError === "web_credentials_required") {
+    return res.status(400).json({
+      error: "Web credentials are required for monthly closing.",
+      code: "WEB_CREDENTIALS_REQUIRED",
+    });
+  }
+  if (stableError === "web_credentials_invalid") {
+    return res.status(401).json({
+      error: "Web credentials are invalid. Update freee web credentials.",
+      code: "WEB_CREDENTIALS_INVALID",
+    });
+  }
+  if (stableError === "web_login_interaction_required") {
+    return res.status(409).json({
+      error: "freee requires interactive Web login verification.",
+      code: "WEB_LOGIN_INTERACTION_REQUIRED",
+    });
+  }
+  if (stableError === "web_company_target_required") {
+    return res.status(400).json({
+      error: "Configure the exact freee company name before using Web automation.",
+      code: "WEB_COMPANY_TARGET_REQUIRED",
+    });
+  }
+  if (stableError === "web_company_selection_unconfirmed") {
+    return res.status(409).json({
+      error: "The configured freee company could not be confirmed.",
+      code: "WEB_COMPANY_SELECTION_UNCONFIRMED",
+    });
+  }
+
+  return res.status(502).json({
+    error: "Monthly closing could not be confirmed from freee Web.",
+    code: webResult.errorCode || "WEB_FALLBACK_FAILED",
+  });
 }
 
 // ===================================================================
@@ -43,46 +147,29 @@ function requiresMonthlyClosingWebFallback(err) {
 // ===================================================================
 
 /**
- * GET /api/attendance/approval-routes - Get available approval flow routes
- */
-router.get("/approval-routes", async (req, res) => {
-  const oauth = requireOAuth(res);
-  if (!oauth) return;
-  const { companyId } = oauth;
-
-  try {
-    const client = new FreeeApiClient();
-    await client.ensureValidToken();
-
-    const data = await client.apiRequest(
-      "GET",
-      `/approval_flow_routes?company_id=${companyId}`,
-    );
-
-    const routes = data.approval_flow_routes || [];
-    const attendanceRoute = routes.find(
-      (r) => r.usages && r.usages.includes("AttendanceWorkflow"),
-    );
-
-    res.json({
-      routes,
-      attendance_route_id: attendanceRoute ? attendanceRoute.id : null,
-      attendance_route_name: attendanceRoute ? attendanceRoute.name : null,
-    });
-  } catch (err) {
-    log.error(`Failed to fetch approval routes: ${err.message}`);
-    res.status(500).json({ error: sanitizeError(err) });
-  }
-});
-
-/**
  * POST /api/attendance/approval/monthly - Submit monthly attendance closing request
  * Body: { year, month }
  */
 router.post("/approval/monthly", async (req, res) => {
-  const { year, month } = req.body;
-  if (!year || !month) {
-    return res.status(400).json({ error: "year and month are required" });
+  const target = parseMonthlyClosingTarget(req.body?.year, req.body?.month);
+  if (!target) {
+    return res.status(400).json({
+      error: "year must be four digits and month must be between 1 and 12",
+      code: "INVALID_MONTHLY_TARGET",
+    });
+  }
+  const { year, month } = target;
+
+  return withAccountOperation(async () => {
+
+  if (getSetting("oauth_configured") !== "1") {
+    if (!hasWebCredentials()) {
+      return res.status(400).json({
+        error: "OAuth or Web credentials are required for monthly closing.",
+        code: "MONTHLY_CLOSING_CREDENTIALS_REQUIRED",
+      });
+    }
+    return submitMonthlyClosingViaWeb(res, year, month, null);
   }
 
   const oauth = requireOAuth(res);
@@ -90,21 +177,46 @@ router.post("/approval/monthly", async (req, res) => {
   const { companyId } = oauth;
 
   try {
-    const client = new FreeeApiClient();
+    const client = new FreeeApiClient({ identityBinding: oauth });
     await client.ensureValidToken();
 
-    const routeId = await findAttendanceRouteId(client, companyId);
+    const routeInfo = await findAttendanceRouteIds(client, companyId);
+    const routeId = positiveInteger(
+      routeInfo.primaryRouteId || routeInfo.fallbackRouteId,
+    );
+    const routeNeedsApprover =
+      positiveInteger(routeInfo.primaryRouteId) === routeId &&
+      routeInfo.primaryRouteNeedsApprover === true;
+    const approverId = positiveInteger(routeInfo.primaryRouteUserId);
+
+    if (!routeInfo.lookupVerified || !routeId || (routeNeedsApprover && !approverId)) {
+      if (!hasWebCredentials()) {
+        recordMonthlyClosing(
+          year,
+          month,
+          "failure",
+          "approval_route_unconfirmed",
+        );
+        return res.status(409).json({
+          error:
+            "The monthly closing approval route could not be confirmed. Configure freee Web credentials or review the route in freee.",
+          code: "APPROVAL_ROUTE_UNCONFIRMED",
+        });
+      }
+      return submitMonthlyClosingViaWeb(res, year, month, oauth);
+    }
 
     log.info(
-      `Submitting monthly attendance closing for ${year}-${String(month).padStart(2, "0")} (route=${routeId})`,
+      `Submitting monthly attendance closing for ${year}-${String(month).padStart(2, "0")}`,
     );
 
     const body = {
       company_id: parseInt(companyId, 10),
-      target_year: parseInt(year, 10),
-      target_month: parseInt(month, 10),
+      target_year: year,
+      target_month: month,
     };
-    if (routeId) body.approval_flow_route_id = routeId;
+    body.approval_flow_route_id = routeId;
+    if (approverId) body.approver_id = approverId;
 
     const result = await client.apiRequest(
       "POST",
@@ -112,35 +224,36 @@ router.post("/approval/monthly", async (req, res) => {
       body,
     );
 
-    log.info("Monthly attendance closing request submitted");
-
-    try {
-      insertLog({
-        action_type: "monthly_closing",
-        scheduled_time: monthlyClosingScheduledTime(year, month),
-        status: "success",
-        trigger_type: "manual",
+    const requestId = positiveInteger(
+      result?.monthly_attendance?.id || result?.id,
+    );
+    if (!requestId) {
+      recordMonthlyClosing(
+        year,
+        month,
+        "failure",
+        "api_response_unconfirmed",
+      );
+      return res.status(502).json({
+        error:
+          "The monthly closing may have been submitted. Check freee before retrying.",
+        code: "API_RESPONSE_UNCONFIRMED",
       });
-    } catch (logErr) {
-      /* ignore */
     }
 
-    res.json({ success: true, result });
+    log.info("Monthly attendance closing request submitted");
+
+    recordMonthlyClosing(year, month, "success");
+
+    res.json({ success: true, via: "api", id: requestId });
   } catch (err) {
-    log.error(`Monthly closing API failed: ${err.message}`);
+    log.error(
+      `Monthly closing API failed: ${err?.code || "UNCLASSIFIED_API_ERROR"}`,
+    );
 
     if (isMonthlyClosingAlreadySubmitted(err)) {
       log.info("Monthly attendance closing already submitted");
-      try {
-        insertLog({
-          action_type: "monthly_closing",
-          scheduled_time: monthlyClosingScheduledTime(year, month),
-          status: "success",
-          trigger_type: "manual",
-        });
-      } catch (logErr) {
-        /* ignore */
-      }
+      recordMonthlyClosing(year, month, "success");
       return res.json({
         success: true,
         alreadySubmitted: true,
@@ -153,17 +266,12 @@ router.post("/approval/monthly", async (req, res) => {
     const needsWebFallback = requiresMonthlyClosingWebFallback(err);
 
     if (needsWebFallback && !hasWebCredentials()) {
-      try {
-        insertLog({
-          action_type: "monthly_closing",
-          scheduled_time: monthlyClosingScheduledTime(year, month),
-          status: "failure",
-          trigger_type: "manual",
-          error_message: "Web credentials are required for monthly closing.",
-        });
-      } catch (logErr) {
-        /* ignore */
-      }
+      recordMonthlyClosing(
+        year,
+        month,
+        "failure",
+        "web_credentials_required",
+      );
       return res.status(400).json({
         error:
           "Web credentials are required because freee requires monthly closing from the web form.",
@@ -175,177 +283,25 @@ router.post("/approval/monthly", async (req, res) => {
       log.info(
         "Monthly closing: API rejected (dept/role routing required), falling back to Playwright web form",
       );
-      try {
-        const webResult = await submitMonthlyAttendanceClosingWeb(year, month);
-        if (webResult.success) {
-          try {
-            insertLog({
-              action_type: "monthly_closing",
-              scheduled_time: monthlyClosingScheduledTime(year, month),
-              status: "success",
-              trigger_type: "manual",
-            });
-          } catch (logErr) {
-            /* ignore */
-          }
-          return res.json({ success: true, via: "web", result: webResult });
-        }
-        // Web fallback also failed — fall through to error response
-        log.error(`Monthly closing web fallback failed: ${webResult.error}`);
-        try {
-          insertLog({
-            action_type: "monthly_closing",
-            scheduled_time: monthlyClosingScheduledTime(year, month),
-            status: "failure",
-            trigger_type: "manual",
-            error_message: String(webResult.error || "web fallback failed").substring(
-              0,
-              300,
-            ),
-          });
-        } catch (logErr) {
-          /* ignore */
-        }
-        if (webResult.error === "web_credentials_invalid") {
-          return res.status(401).json({
-            error: "Web credentials are invalid. Update freee web credentials.",
-            code: "WEB_CREDENTIALS_INVALID",
-          });
-        }
-        return res.status(500).json({
-          error: sanitizeError(new Error(webResult.error || "web fallback failed")),
-          code: "WEB_FALLBACK_FAILED",
-        });
-      } catch (webErr) {
-        log.error(`Monthly closing web fallback threw: ${webErr.message}`);
-      }
+      return submitMonthlyClosingViaWeb(res, year, month, oauth);
     }
 
-    try {
-      insertLog({
-        action_type: "monthly_closing",
-        scheduled_time: monthlyClosingScheduledTime(year, month),
-        status: "failure",
-        trigger_type: "manual",
-        error_message: err.message?.substring(0, 300),
-      });
-    } catch (logErr) {
-      /* ignore */
-    }
-
-    const status =
-      err.message.includes("403") || err.message.includes("402") ? 403 : 500;
-    res.status(status).json({ error: sanitizeError(err) });
-  }
-});
-
-/**
- * POST /api/attendance/approval/work-time - Submit single work time correction request
- * Body: { date, clock_in_at, clock_out_at, break_records, reason }
- */
-router.post("/approval/work-time", async (req, res) => {
-  const { date, clock_in_at, clock_out_at, break_records, reason } = req.body;
-  if (!date) {
-    return res.status(400).json({ error: "date is required" });
-  }
-
-  const oauth = requireOAuth(res);
-  if (!oauth) return;
-  const { companyId } = oauth;
-
-  try {
-    const client = new FreeeApiClient();
-    await client.ensureValidToken();
-
-    const {
-      primaryRouteId,
-      fallbackRouteId,
-      primaryRouteUserId,
-      primaryRouteNeedsApprover,
-    } = await findAttendanceRouteIds(client, companyId);
-    const routeId = primaryRouteId || fallbackRouteId;
-
-    log.info(
-      `Submitting work time correction for ${date} (route=${routeId}, needsApprover=${primaryRouteNeedsApprover})`,
+    recordMonthlyClosing(
+      year,
+      month,
+      "failure",
+      String(err?.code || "api_action_failed").substring(0, 100),
     );
 
-    const body = {
-      company_id: parseInt(companyId, 10),
-      target_date: date,
-    };
-    if (routeId) body.approval_flow_route_id = routeId;
-
-    // Some routes require specifying an approver (e.g. "承認者を指定" type)
-    if (primaryRouteNeedsApprover && routeId === primaryRouteId) {
-      if (primaryRouteUserId) {
-        body.approver_id = primaryRouteUserId;
-      } else {
-        // Fall back to self (admin users can self-approve)
-        try {
-          const me = await client.apiRequest("GET", "/users/me");
-          body.approver_id = me.id;
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-
-    // Approval API uses work_records array with time-only "HH:MM" format
-    if (clock_in_at || clock_out_at) {
-      const workRecord = {};
-      if (clock_in_at) workRecord.clock_in_at = toTimeOnly(clock_in_at);
-      if (clock_out_at) workRecord.clock_out_at = toTimeOnly(clock_out_at);
-      body.work_records = [workRecord];
-    }
-    if (break_records && break_records.length > 0) {
-      body.break_records = break_records.map((br) => ({
-        clock_in_at: toTimeOnly(br.clock_in_at),
-        clock_out_at: toTimeOnly(br.clock_out_at),
-      }));
-    }
-    if (reason) body.comment = reason;
-
-    const result = await client.apiRequest(
-      "POST",
-      "/approval_requests/work_times",
-      body,
-    );
-
-    const requestId = result?.work_time?.id || result?.id || null;
-    log.info(`Work time correction request submitted (id=${requestId})`);
-
-    try {
-      insertLog({
-        action_type: "approval_submitted",
-        scheduled_time: date,
-        status: "success",
-        trigger_type: "manual",
-        error_message: `id=${requestId}`,
-      });
-    } catch (logErr) {
-      /* ignore log failures */
-    }
-
-    res.json({ success: true, id: requestId, result });
-  } catch (err) {
-    log.error(`Work time correction failed: ${err.message}`);
-
-    try {
-      insertLog({
-        action_type: "approval_submitted",
-        scheduled_time: req.body.date,
-        status: "failure",
-        trigger_type: "manual",
-        error_message: err.message?.substring(0, 300),
-      });
-    } catch (logErr) {
-      /* ignore log failures */
-    }
-
     const status =
-      err.message.includes("403") || err.message.includes("402") ? 403 : 500;
+      err?.code === FREEE_API_ERROR_CODES.PERMISSION_DENIED ||
+      err?.message?.includes("403") ||
+      err?.message?.includes("402")
+        ? 403
+        : 500;
     res.status(status).json({ error: sanitizeError(err) });
   }
+  });
 });
 
 // ===================================================================
@@ -362,9 +318,11 @@ router.post("/approval/work-time", async (req, res) => {
  * For each type, queries across statuses: in_progress (pending), approved, feedback (rejected)
  */
 router.get("/approval-requests", async (req, res) => {
-  const { year, month } = req.query;
-  if (!year || !month) {
-    return res.status(400).json({ error: "year and month are required" });
+  const range = parseApprovalMonth(req.query.year, req.query.month);
+  if (!range) {
+    return res.status(400).json({
+      error: "year and month must identify a valid month",
+    });
   }
 
   const oauth = requireOAuth(res);
@@ -372,110 +330,106 @@ router.get("/approval-requests", async (req, res) => {
   const { companyId } = oauth;
 
   try {
-    const client = new FreeeApiClient();
+    const client = new FreeeApiClient({ identityBinding: oauth });
     await client.ensureValidToken();
+    const me = await client.apiRequest("GET", "/users/me");
+    const currentUserId = positiveInteger(me?.id);
+    if (!currentUserId) {
+      return res.status(503).json({ error: "The OAuth user could not be confirmed." });
+    }
 
-    const y = parseInt(year, 10);
-    const m = parseInt(month, 10);
-    const monthPrefix = `${y}-${String(m).padStart(2, "0")}`;
-
-    const allRequests = [];
+    const requestsByKey = new Map();
+    const unavailableQueries = [];
     const statuses = ["in_progress", "approved", "feedback"];
 
-    // All 5 approval request types to query
-    const approvalTypes = [
-      { endpoint: "work_times", type: "WorkTime", responseKey: "work_times" },
-      {
-        endpoint: "paid_holidays",
-        type: "PaidHoliday",
-        responseKey: "paid_holidays",
-      },
-      {
-        endpoint: "overtime_works",
-        type: "OvertimeWork",
-        responseKey: "overtime_works",
-      },
-      {
-        endpoint: "special_holidays",
-        type: "SpecialHoliday",
-        responseKey: "special_holidays",
-      },
-      {
-        endpoint: "monthly_attendances",
-        type: "MonthlyAttendance",
-        responseKey: "monthly_attendances",
-      },
-    ];
-
-    for (const approvalType of approvalTypes) {
+    for (const type of Object.keys(TYPE_TO_ENDPOINT)) {
       for (const status of statuses) {
         try {
-          const data = await client.apiRequest(
-            "GET",
-            `/approval_requests/${approvalType.endpoint}?company_id=${companyId}&status=${status}`,
-          );
-          // freee API returns the type-specific array (e.g., work_times, paid_holidays)
-          const requests =
-            data[approvalType.responseKey] || data.approval_requests || [];
-          for (const req of requests) {
-            // Filter to target month
-            if (req.target_date && req.target_date.startsWith(monthPrefix)) {
-              const entry = {
-                id: req.id,
-                type: approvalType.type,
-                status: req.status || status,
-                target_date: req.target_date,
-                comment: req.comment || "",
-                request_number: req.application_number
-                  ? String(req.application_number)
-                  : null,
-                created_at: req.issue_date || null,
-              };
-
-              // Type-specific fields
-              if (approvalType.type === "WorkTime") {
-                entry.work_records = (req.work_records || []).map((wr) => ({
-                  clock_in_at: wr.clock_in_at || null,
-                  clock_out_at: wr.clock_out_at || null,
-                }));
-                entry.break_records = (req.break_records || []).map((br) => ({
-                  clock_in_at: br.clock_in_at || null,
-                  clock_out_at: br.clock_out_at || null,
-                }));
-              } else if (approvalType.type === "PaidHoliday") {
-                entry.holiday_type = req.holiday_type || "full";
-                entry.start_time = req.start_time || null;
-                entry.end_time = req.end_time || null;
-              } else if (approvalType.type === "OvertimeWork") {
-                entry.start_time = req.start_time || null;
-                entry.end_time = req.end_time || null;
-              }
-
-              allRequests.push(entry);
+          const pageResult = await fetchApprovalRequestPages({
+            client,
+            companyId,
+            type,
+            status,
+            range,
+            applicantId: currentUserId,
+          });
+          if (!pageResult.complete) unavailableQueries.push(`${type}:${status}`);
+          for (const item of pageResult.items) {
+            const id = positiveInteger(item?.id);
+            if (
+              !id ||
+              positiveInteger(item?.company_id) !== Number(companyId) ||
+              positiveInteger(item?.applicant_id) !== currentUserId ||
+              item?.status !== status ||
+              !approvalRequestInMonth(item, range)
+            ) {
+              continue;
             }
+            const entry = {
+              id,
+              type,
+              status,
+              target_date:
+                item.target_date ||
+                `${item.target_year}-${String(item.target_month).padStart(2, "0")}`,
+              comment: stableApprovalText(item.comment, 255),
+              request_number: positiveInteger(item.application_number)
+                ? String(item.application_number)
+                : null,
+              created_at: item.issue_date || null,
+            };
+
+            if (type === "WorkTime") {
+              entry.work_records = (item.work_records || []).slice(0, 20).map((record) => ({
+                clock_in_at: record?.clock_in_at || null,
+                clock_out_at: record?.clock_out_at || null,
+              }));
+              entry.break_records = (item.break_records || []).slice(0, 20).map((record) => ({
+                clock_in_at: record?.clock_in_at || null,
+                clock_out_at: record?.clock_out_at || null,
+              }));
+            } else if (type === "PaidHoliday") {
+              entry.holiday_type = item.values?.[0]?.type || item.holiday_type || "full";
+              entry.start_time = item.values?.[0]?.start_at || item.start_at || null;
+              entry.end_time = item.values?.[0]?.end_at || item.end_at || null;
+            } else if (type === "OvertimeWork") {
+              entry.start_time = item.start_at || null;
+              entry.end_time = item.end_at || null;
+            }
+            requestsByKey.set(`${type}:${id}`, entry);
           }
         } catch (err) {
-          // 403/402 means plan restriction — silently skip
-          const errMsg = err.message || "";
-          if (errMsg.includes("403") || errMsg.includes("402")) {
-            log.debug(
-              `${approvalType.endpoint}/${status}: plan restricted, skipping`,
-            );
-          } else {
-            log.warn(
-              `Failed to fetch ${approvalType.endpoint} with status=${status}: ${errMsg.substring(0, 100)}`,
-            );
-          }
+          unavailableQueries.push(`${type}:${status}`);
+          log.warn("Approval request query could not be verified", {
+            type,
+            requestStatus: status,
+            code: err?.code || "APPROVAL_LIST_FAILED",
+          });
         }
       }
     }
 
-    log.info(
-      `Fetched ${allRequests.length} approval requests for ${monthPrefix}`,
+    const requests = [...requestsByKey.values()].sort((a, b) =>
+      (b.created_at || "").localeCompare(a.created_at || ""),
     );
-    res.json({ requests: allRequests });
+    if (
+      unavailableQueries.length ===
+        Object.keys(TYPE_TO_ENDPOINT).length * statuses.length &&
+      requests.length === 0
+    ) {
+      return res.status(503).json({
+        error: "Approval requests could not be verified.",
+      });
+    }
+    return res.json({
+      requests,
+      complete: unavailableQueries.length === 0,
+      unavailable_queries: unavailableQueries,
+    });
   } catch (err) {
-    log.error(`Failed to fetch approval requests: ${err.message}`);
+    log.error("Failed to fetch approval requests", {
+      error: safeErrorMetadata(err),
+    });
     res.status(500).json({ error: sanitizeError(err) });
   }
 });
@@ -492,12 +446,12 @@ router.get("/approval-requests", async (req, res) => {
  */
 router.delete("/approval-requests/:id", async (req, res) => {
   const { id } = req.params;
-  if (!/^\d+$/.test(id)) {
+  if (!/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))) {
     return res.status(400).json({ error: "Invalid request ID" });
   }
   const requestType = req.query.type || "WorkTime";
 
-  const endpoint = TYPE_TO_ENDPOINT[requestType];
+  const endpoint = approvalTypeEndpoint(requestType);
   if (!endpoint) {
     return res.status(400).json({
       error: `Invalid type. Valid: ${Object.keys(TYPE_TO_ENDPOINT).join(", ")}`,
@@ -509,106 +463,40 @@ router.delete("/approval-requests/:id", async (req, res) => {
   const { companyId } = oauth;
 
   try {
-    const client = new FreeeApiClient();
+    const client = new FreeeApiClient({ identityBinding: oauth });
     await client.ensureValidToken();
-
-    const responseKey = TYPE_TO_RESPONSE_KEY[requestType];
-
-    // First, try to get the request details to know its current state
-    let requestData;
-    try {
-      requestData = await client.apiRequest(
-        "GET",
-        `/approval_requests/${endpoint}/${id}?company_id=${companyId}`,
-      );
-    } catch {
-      /* ignore, proceed with cancel attempt */
-    }
-
-    const detail = requestData?.[responseKey] || requestData;
-    const currentStep = detail?.current_step_id;
-    const currentRound = detail?.current_round || 1;
-
-    // Try cancel action first (works for in_progress requests)
-    try {
-      const cancelBody = {
-        approval_action: "cancel",
-        target_round: currentRound,
-        target_step_id: currentStep,
-      };
-      await client.apiRequest(
-        "POST",
-        `/approval_requests/${endpoint}/${id}/actions?company_id=${companyId}`,
-        cancelBody,
-      );
-      log.info(`Approval request ${id} (${requestType}) cancelled via action`);
-      return res.json({
-        success: true,
-        id: parseInt(id, 10),
-        type: requestType,
-        method: "cancel",
+    const me = await client.apiRequest("GET", "/users/me");
+    const currentUserId = positiveInteger(me?.id);
+    if (!currentUserId) {
+      return res.status(503).json({
+        error: "The OAuth user could not be confirmed.",
+        code: "OAUTH_USER_UNCONFIRMED",
       });
-    } catch (cancelErr) {
-      log.info(
-        `Cancel action failed for ${id} (${requestType}): ${cancelErr.message}, trying DELETE...`,
-      );
     }
-
-    // Fallback 2: try DELETE (works for draft/pending requests)
-    try {
-      await client.apiRequest(
-        "DELETE",
-        `/approval_requests/${endpoint}/${id}?company_id=${companyId}`,
-      );
-      log.info(`Approval request ${id} (${requestType}) withdrawn via DELETE`);
-      return res.json({
-        success: true,
-        id: parseInt(id, 10),
-        type: requestType,
-        method: "delete",
-      });
-    } catch (deleteErr) {
-      log.info(
-        `DELETE also failed for ${id} (${requestType}): ${deleteErr.message}, trying Playwright web fallback...`,
-      );
-    }
-
-    // Fallback 3: Playwright web automation (取下げ button on freee web)
-    // This handles cases where API fails due to dept/position routing restrictions
-    if (hasWebCredentials()) {
-      try {
-        const webResult = await withdrawApprovalRequestWeb(requestType, id);
-        if (webResult.success) {
-          log.info(
-            `Approval request ${id} (${requestType}) withdrawn via Playwright web`,
-          );
-          return res.json({
-            success: true,
-            id: parseInt(id, 10),
-            type: requestType,
-            method: "web_withdraw",
-          });
-        }
-        log.warn(`Playwright withdrawal failed for ${id}: ${webResult.error}`);
-      } catch (webErr) {
-        log.error(`Playwright withdrawal error for ${id}: ${webErr.message}`);
-      }
-    } else {
-      log.warn(
-        `Cannot fallback to Playwright — web credentials not configured`,
-      );
-    }
-
-    // All methods exhausted
-    log.error(`All withdrawal methods failed for ${id} (${requestType})`);
-    res.status(500).json({
+    const result = await withAccountOperation(() => withdrawApprovalOperation({
+      client,
+      companyId,
+      currentUserId,
+      id: Number(id),
+      type: requestType,
+      webCredentialsAvailable: hasWebCredentials(),
+      withdrawWeb: (type, requestId) =>
+        withdrawApprovalRequestWeb(type, requestId, oauth),
+    }));
+    if (result.success) return res.json(result);
+    const status = result.error === "mutation_outcome_unconfirmed" ? 502 : 409;
+    return res.status(status).json({
       error:
-        "Failed to withdraw approval request via API and web automation. Please withdraw manually on freee.",
+        result.error === "mutation_outcome_unconfirmed"
+          ? "The withdrawal may have succeeded. Check freee before retrying."
+          : "The approval request could not be withdrawn automatically.",
+      code: result.error,
+      stages: result.stages,
     });
   } catch (err) {
-    log.error(
-      `Failed to withdraw approval request ${id} (${requestType}): ${err.message}`,
-    );
+    log.error("Approval request withdrawal failed", {
+      error: safeErrorMetadata(err),
+    });
     res.status(500).json({
       error: "Failed to withdraw approval request. Please try again.",
     });

@@ -61,23 +61,6 @@ const actions: ActionConfig[] = [
   },
 ];
 
-/**
- * Derive the attendance state from today's punch times (freee time_clocks).
- * Same logic as DashboardPage — single source of truth.
- */
-function derivePunchState(
-  punchTimes: Array<{ type: string }>,
-  fallbackState?: string,
-): string {
-  if (punchTimes && punchTimes.length > 0) {
-    const lastType = punchTimes[punchTimes.length - 1].type;
-    if (lastType === "checkout") return "checked_out";
-    if (lastType === "break_start") return "on_break";
-    if (lastType === "break_end" || lastType === "checkin") return "working";
-  }
-  return fallbackState || "unknown";
-}
-
 interface ManualTriggerProps {
   onActionComplete?: () => void;
 }
@@ -90,11 +73,7 @@ const ManualTrigger: React.FC<ManualTriggerProps> = ({ onActionComplete }) => {
   );
   const [executing, setExecuting] = useState<string | null>(null);
 
-  // Derive state from the same Redux status data that the Dashboard status card uses.
-  // This ensures ManualTrigger shows the same state as the status card — single source of truth.
-  const punchTimes = statusData?.today_punch_times || [];
-  const schedulerState = statusData?.startup_analysis?.state;
-  const freeeState = derivePunchState(punchTimes, schedulerState);
+  const freeeState = statusData?.attendance_state || 'unknown';
 
   const refreshStatus = useCallback(() => {
     dispatch(fetchStatus());

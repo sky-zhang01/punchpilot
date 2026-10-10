@@ -20,6 +20,9 @@ import dayjs from 'dayjs';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import { batchSubmit, clearBatchResults } from '../../store/attendanceSlice';
 import { notifySuccess, notifyError } from '../../utils/notify';
+import { TaskResultSummary } from './TaskRecoveryPanel';
+import { resolveBreakTimes } from '../../../../shared/schedule-policy.js';
+import { isTimeString } from '../../../../shared/date-time.js';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -41,26 +44,20 @@ function randomTimeBetween(start: Dayjs, end: Dayjs): Dayjs {
   return start.startOf('day').add(startMins + randMins, 'minute');
 }
 
-// Build ISO 8601 time string in JST for a given date + time
-function buildISOTime(dateStr: string, time: Dayjs): string {
-  const h = String(time.hour()).padStart(2, '0');
-  const m = String(time.minute()).padStart(2, '0');
-  return `${dateStr}T${h}:${m}:00+09:00`;
-}
+const timeValue = (time: string | null) => isTimeString(time) ? dayjs(`2000-01-01T${time}:00`) : dayjs(NaN);
 
 /**
  * BatchPunchModal — User's one-click batch punch.
  *
  * User flow: select dates on calendar → open this modal → set times → submit.
- * That's it. The server decides whether each date goes via PUT (direct) or
- * POST (approval) based on is_editable and company capabilities.
+ * That's it. The server re-reads each date before selecting a safe write path.
  * The user doesn't need to know or care about the underlying mechanism.
  */
 const BatchPunchModal: React.FC<BatchPunchModalProps> = ({ open, onClose }) => {
   const { t } = useTranslation();
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
-  const { selectedDates, batchPunchLoading, records, capabilities, batchPunchResults } = useAppSelector(
+  const { selectedDates, batchPunchLoading, records, capabilities, batchPunchResults, batchTask } = useAppSelector(
     (state) => state.attendance
   );
   const { schedules } = useAppSelector((state) => state.config);
@@ -78,97 +75,106 @@ const BatchPunchModal: React.FC<BatchPunchModalProps> = ({ open, onClose }) => {
   const [includeBreak, setIncludeBreak] = useState(true);
   const [reason, setReason] = useState('');
   const [showResults, setShowResults] = useState(false);
+  const [queryPaused, setQueryPaused] = useState(false);
+  const [admissionUnknown, setAdmissionUnknown] = useState(false);
 
   // Fixed times
   const [fixedCheckin, setFixedCheckin] = useState<Dayjs>(
-    dayjs(checkinSchedule?.fixed_time || '10:00', TIME_FORMAT)
+    timeValue(checkinSchedule?.fixed_time || '')
   );
   const [fixedCheckout, setFixedCheckout] = useState<Dayjs>(
-    dayjs(checkoutSchedule?.fixed_time || '19:00', TIME_FORMAT)
+    timeValue(checkoutSchedule?.fixed_time || '')
   );
   const [fixedBreakStart, setFixedBreakStart] = useState<Dayjs>(
-    dayjs(breakStartSchedule?.fixed_time || '12:00', TIME_FORMAT)
+    timeValue(breakStartSchedule?.fixed_time || '')
   );
   const [fixedBreakEnd, setFixedBreakEnd] = useState<Dayjs>(
-    dayjs(breakEndSchedule?.fixed_time || '13:00', TIME_FORMAT)
+    timeValue(breakEndSchedule?.fixed_time || '')
   );
 
   // Random window times
   const [checkinWinStart, setCheckinWinStart] = useState<Dayjs>(
-    dayjs(checkinSchedule?.window_start || '09:50', TIME_FORMAT)
+    timeValue(checkinSchedule?.window_start || '')
   );
   const [checkinWinEnd, setCheckinWinEnd] = useState<Dayjs>(
-    dayjs(checkinSchedule?.window_end || '10:10', TIME_FORMAT)
+    timeValue(checkinSchedule?.window_end || '')
   );
   const [checkoutWinStart, setCheckoutWinStart] = useState<Dayjs>(
-    dayjs(checkoutSchedule?.window_start || '19:00', TIME_FORMAT)
+    timeValue(checkoutSchedule?.window_start || '')
   );
   const [checkoutWinEnd, setCheckoutWinEnd] = useState<Dayjs>(
-    dayjs(checkoutSchedule?.window_end || '19:30', TIME_FORMAT)
+    timeValue(checkoutSchedule?.window_end || '')
   );
   const [breakStartWinStart, setBreakStartWinStart] = useState<Dayjs>(
-    dayjs(breakStartSchedule?.window_start || '12:00', TIME_FORMAT)
+    timeValue(breakStartSchedule?.window_start || '')
   );
   const [breakStartWinEnd, setBreakStartWinEnd] = useState<Dayjs>(
-    dayjs(breakStartSchedule?.window_end || '12:15', TIME_FORMAT)
+    timeValue(breakStartSchedule?.window_end || '')
   );
   const [breakEndWinStart, setBreakEndWinStart] = useState<Dayjs>(
-    dayjs(breakEndSchedule?.window_start || '13:00', TIME_FORMAT)
+    timeValue(breakEndSchedule?.window_start || '')
   );
   const [breakEndWinEnd, setBreakEndWinEnd] = useState<Dayjs>(
-    dayjs(breakEndSchedule?.window_end || '13:15', TIME_FORMAT)
+    timeValue(breakEndSchedule?.window_end || '')
   );
 
-  // Reset state when modal opens
+  const initialized = React.useRef(false);
+  // Read saved values on opening; background refresh must not replace user edits.
   React.useEffect(() => {
-    if (open) {
-      setReason('');
-      setShowResults(false);
-    }
-  }, [open]);
+    if (!open) { initialized.current = false; return; }
+    if (initialized.current || !checkinSchedule || !checkoutSchedule || !breakStartSchedule || !breakEndSchedule) return;
+    initialized.current = true;
+    setReason(''); setShowResults(false); setQueryPaused(false); setAdmissionUnknown(false);
+    setTimeMode(checkinSchedule.mode === 'random' ? 'random' : 'fixed');
+    setFixedCheckin(timeValue(checkinSchedule.fixed_time));
+    setFixedCheckout(timeValue(checkoutSchedule.fixed_time));
+    setFixedBreakStart(timeValue(breakStartSchedule.fixed_time));
+    setFixedBreakEnd(timeValue(breakEndSchedule.fixed_time));
+    setCheckinWinStart(timeValue(checkinSchedule.window_start));
+    setCheckinWinEnd(timeValue(checkinSchedule.window_end));
+    setCheckoutWinStart(timeValue(checkoutSchedule.window_start));
+    setCheckoutWinEnd(timeValue(checkoutSchedule.window_end));
+    setBreakStartWinStart(timeValue(breakStartSchedule.window_start));
+    setBreakStartWinEnd(timeValue(breakStartSchedule.window_end));
+    setBreakEndWinStart(timeValue(breakEndSchedule.window_start));
+    setBreakEndWinEnd(timeValue(breakEndSchedule.window_end));
+  }, [open, schedules]);
+
+  const timesReady = (timeMode === 'fixed'
+    ? [fixedCheckin, fixedCheckout, ...(includeBreak ? [fixedBreakStart, fixedBreakEnd] : [])]
+    : [checkinWinStart, checkinWinEnd, checkoutWinStart, checkoutWinEnd,
+      ...(includeBreak ? [breakStartWinStart, breakStartWinEnd, breakEndWinStart, breakEndWinEnd] : [])])
+    .every(time => time.isValid());
 
   const handleSubmit = async () => {
-    const sortedDates = [...selectedDates].sort();
-    const entries = sortedDates.map((date) => {
-      let checkinTime: Dayjs;
-      let checkoutTime: Dayjs;
-      let breakStart: Dayjs | null = null;
-      let breakEnd: Dayjs | null = null;
-
-      if (timeMode === 'fixed') {
-        checkinTime = fixedCheckin;
-        checkoutTime = fixedCheckout;
-        if (includeBreak) {
-          breakStart = fixedBreakStart;
-          breakEnd = fixedBreakEnd;
-        }
-      } else {
-        checkinTime = randomTimeBetween(checkinWinStart, checkinWinEnd);
-        checkoutTime = randomTimeBetween(checkoutWinStart, checkoutWinEnd);
-        if (includeBreak) {
-          breakStart = randomTimeBetween(breakStartWinStart, breakStartWinEnd);
-          breakEnd = randomTimeBetween(breakEndWinStart, breakEndWinEnd);
-        }
-      }
-
-      const entry: any = {
+    if (!timesReady) return;
+    const breakConfig = (fixed: Dayjs, start: Dayjs, end: Dayjs) => ({
+      mode: timeMode, fixed_time: fixed.format(TIME_FORMAT),
+      window_start: start.format(TIME_FORMAT), window_end: end.format(TIME_FORMAT),
+    });
+    const startConfig = breakConfig(fixedBreakStart, breakStartWinStart, breakStartWinEnd);
+    const endConfig = breakConfig(fixedBreakEnd, breakEndWinStart, breakEndWinEnd);
+    if (timeMode === 'random' && [[checkinWinStart, checkinWinEnd], [checkoutWinStart, checkoutWinEnd],
+      ...(includeBreak ? [[breakStartWinStart, breakStartWinEnd], [breakEndWinStart, breakEndWinEnd]] : [])]
+      .some(([start, end]) => !start.isValid() || !end.isValid() || !start.isBefore(end))) {
+      notifyError(t('scheduleCard.windowStartBeforeEnd'));
+      return;
+    }
+    if (includeBreak && !resolveBreakTimes(startConfig, endConfig, {}, () => 0)) {
+      notifyError(t('scheduleCard.breakMinDuration'));
+      return;
+    }
+    const entries = [...selectedDates].sort().map((date) => {
+      const checkinTime = timeMode === 'fixed' ? fixedCheckin : randomTimeBetween(checkinWinStart, checkinWinEnd);
+      const checkoutTime = timeMode === 'fixed' ? fixedCheckout : randomTimeBetween(checkoutWinStart, checkoutWinEnd);
+      const breaks = includeBreak ? resolveBreakTimes(startConfig, endConfig) : null;
+      return {
         date,
-        clock_in_at: buildISOTime(date, checkinTime),
-        clock_out_at: buildISOTime(date, checkoutTime),
-        // Pass is_editable so the server knows which strategy to use
+        clock_in_at: checkinTime.format(TIME_FORMAT),
+        clock_out_at: checkoutTime.format(TIME_FORMAT),
         is_editable: records[date]?.is_editable ?? true,
+        ...(breaks ? { break_records: [{ clock_in_at: breaks.start, clock_out_at: breaks.end }] } : {}),
       };
-
-      if (includeBreak && breakStart && breakEnd) {
-        entry.break_records = [
-          {
-            clock_in_at: buildISOTime(date, breakStart),
-            clock_out_at: buildISOTime(date, breakEnd),
-          },
-        ];
-      }
-
-      return entry;
     });
 
     try {
@@ -178,9 +184,8 @@ const BatchPunchModal: React.FC<BatchPunchModalProps> = ({ open, onClose }) => {
       })).unwrap();
 
       const successCount = result.results.filter((r: any) => r.success).length;
-      const failedCount = result.results.filter((r: any) => !r.success).length;
 
-      if (failedCount === 0) {
+      if (result.task.success) {
         notifySuccess(t('calendar.batchSuccess', { success: successCount, total: result.results.length }));
         onClose();
       } else {
@@ -191,7 +196,10 @@ const BatchPunchModal: React.FC<BatchPunchModalProps> = ({ open, onClose }) => {
         }
       }
     } catch (err: any) {
-      notifyError(err?.message || t('calendar.approvalFailed'));
+      if (err?.task) setShowResults(true);
+      if (err?.taskId) setQueryPaused(true);
+      if (err?.code === 'TASK_ADMISSION_UNKNOWN') { setQueryPaused(true); setAdmissionUnknown(true); }
+      notifyError(err?.code === 'TASK_ADMISSION_UNKNOWN' ? t('tasks.admissionUnknown') : err?.taskId ? t('tasks.queryPaused') : err?.message || t('calendar.approvalFailed'));
     }
   };
 
@@ -202,8 +210,8 @@ const BatchPunchModal: React.FC<BatchPunchModalProps> = ({ open, onClose }) => {
   };
 
   // When showing results after a batch submission with failures
-  if (showResults && batchPunchResults.length > 0) {
-    const failedResults = batchPunchResults.filter(r => !r.success);
+  if (showResults && batchTask) {
+    const failedResults = batchPunchResults.filter(r => !r.success && !r.unknown);
     const successResults = batchPunchResults.filter(r => r.success);
     const webResults = batchPunchResults.filter(r => r.method === 'web_correction');
     const needsWebCreds = failedResults.some(r => r.error === 'web_credentials_required');
@@ -220,6 +228,7 @@ const BatchPunchModal: React.FC<BatchPunchModalProps> = ({ open, onClose }) => {
         width={520}
       >
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <TaskResultSummary task={batchTask} />
           {successResults.length > 0 && (
             <Alert
               type="success"
@@ -311,10 +320,12 @@ const BatchPunchModal: React.FC<BatchPunchModalProps> = ({ open, onClose }) => {
       okText={t('calendar.batchSubmit')}
       cancelText={t('calendar.batchCancel')}
       confirmLoading={batchPunchLoading}
-      okButtonProps={{ disabled: selectedDates.length === 0 || batchPunchLoading }}
+      okButtonProps={{ disabled: selectedDates.length === 0 || batchPunchLoading || queryPaused || !timesReady }}
       width={520}
     >
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        {!timesReady && <Alert type="warning" message={t('scheduleCard.invalidTime')} />}
+        {queryPaused && <Alert type="warning" showIcon message={t(admissionUnknown ? 'tasks.admissionUnknown' : 'tasks.queryPaused')} />}
         {/* Selected dates */}
         <Alert
           type="info"

@@ -1,14 +1,17 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import api from '../api';
+import type { StatusDTO } from '../contracts';
 
 interface StatusState {
-  data: any | null;
+  data: StatusDTO | null;
   loading: boolean;
+  requestId: string | null;
 }
 
 const initialState: StatusState = {
   data: null,
   loading: false,
+  requestId: null,
 };
 
 export const fetchStatus = createAsyncThunk('status/fetchStatus', async () => {
@@ -21,15 +24,21 @@ const statusSlice = createSlice({
   initialState,
   reducers: {},
   extraReducers: (builder) => {
-    builder.addCase(fetchStatus.pending, (state) => {
+    builder.addCase('account/identityChanged', () => initialState);
+    builder.addCase(fetchStatus.pending, (state, action) => {
       state.loading = true;
+      state.requestId = action.meta.requestId;
     });
     builder.addCase(fetchStatus.fulfilled, (state, action) => {
+      if (state.requestId !== action.meta.requestId) return;
       state.data = action.payload;
       state.loading = false;
+      state.requestId = null;
     });
-    builder.addCase(fetchStatus.rejected, (state) => {
+    builder.addCase(fetchStatus.rejected, (state, action) => {
+      if (state.requestId !== action.meta.requestId) return;
       state.loading = false;
+      state.requestId = null;
     });
   },
 });

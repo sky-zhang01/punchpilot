@@ -259,6 +259,20 @@ describe('Schedule Endpoints', () => {
     expect(checkinSched.mode).toBe('random');
     expect(checkoutSched.mode).toBe('random');
   });
+
+  it('rejects non-boolean schedule flags and empty modes', async () => {
+    const stringFlag = await request(app)
+      .put('/api/config/checkin')
+      .set('x-session-token', TOKEN)
+      .send({ enabled: 'false' });
+    const emptyMode = await request(app)
+      .put('/api/config/checkin')
+      .set('x-session-token', TOKEN)
+      .send({ mode: '' });
+
+    expect(stringFlag.status).toBe(400);
+    expect(emptyMode.status).toBe(400);
+  });
 });
 
 // ────────────────────────────────────────
@@ -303,6 +317,16 @@ describe('Config Toggle Endpoints', () => {
       .get('/api/status/freee-state')
       .set('x-session-token', TOKEN);
     expect(statusRes.body.debug_mode).toBe(true);
+  });
+
+  it('PUT /api/config/debug/set rejects non-boolean values', async () => {
+    const res = await request(app)
+      .put('/api/config/debug/set')
+      .set('x-session-token', TOKEN)
+      .send({ enabled: 'false' });
+
+    expect(res.status).toBe(400);
+    expect(getSetting('debug_mode')).toBe('1');
   });
 
   it('PUT /api/config/holiday-skip-countries sets holiday skip countries', async () => {
@@ -355,6 +379,46 @@ describe('OAuth Config Endpoints', () => {
     expect(res.body.success).toBe(true);
   });
 
+  it('PUT /api/config/oauth-app rejects non-string or oversized values', async () => {
+    const nonString = await request(app)
+      .put('/api/config/oauth-app')
+      .set('x-session-token', TOKEN)
+      .send({ client_id: { value: 'invalid' }, client_secret: 'value' });
+    const oversized = await request(app)
+      .put('/api/config/oauth-app')
+      .set('x-session-token', TOKEN)
+      .send({ client_id: 'client', client_secret: 'x'.repeat(4097) });
+
+    expect(nonString.status).toBe(400);
+    expect(oversized.status).toBe(400);
+  });
+
+  it('GET /api/config/oauth-status minimizes stored company and user metadata', async () => {
+    setSetting('oauth_companies', JSON.stringify([{
+      id: 12345,
+      employee_id: 67890,
+      name: 'Example Company',
+      display_name: 'Example User',
+      role: 'admin',
+    }]));
+    setSetting('oauth_user_id', '123');
+    setSetting('oauth_user_email', 'private@example.invalid');
+
+    const res = await request(app)
+      .get('/api/config/oauth-status')
+      .set('x-session-token', TOKEN);
+
+    expect(res.status).toBe(200);
+    expect(res.body.companies[0]).toEqual({
+      id: 12345,
+      employee_id: 67890,
+      name: 'Example Company',
+      display_name: 'Example User',
+    });
+    expect(res.body).not.toHaveProperty('user_id');
+    expect(res.body).not.toHaveProperty('user_email');
+  });
+
   it('GET /api/config/oauth-status shows status after save', async () => {
     const res = await request(app)
       .get('/api/config/oauth-status')
@@ -365,7 +429,7 @@ describe('OAuth Config Endpoints', () => {
     expect(typeof res.body).toBe('object');
   });
 
-  it('GET /api/config/oauth-authorize-url generates authorization URL', async () => {
+  it('POST /api/config/oauth-authorize-url generates authorization URL', async () => {
     const clientSecretField = ['client', 'secret'].join('_');
     // First save OAuth app credentials so URL generation works
     await request(app)
@@ -374,7 +438,7 @@ describe('OAuth Config Endpoints', () => {
       .send({ client_id: 'test_url_client', [clientSecretField]: 'test_url_value' });
 
     const res = await request(app)
-      .get('/api/config/oauth-authorize-url')
+      .post('/api/config/oauth-authorize-url')
       .set('x-session-token', TOKEN);
     // Should return 200 with URL, or 400 if client_id not configured
     if (res.status === 200) {
@@ -402,6 +466,20 @@ describe('OAuth Config Endpoints', () => {
 // ────────────────────────────────────────
 
 describe('Web Credential Management', () => {
+  it('PUT /api/config/account rejects malformed credential values', async () => {
+    const nonString = await request(app)
+      .put('/api/config/account')
+      .set('x-session-token', TOKEN)
+      .send({ username: { value: 'invalid' }, password: 'Password123!' });
+    const oversized = await request(app)
+      .put('/api/config/account')
+      .set('x-session-token', TOKEN)
+      .send({ username: 'test@example.com', password: 'x'.repeat(1025) });
+
+    expect(nonString.status).toBe(400);
+    expect(oversized.status).toBe(400);
+  });
+
   it('PUT /api/config/account stores encrypted credentials', async () => {
     const webPassphrase = 'TestPassword123!';
     const res = await request(app)
@@ -409,10 +487,12 @@ describe('Web Credential Management', () => {
       .set('x-session-token', TOKEN)
       .send({
         username: 'test@example.com',
-        password: webPassphrase
+        password: webPassphrase,
+        company_name: 'Example Company',
       });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+    expect(res.body.freee_company_name).toBe('Example Company');
   });
 
   it('GET /api/config/account returns username but never password', async () => {
@@ -421,6 +501,7 @@ describe('Web Credential Management', () => {
       .set('x-session-token', TOKEN);
     expect(res.status).toBe(200);
     expect(res.body.freee_username).toBe('test@example.com');
+    expect(res.body.freee_company_name).toBe('Example Company');
     expect(res.body.freee_configured).toBe(true);
     // Password must NEVER be returned
     expect(res.body.password).toBeUndefined();
@@ -859,6 +940,16 @@ describe('FreeeApiClient Module', () => {
     setSetting('oauth_refresh_token_encrypted', encrypt('refresh_api_401'));
     setSetting('oauth_access_token_encrypted', encrypt('access_api_401'));
     setSetting('oauth_token_expires_at', String(Math.floor(Date.now() / 1000) + 3600));
+    setSetting('oauth_company_id', '12345');
+    setSetting('oauth_employee_id', '67890');
+    setSetting('oauth_company_name', 'Example Company');
+    setSetting('oauth_companies', JSON.stringify([{
+      id: 12345,
+      employee_id: 67890,
+      name: 'Example Company',
+      display_name: 'Example User',
+    }]));
+    setSetting('oauth_configured', '1');
 
     global.fetch = async (url) => {
       if (String(url).includes('/public_api/token')) {

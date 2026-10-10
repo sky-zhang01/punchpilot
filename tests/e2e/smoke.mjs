@@ -46,14 +46,32 @@ async function main() {
   const port = await getFreePort();
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'punchpilot-e2e-'));
   const baseUrl = `http://127.0.0.1:${port}`;
+  const bootstrapPasswordFile = path.join(tempDir, 'keystore', 'initial-admin-password');
   const logs = [];
 
+  fs.cpSync(path.join(PROJECT_ROOT, 'server'), path.join(tempDir, 'server'), {
+    recursive: true,
+  });
+  fs.cpSync(path.join(PROJECT_ROOT, 'shared'), path.join(tempDir, 'shared'), { recursive: true });
+  fs.mkdirSync(path.join(tempDir, 'client'), { recursive: true });
+  fs.cpSync(path.join(PROJECT_ROOT, 'client', 'dist'), path.join(tempDir, 'client', 'dist'), {
+    recursive: true,
+  });
+  fs.writeFileSync(path.join(tempDir, 'package.json'), '{"type":"module"}\n');
+  fs.symlinkSync(path.join(PROJECT_ROOT, 'node_modules'), path.join(tempDir, 'node_modules'), 'dir');
+
   const child = spawn(process.execPath, ['server/server.js'], {
-    cwd: PROJECT_ROOT,
+    cwd: tempDir,
     env: {
-      ...process.env,
+      ...Object.fromEntries(['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'PLAYWRIGHT_BROWSERS_PATH']
+        .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]])),
       PORT: String(port),
       PUNCHPILOT_DB_PATH: path.join(tempDir, 'punchpilot.db'),
+      PUNCHPILOT_KEYSTORE_DIR: path.join(tempDir, 'keystore'),
+      PUNCHPILOT_LEGACY_APP_SECRET_FILE: path.join(tempDir, '.app-secret'),
+      PUNCHPILOT_LOG_DIR: path.join(tempDir, 'logs'),
+      SHUTDOWN_GRACE_MS: '1000',
+      PUNCHPILOT_INITIAL_ADMIN_PASSWORD_FILE: bootstrapPasswordFile,
       SCREENSHOTS_DIR: path.join(tempDir, 'screenshots'),
       APP_SECRET: `e2e-${crypto.randomBytes(24).toString('hex')}`,
       TZ: 'Asia/Tokyo',
@@ -69,6 +87,7 @@ async function main() {
   let browser;
   try {
     await waitForServer(baseUrl, processLogs);
+    const bootstrapPassword = fs.readFileSync(bootstrapPasswordFile, 'utf8').trim();
 
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
@@ -79,7 +98,7 @@ async function main() {
 
     await page.goto(`${baseUrl}/login`, { waitUntil: 'domcontentloaded' });
     await page.getByLabel('Username').fill('admin');
-    await page.getByLabel('Password').fill('admin');
+    await page.getByLabel('Password').fill(bootstrapPassword);
     await Promise.all([
       page.waitForURL('**/change-password'),
       page.getByRole('button', { name: 'Sign In' }).click(),
@@ -93,19 +112,36 @@ async function main() {
       page.waitForURL('**/dashboard'),
       page.getByRole('button', { name: 'Save & Continue' }).click(),
     ]);
+    assert(!fs.existsSync(bootstrapPasswordFile), 'bootstrap password file was not removed');
 
     await page.getByRole('heading', { name: 'Status' }).waitFor();
     await page.goto(`${baseUrl}/settings`, { waitUntil: 'domcontentloaded' });
     await page.getByText('API Configuration (OAuth2)').waitFor();
+    const logsResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === 'GET' && url.pathname === '/api/logs';
+    });
     await page.goto(`${baseUrl}/logs`, { waitUntil: 'domcontentloaded' });
-    await page.getByText('No logs found').waitFor();
+    const logsResponse = await logsResponsePromise;
+    assert(logsResponse.ok(), `logs API returned ${logsResponse.status()}`);
+    const logsPayload = await logsResponse.json();
+    assert(Array.isArray(logsPayload.rows), 'logs API response is missing rows');
+    await page.getByRole('table').waitFor();
+    if (logsPayload.rows.length === 0) {
+      await page.getByText('No logs found').waitFor();
+    } else {
+      await page.locator('tbody tr.ant-table-row').first().waitFor();
+    }
   } catch (error) {
     console.error(processLogs());
     throw error;
   } finally {
     if (browser) await browser.close();
-    child.kill('SIGTERM');
-    await new Promise((resolve) => child.once('exit', resolve));
+    if (child.exitCode === null && child.signalCode === null) {
+      const stopped = new Promise((resolve) => child.once('exit', resolve));
+      child.kill('SIGTERM');
+      await stopped;
+    }
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }

@@ -1,0 +1,197 @@
+#!/bin/sh
+set -eu
+
+umask 077
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin
+export PATH
+
+fail() {
+  printf '[FAIL] %s\n' "$1" >&2
+  exit 1
+}
+
+remote_name=${1:-}
+remote_url=${2:-}
+hook_directory=$(CDPATH='' cd -P "$(dirname "$0")" && pwd)
+if [ -f "$hook_directory/consumer.json" ]; then
+  reviewed_node=$(python3 - "$hook_directory/consumer.json" <<'PY'
+import json,os,stat,sys
+file=sys.argv[1]
+meta=os.lstat(file)
+if not stat.S_ISREG(meta.st_mode) or meta.st_uid!=os.getuid() or meta.st_mode&0o077: raise SystemExit(1)
+with open(file,encoding='utf-8') as stream: executable=json.load(stream).get('nodeExecutable')
+if not isinstance(executable,str) or not os.path.isabs(executable) or any(ord(c)<32 for c in executable): raise SystemExit(1)
+tool=os.lstat(executable)
+if not stat.S_ISREG(tool.st_mode) or tool.st_uid not in {0,os.getuid()} or tool.st_mode&0o022 or not os.access(executable,os.X_OK): raise SystemExit(1)
+print(executable)
+PY
+  ) || fail 'The independently installed Node runtime is unavailable.'
+  exec "$reviewed_node" "$hook_directory/isolated-publisher.mjs" hook --remote-url "$remote_url"
+fi
+public_remote=$(git config --get punchpilot.publicRemote || true)
+source_remote=$(git config --get punchpilot.sourceRemote || true)
+
+if [ -z "$public_remote" ] || [ -z "$source_remote" ] || [ "$public_remote" = "$source_remote" ]; then
+  fail 'Source and public remote roles must be configured explicitly and must differ.'
+fi
+
+public_url=$(git remote get-url --push "$public_remote" 2>/dev/null || true)
+source_url=$(git remote get-url --push "$source_remote" 2>/dev/null || true)
+
+if [ -z "$public_url" ] || [ -z "$source_url" ]; then
+  fail 'Configured source and public remotes must both have push URLs.'
+fi
+
+remote_destinations=$(
+  printf '%s\n%s\n%s\n' "$public_url" "$source_url" "$remote_url" |
+    python3 -c '
+import re
+import sys
+from urllib.parse import unquote, urlsplit
+
+
+def canonical_destination(value):
+    if not value or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError
+    if "://" in value:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in {"http", "https", "ssh"}
+            or not parsed.hostname
+            or parsed.password
+            or (parsed.scheme in {"http", "https"} and parsed.username)
+            or (
+                parsed.scheme == "http"
+                and (
+                    parsed.hostname.casefold() not in {"127.0.0.1", "localhost"}
+                    or parsed.port is None
+                )
+            )
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError
+        host = parsed.hostname
+        repository_path = parsed.path
+    else:
+        match = re.fullmatch(r"(?:[^@/:]+@)?([^/:]+):(.+)", value)
+        if not match:
+            raise ValueError
+        host, repository_path = match.groups()
+
+    parts = [unquote(part) for part in repository_path.strip("/").split("/") if part]
+    if len(parts) < 2 or any(part in {".", ".."} or not part for part in parts):
+        raise ValueError
+    if parts[-1].lower().endswith(".git"):
+        parts[-1] = parts[-1][:-4]
+    if not parts[-1] or any("/" in part or "\\" in part for part in parts):
+        raise ValueError
+    repository = "/".join(parts).casefold()
+    return f"{host.casefold()}/{repository}"
+
+
+try:
+    values = sys.stdin.buffer.read().decode("utf-8", "strict").splitlines()
+    if len(values) != 3:
+        raise ValueError
+    print("\t".join(canonical_destination(value) for value in values))
+except (UnicodeError, ValueError):
+    raise SystemExit(1)
+'
+) || fail 'Remote destinations could not be validated safely.'
+
+IFS="$(printf '\t')" read -r public_destination source_destination remote_destination <<EOF
+$remote_destinations
+EOF
+
+if [ -z "$public_destination" ] || [ -z "$source_destination" ] ||
+   [ -z "$remote_destination" ] || [ "$public_destination" = "$source_destination" ]; then
+  fail 'Source and public remote destinations must be distinct.'
+fi
+
+case "$public_url" in
+  git@github.com:*|ssh://git@github.com/*|https://github.com/*)
+    ;;
+  *)
+    fail 'The configured public remote does not use an approved GitHub URL.'
+    ;;
+esac
+
+source_ref=$(git config --get punchpilot.sourceRef || true)
+forbidden_hosts=$(git config --get punchpilot.publicationForbiddenHosts || true)
+expected_source_ref="refs/remotes/${source_remote}/main"
+
+if [ "$source_ref" != "$expected_source_ref" ] || [ -z "$forbidden_hosts" ]; then
+  fail 'Public push protection is not fully configured.'
+fi
+
+repo_root=$(git rev-parse --show-toplevel)
+hook_path=$0
+case "$hook_path" in
+  /*) ;;
+  *) hook_path="$PWD/$hook_path" ;;
+esac
+hook_directory=$(dirname "$hook_path")
+hook_dir=$(
+  CDPATH=''
+  cd -P "$hook_directory" 2>/dev/null
+  pwd
+) || fail 'Could not resolve the installed hook directory.'
+privacy_gate="$hook_dir/public-release-privacy-gate.py"
+source_gate="$hook_dir/source-ci-gate.py"
+
+if [ ! -x "$source_gate" ]; then
+  fail 'The installed source CI gate is not executable.'
+fi
+
+if ! python3 - "$hook_path" "$privacy_gate" "$source_gate" "$repo_root" <<'PY'
+import os
+import stat
+import sys
+
+trusted_paths = [os.path.realpath(value) for value in sys.argv[1:4]]
+root = os.path.realpath(sys.argv[4])
+uid = os.getuid()
+
+for trusted_path in trusted_paths:
+    metadata = os.stat(trusted_path)
+    directory = os.stat(os.path.dirname(trusted_path))
+    if not stat.S_ISREG(metadata.st_mode) or not stat.S_ISDIR(directory.st_mode):
+        raise SystemExit(1)
+    if metadata.st_uid not in {0, uid} or directory.st_uid not in {0, uid}:
+        raise SystemExit(1)
+    if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise SystemExit(1)
+    if directory.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise SystemExit(1)
+    try:
+        if os.path.commonpath((trusted_path, root)) == root:
+            raise SystemExit(1)
+    except ValueError:
+        pass
+PY
+then
+  fail 'The installed publication gates do not meet the external trust requirements.'
+fi
+
+if [ "$remote_name" = "$source_remote" ]; then
+  if [ "$remote_destination" != "$source_destination" ]; then
+    fail 'Push target does not match the configured source remote destination.'
+  fi
+  /usr/bin/env -i \
+    HOME="${HOME:-}" \
+    PATH="$PATH" \
+    LC_ALL=C \
+    "$source_gate" \
+    --validate-source-destination
+  exit 0
+fi
+
+if [ "$remote_destination" != "$public_destination" ]; then
+  fail 'Push target is not the configured source or public remote.'
+fi
+if [ "$remote_name" != "$public_remote" ] && [ "$remote_name" != "$public_url" ]; then
+  fail 'Push target is not the configured source or public remote.'
+fi
+
+fail 'Public writes require the independently installed E-only consumer; source workspaces cannot publish.'

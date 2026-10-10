@@ -10,68 +10,84 @@ on:
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: 24.21.0
+  NPM_VERSION: 12.2.0
+  BUILDX_VERSION: v0.37.2
+  BUILDKIT_IMAGE: moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
+          persist-credentials: false
+      - name: Install reviewed Node.js
+        run: bash scripts/ci/install-reviewed-node.sh
+      - name: Use reviewed npm CLI
+        run: bash scripts/ci/use-reviewed-npm.sh
+      - run: npm ci --ignore-scripts
       - name: Security lint
         run: npm run lint:security
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
+          persist-credentials: false
+      - name: Install reviewed Node.js
+        run: bash scripts/ci/install-reviewed-node.sh
+      - name: Use reviewed npm CLI
+        run: bash scripts/ci/use-reviewed-npm.sh
+      - run: npm ci --ignore-scripts
       - name: Run tests with coverage
         run: npm run test:coverage
 
   dependency-audit:
     name: Dependency Audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
+          persist-credentials: false
+      - name: Install reviewed Node.js
+        run: bash scripts/ci/install-reviewed-node.sh
+      - name: Use reviewed npm CLI
+        run: bash scripts/ci/use-reviewed-npm.sh
+      - name: Enforce dependency release-age policy
+        run: node scripts/ci/dependency-release-age-check.mjs
+      - run: npm ci --ignore-scripts
       - name: Audit server dependencies
         run: npm audit --audit-level=moderate
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: client/package-lock.json
+      - name: Verify server registry signatures
+        run: npm audit signatures
       - working-directory: client
-        run: npm ci
+        run: npm ci --ignore-scripts
       - name: Audit client dependencies
         working-directory: client
         run: npm audit --audit-level=moderate
+      - name: Verify client registry signatures
+        working-directory: client
+        run: npm audit signatures
 
   client-build:
     name: Client Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: client/package-lock.json
-      - working-directory: client
-        run: npm ci
+          persist-credentials: false
+      - name: Install reviewed Node.js
+        run: bash scripts/ci/install-reviewed-node.sh
+      - name: Use reviewed npm CLI
+        run: bash scripts/ci/use-reviewed-npm.sh
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci --ignore-scripts
       - name: Typecheck client
         working-directory: client
         run: npm run typecheck
@@ -84,59 +100,162 @@ jobs:
 
   e2e-smoke:
     name: E2E Smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: client/package-lock.json
-      - working-directory: client
-        run: npm ci
+          persist-credentials: false
+      - name: Install reviewed Node.js
+        run: bash scripts/ci/install-reviewed-node.sh
+      - name: Use reviewed npm CLI
+        run: bash scripts/ci/use-reviewed-npm.sh
+      - run: npm ci --ignore-scripts
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci --ignore-scripts
       - name: Build client
         working-directory: client
         run: npm run build
       - name: Install Chromium for Playwright
-        run: npx playwright install --with-deps chromium
+        run: npx --no-install playwright install --with-deps --only-shell chromium
       - name: Run E2E smoke test
         run: npm run test:e2e
 
   docker-build:
     name: Docker Build Check (amd64)
-    runs-on: ubuntu-latest
-    # PRs validate the deployment target (TrueNAS/x86). Tag publishing performs
-    # the real multi-arch release build; workflow_dispatch can still dry-run arm64.
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.repository == 'sky-zhang01/punchpilot')
+    runs-on: ubuntu-26.04
+    # Every public candidate validates the primary x86 deployment target.
     timeout-minutes: 30
     env:
       DOCKER_BUILD_RECORD_UPLOAD: "false"
     steps:
-      - uses: actions/checkout@v7
-      - name: Set up QEMU
-        if: github.event_name == 'workflow_dispatch'
-        uses: docker/setup-qemu-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
       - name: Build amd64 (dry run)
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Build arm64 (manual dry run)
-        if: github.event_name == 'workflow_dispatch'
-        uses: docker/build-push-action@v7
+          load: true
+          tags: punchpilot-ci:amd64
+          cache-from: type=gha,scope=ci-amd64
+          # Only serialized main pushes write the shared cache; PR dry-runs are
+          # read-only so concurrent runs cannot corrupt the cache.
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=ci-amd64' || '' }}
+          pull: true
+          no-cache-filters: runtime
+      - name: Verify container privilege drop
+        run: |
+          runtime_uid=$(docker run --rm punchpilot-ci:amd64 id -u)
+          test "$runtime_uid" != "0"
+          if docker run --rm -e PUID=0 punchpilot-ci:amd64 id -u; then
+            echo "Container accepted an unsafe root PUID." >&2
+            exit 1
+          fi
+      - name: Install pinned Trivy
+        run: bash scripts/ci/install-trivy.sh
+      - name: Scan built amd64 image
+        run: bash scripts/ci/container-image-security-gate.sh punchpilot-ci:amd64 trivy-image-amd64.json linux/amd64
+
+  docker-build-arm64:
+    name: Docker Build Check (arm64 native)
+    if: github.event_name == 'workflow_dispatch'
+    needs: docker-build
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 30
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+      - name: Build arm64 image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/arm64
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          load: true
+          tags: punchpilot-ci:arm64
+          cache-from: type=gha,scope=ci-arm64
+          cache-to: type=gha,mode=max,scope=ci-arm64
+          pull: true
+          no-cache-filters: runtime
+      - name: Install pinned Trivy
+        run: bash scripts/ci/install-trivy.sh
+      - name: Scan built arm64 image and verify Chromium natively
+        run: bash scripts/ci/container-image-security-gate.sh punchpilot-ci:arm64 trivy-image-arm64.json linux/arm64 --require-native-browser
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install reviewed Node.js
+        run: bash scripts/ci/install-reviewed-node.sh
+      - name: Public content baseline scan
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUBLIC_RELEASE_FORBIDDEN_HOSTS: ${{ secrets.PUBLIC_RELEASE_FORBIDDEN_HOSTS }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/public-release-privacy-gate.py \
+            --root . \
+            --repo-name public \
+            --ref HEAD \
+            --require-forbidden-hosts
+          case "$GITHUB_EVENT_NAME" in
+            pull_request)
+              history_base=$PR_BASE_SHA
+              history_label=pull-request
+              ;;
+            push)
+              history_base=$PUSH_BASE_SHA
+              history_label=main-push
+              ;;
+            workflow_dispatch)
+              history_base=$(git rev-parse 'HEAD^')
+              history_label=workflow-dispatch
+              ;;
+            *)
+              echo "Unsupported CI event for publication scan." >&2
+              exit 1
+              ;;
+          esac
+          printf '%s\n' "$history_base" | grep -Eq '^[0-9a-f]{40}$'
+          git cat-file -e "${history_base}^{commit}"
+          git merge-base --is-ancestor "$history_base" HEAD
+          preflight_args=(
+            --head HEAD
+            --base "$history_base"
+            --repo-name "$history_label"
+            --require-forbidden-hosts
+          )
+          node scripts/ci/publication-preflight.mjs "${preflight_args[@]}"
+      - name: Runtime forbidden host absence check
+        env:
+          PUBLIC_RELEASE_FORBIDDEN_HOSTS: ${{ secrets.PUBLIC_RELEASE_FORBIDDEN_HOSTS }}
+        run: |
+          node scripts/ci/assert-forbidden-host-absence.mjs
+      - name: Install pinned Trivy
+        run: bash scripts/ci/install-trivy.sh
+      - name: Filesystem, dependency, secret, and configuration scan
+        run: bash scripts/ci/filesystem-security-gate.sh

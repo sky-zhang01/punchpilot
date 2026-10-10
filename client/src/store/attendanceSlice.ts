@@ -1,5 +1,12 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import api from '../api';
+import { assertIdentity, getIdentityEpoch } from '../http';
+import { taskFailure, type TaskDTO, type TaskFailure, type TaskItemResult, type StrategyInfo } from '../tasks';
+export type { StrategyInfo } from '../tasks';
+import { businessDate, businessMinutes } from '../utils/date-time';
+import { isTimeString, timeToMinutes } from '../../../shared/date-time.js';
+import type { ScheduleConfig, StatusDTO } from '../contracts';
+import { ACTION_TYPES } from '../../../shared/schedule-policy.js';
 
 // --- Types ---
 
@@ -13,9 +20,13 @@ export interface AttendanceRecord {
   clock_in: string | null;
   clock_out: string | null;
   day_pattern: string;
+  schedule_pattern: string;
   is_holiday: boolean;
   is_absence: boolean;
   is_editable: boolean;
+  is_non_working_day: boolean;
+  non_working_day_code: string | null;
+  has_leave: boolean;
   total_work_mins: number;
   total_overtime_mins: number;
   lateness_mins: number;
@@ -41,22 +52,11 @@ export interface MonthlySummary {
   total_lateness_and_early_leaving_mins: number;
 }
 
-export interface BatchPunchResult {
-  date: string;
-  success: boolean;
-  error?: string;
-  method?: string;
-}
-
-export interface StrategyInfo {
-  direct_disabled: boolean;
-  approval_route_blocked: boolean;
-  web_fallback_used: boolean;
-  web_credentials_configured: boolean;
-}
+export type BatchPunchResult = TaskItemResult;
 
 export interface ApprovalRequest {
   id: number;
+  type: string;
   status: string;           // 'in_progress' | 'approved' | 'feedback'
   target_date: string;
   work_records: { clock_in_at: string | null; clock_out_at: string | null }[];
@@ -68,12 +68,9 @@ export interface ApprovalRequest {
 
 /** What the current company/role supports */
 export interface Capabilities {
-  direct_edit: boolean;    // Can PUT work records directly
-  approval: boolean;       // Has AttendanceWorkflow approval routes
-  approval_route_id: number | null;
-  role: string;            // self_only, company_admin, etc.
-  company_name: string | null;
-  display_name: string | null;
+  direct_edit: boolean;
+  approval: boolean;
+  approval_route_verified: boolean;
 }
 
 interface AttendanceState {
@@ -87,13 +84,20 @@ interface AttendanceState {
   capabilities: Capabilities | null;
   capabilitiesLoading: boolean;
   // Approval requests
-  approvalRequests: Record<string, ApprovalRequest>;
+  approvalRequests: Record<string, ApprovalRequest[]>;
   approvalRequestsLoading: boolean;
+  approvalRequestsRequestId: string | null;
+  attendanceRequestId: string | null;
   // Batch operations
   selectedDates: string[];
   batchPunchLoading: boolean;
   batchPunchResults: BatchPunchResult[];
   batchStrategyInfo: StrategyInfo | null;
+  batchTask: TaskDTO | null;
+  batchError: TaskFailure | null;
+  batchRequestId: string | null;
+  capabilitiesRequestId: string | null;
+  withdrawRequestId: string | null;
 }
 
 const now = new Date();
@@ -108,11 +112,46 @@ const initialState: AttendanceState = {
   capabilitiesLoading: false,
   approvalRequests: {},
   approvalRequestsLoading: false,
+  approvalRequestsRequestId: null,
+  attendanceRequestId: null,
   selectedDates: [],
   batchPunchLoading: false,
   batchPunchResults: [],
   batchStrategyInfo: null,
+  batchTask: null,
+  batchError: null,
+  batchRequestId: null,
+  capabilitiesRequestId: null,
+  withdrawRequestId: null,
 };
+
+export function isAttendanceNonWorking(record: AttendanceRecord | undefined): boolean {
+  return !!record && (
+    record.is_non_working_day ||
+    record.is_absence ||
+    record.is_holiday
+  );
+}
+
+export interface MissingPunchContext { today: string; todayEligible: boolean }
+export function missingPunchContext(
+  schedules: Array<Pick<ScheduleConfig, 'action_type' | 'mode' | 'fixed_time' | 'window_end'>>,
+  status: Pick<StatusDTO, 'timezone' | 'attendance_state'> & { today_logs?: Array<Pick<StatusDTO['today_logs'][number], 'action_type' | 'status'>> } | null,
+  now = new Date(),
+): MissingPunchContext {
+  const checkin = schedules.find(schedule => schedule.action_type === 'checkin');
+  const endTime = checkin?.mode === 'random' ? checkin.window_end : checkin?.fixed_time;
+  const state = status?.attendance_state;
+  const hasActivity = !!state && !['not_checked_in', 'unknown', 'holiday', 'disabled'].includes(state)
+    || (status?.today_logs || []).some(log => ACTION_TYPES.includes(log.action_type || '') && log.status === 'success');
+  return { today: businessDate(status?.timezone, now),
+    todayEligible: !!status && isTimeString(endTime) && businessMinutes(status.timezone, now) >= timeToMinutes(endTime!) && !hasActivity };
+}
+export function isMissingPunch(date: string, record: AttendanceRecord | undefined, approvals: ApprovalRequest[], context: MissingPunchContext): boolean {
+  return date <= context.today && (date !== context.today || context.todayEligible)
+    && !!record && record.day_pattern === 'normal_day' && !record.clock_in && !isAttendanceNonWorking(record)
+    && !approvals.some(request => request.status === 'in_progress' || request.status === 'approved');
+}
 
 // --- Thunks ---
 
@@ -134,12 +173,12 @@ export const fetchApprovalRequests = createAsyncThunk(
 
 export const withdrawApprovalRequest = createAsyncThunk(
   'attendance/withdrawApprovalRequest',
-  async (id: number, { dispatch, getState }) => {
-    await api.withdrawApprovalRequest(id);
+  async ({ id, type }: { id: number; type: string }, { dispatch, getState }) => {
+    await api.withdrawApprovalRequest(id, type);
     // Refresh approval requests
     const state = getState() as { attendance: AttendanceState };
     dispatch(fetchApprovalRequests({ year: state.attendance.year, month: state.attendance.month }));
-    return id;
+    return { id, type };
   }
 );
 
@@ -158,8 +197,8 @@ export const fetchAttendance = createAsyncThunk(
 
 /**
  * Unified batch punch — server auto-decides per-date strategy.
- * Frontend just sends dates + times + is_editable flag.
- * Server uses is_editable to decide PUT (direct) vs POST (approval).
+ * Frontend sends requested dates and times. The server re-reads freee before
+ * deciding whether direct editing, approval, or Web automation is safe.
  */
 export const batchSubmit = createAsyncThunk(
   'attendance/batchSubmit',
@@ -168,65 +207,21 @@ export const batchSubmit = createAsyncThunk(
       entries: { date: string; clock_in_at: string; clock_out_at: string; is_editable?: boolean; break_records?: { clock_in_at: string; clock_out_at: string }[] }[];
       reason?: string;
     },
-    { dispatch, getState }
+    { dispatch, getState, rejectWithValue }
   ) => {
-    const res = await api.submitBatch({ entries, reason });
-    const data = res.data as { results: BatchPunchResult[]; succeeded: number; failed: number; strategy_info?: StrategyInfo };
-    // Refresh data after batch
-    const state = getState() as { attendance: AttendanceState };
-    dispatch(fetchAttendance({ year: state.attendance.year, month: state.attendance.month }));
-    return { results: data.results, strategyInfo: data.strategy_info || null };
-  }
-);
-
-// Legacy thunks kept for backward compat with BatchPunchModal
-export const batchPunchDates = createAsyncThunk(
-  'attendance/batchPunchDates',
-  async (
-    entries: { date: string; clock_in_at: string; clock_out_at: string; break_records?: { clock_in_at: string; clock_out_at: string }[] }[],
-    { dispatch, getState }
-  ) => {
-    const results: BatchPunchResult[] = [];
-    for (const entry of entries) {
-      try {
-        await api.putWorkRecord(entry.date, {
-          clock_in_at: entry.clock_in_at,
-          clock_out_at: entry.clock_out_at,
-          break_records: entry.break_records,
-        });
-        results.push({ date: entry.date, success: true });
-      } catch (err: any) {
-        results.push({
-          date: entry.date,
-          success: false,
-          error: err?.response?.data?.error || err.message,
-        });
-      }
-      // Rate limiting: 200ms between requests
-      await new Promise((r) => setTimeout(r, 200));
+    const epoch = getIdentityEpoch();
+    try {
+      const { data } = await api.submitBatch({ entries, reason });
+      assertIdentity(epoch);
+      const state = getState() as { attendance: AttendanceState };
+      dispatch(fetchAttendance({ year: state.attendance.year, month: state.attendance.month }));
+      return { results: data.results, strategyInfo: data.strategy_info, task: data };
+    } catch (error) {
+      assertIdentity(epoch);
+      const failure = taskFailure(error);
+      if (failure) return rejectWithValue(failure);
+      throw error;
     }
-    // Refresh data after batch
-    const state = getState() as { attendance: AttendanceState };
-    dispatch(fetchAttendance({ year: state.attendance.year, month: state.attendance.month }));
-    return results;
-  }
-);
-
-export const batchWorkTimeCorrection = createAsyncThunk(
-  'attendance/batchWorkTimeCorrection',
-  async (
-    { entries, reason }: {
-      entries: { date: string; clock_in_at: string; clock_out_at: string; break_records?: { clock_in_at: string; clock_out_at: string }[] }[];
-      reason?: string;
-    },
-    { dispatch, getState }
-  ) => {
-    const res = await api.submitBatchWorkTimeCorrection({ entries, reason });
-    const data = res.data as { results: BatchPunchResult[]; succeeded: number; failed: number };
-    // Refresh data after batch
-    const state = getState() as { attendance: AttendanceState };
-    dispatch(fetchAttendance({ year: state.attendance.year, month: state.attendance.month }));
-    return data.results;
   }
 );
 
@@ -239,6 +234,10 @@ const attendanceSlice = createSlice({
     setYearMonth(state, action: PayloadAction<{ year: number; month: number }>) {
       state.year = action.payload.year;
       state.month = action.payload.month;
+      state.loading = false;
+      state.approvalRequestsLoading = false;
+      state.attendanceRequestId = null;
+      state.approvalRequestsRequestId = null;
     },
     toggleDateSelection(state, action: PayloadAction<string>) {
       const date = action.payload;
@@ -252,77 +251,90 @@ const attendanceSlice = createSlice({
     clearDateSelection(state) {
       state.selectedDates = [];
     },
-    selectAllMissingDates(state) {
-      const today = new Date().toISOString().slice(0, 10);
-      const missing: string[] = [];
-      for (const [date, record] of Object.entries(state.records)) {
-        // Skip dates that have pending/approved approval requests
-        const hasApproval = state.approvalRequests[date] &&
-          (state.approvalRequests[date].status === 'in_progress' || state.approvalRequests[date].status === 'approved');
-        if (
-          date <= today && // Include today (CalendarView handles check-in time gate)
-          record.day_pattern === 'normal_day' &&
-          !record.clock_in &&
-          !record.is_absence &&
-          !record.is_holiday &&
-          !hasApproval
-        ) {
-          missing.push(date);
-        }
-      }
-      state.selectedDates = missing;
+    selectAllMissingDates(state, action: PayloadAction<MissingPunchContext | undefined>) {
+      const context = action.payload || { today: businessDate(), todayEligible: false };
+      state.selectedDates = Object.entries(state.records)
+        .filter(([date, record]) => isMissingPunch(date, record, state.approvalRequests[date] || [], context))
+        .map(([date]) => date);
     },
     clearBatchResults(state) {
       state.batchPunchResults = [];
     },
   },
   extraReducers: (builder) => {
+    builder.addCase('account/identityChanged', (state) => ({ ...initialState, year: state.year, month: state.month }));
     // fetchApprovalRequests
-    builder.addCase(fetchApprovalRequests.pending, (state) => {
+    builder.addCase(fetchApprovalRequests.pending, (state, action) => {
       state.approvalRequestsLoading = true;
+      state.approvalRequestsRequestId = action.meta.requestId;
     });
     builder.addCase(fetchApprovalRequests.fulfilled, (state, action) => {
-      const map: Record<string, ApprovalRequest> = {};
+      if (
+        state.approvalRequestsRequestId !== action.meta.requestId ||
+        state.year !== action.meta.arg.year ||
+        state.month !== action.meta.arg.month
+      ) return;
+      const map: Record<string, ApprovalRequest[]> = {};
       for (const req of action.payload) {
-        map[req.target_date] = req;
+        if (!map[req.target_date]) map[req.target_date] = [];
+        map[req.target_date].push(req);
       }
       state.approvalRequests = map;
       state.approvalRequestsLoading = false;
+      state.approvalRequestsRequestId = null;
     });
-    builder.addCase(fetchApprovalRequests.rejected, (state) => {
+    builder.addCase(fetchApprovalRequests.rejected, (state, action) => {
+      if (state.approvalRequestsRequestId !== action.meta.requestId) return;
       state.approvalRequestsLoading = false;
+      state.approvalRequestsRequestId = null;
     });
 
     // withdrawApprovalRequest
+    builder.addCase(withdrawApprovalRequest.pending, (state, action) => { state.withdrawRequestId = action.meta.requestId; });
     builder.addCase(withdrawApprovalRequest.fulfilled, (state, action) => {
+      if (state.withdrawRequestId !== action.meta.requestId) return;
+      state.withdrawRequestId = null;
       // Remove the withdrawn request from local state
-      const id = action.payload;
-      for (const [date, req] of Object.entries(state.approvalRequests)) {
-        if (req.id === id) {
-          delete state.approvalRequests[date];
-          break;
-        }
+      const { id, type } = action.payload;
+      for (const [date, requests] of Object.entries(state.approvalRequests)) {
+        const remaining = requests.filter((request) =>
+          request.id !== id || request.type !== type);
+        if (remaining.length === 0) delete state.approvalRequests[date];
+        else state.approvalRequests[date] = remaining;
       }
     });
 
     // fetchCapabilities
-    builder.addCase(fetchCapabilities.pending, (state) => {
+    builder.addCase(fetchCapabilities.pending, (state, action) => {
+      state.capabilitiesRequestId = action.meta.requestId;
       state.capabilitiesLoading = true;
     });
     builder.addCase(fetchCapabilities.fulfilled, (state, action) => {
+      if (state.capabilitiesRequestId !== action.meta.requestId) return;
+      state.capabilitiesRequestId = null;
       state.capabilities = action.payload;
       state.capabilitiesLoading = false;
     });
-    builder.addCase(fetchCapabilities.rejected, (state) => {
+    builder.addCase(fetchCapabilities.rejected, (state, action) => {
+      if (state.capabilitiesRequestId !== action.meta.requestId) return;
+      state.capabilitiesRequestId = null;
       state.capabilitiesLoading = false;
     });
 
     // fetchAttendance
-    builder.addCase(fetchAttendance.pending, (state) => {
+    builder.addCase(fetchAttendance.pending, (state, action) => {
       state.loading = true;
       state.error = null;
+      state.attendanceRequestId = action.meta.requestId;
     });
     builder.addCase(fetchAttendance.fulfilled, (state, action) => {
+      if (
+        state.attendanceRequestId !== action.meta.requestId ||
+        state.year !== action.meta.arg.year ||
+        state.month !== action.meta.arg.month ||
+        action.payload.year !== action.meta.arg.year ||
+        action.payload.month !== action.meta.arg.month
+      ) return;
       const map: Record<string, AttendanceRecord> = {};
       for (const rec of action.payload.records || []) {
         map[rec.date] = rec;
@@ -332,55 +344,46 @@ const attendanceSlice = createSlice({
       state.year = action.payload.year;
       state.month = action.payload.month;
       state.loading = false;
+      state.attendanceRequestId = null;
     });
     builder.addCase(fetchAttendance.rejected, (state, action) => {
+      if (state.attendanceRequestId !== action.meta.requestId) return;
       state.loading = false;
+      state.attendanceRequestId = null;
       state.error = action.error.message || 'Failed to fetch attendance';
     });
 
     // batchSubmit (unified)
-    builder.addCase(batchSubmit.pending, (state) => {
+    builder.addCase(batchSubmit.pending, (state, action) => {
+      state.batchRequestId = action.meta.requestId;
+      state.batchError = null;
+      state.batchTask = null;
       state.batchPunchLoading = true;
       state.batchPunchResults = [];
       state.batchStrategyInfo = null;
     });
     builder.addCase(batchSubmit.fulfilled, (state, action) => {
+      if (state.batchRequestId !== action.meta.requestId) return;
+      state.batchRequestId = null;
+      state.batchTask = action.payload.task;
       state.batchPunchLoading = false;
       state.batchPunchResults = action.payload.results;
       state.batchStrategyInfo = action.payload.strategyInfo;
-      state.selectedDates = [];
+      if (action.payload.task.success) state.selectedDates = [];
     });
-    builder.addCase(batchSubmit.rejected, (state) => {
+    builder.addCase(batchSubmit.rejected, (state, action) => {
+      if (state.batchRequestId !== action.meta.requestId) return;
+      state.batchRequestId = null;
       state.batchPunchLoading = false;
+      const failure = action.payload as TaskFailure | undefined;
+      state.batchError = failure || null;
+      if (failure?.task) {
+        state.batchTask = failure.task;
+        state.batchPunchResults = failure.task.results;
+        state.batchStrategyInfo = failure.task.strategy_info;
+      }
     });
 
-    // batchPunchDates (legacy)
-    builder.addCase(batchPunchDates.pending, (state) => {
-      state.batchPunchLoading = true;
-      state.batchPunchResults = [];
-    });
-    builder.addCase(batchPunchDates.fulfilled, (state, action) => {
-      state.batchPunchLoading = false;
-      state.batchPunchResults = action.payload;
-      state.selectedDates = [];
-    });
-    builder.addCase(batchPunchDates.rejected, (state) => {
-      state.batchPunchLoading = false;
-    });
-
-    // batchWorkTimeCorrection (legacy)
-    builder.addCase(batchWorkTimeCorrection.pending, (state) => {
-      state.batchPunchLoading = true;
-      state.batchPunchResults = [];
-    });
-    builder.addCase(batchWorkTimeCorrection.fulfilled, (state, action) => {
-      state.batchPunchLoading = false;
-      state.batchPunchResults = action.payload;
-      state.selectedDates = [];
-    });
-    builder.addCase(batchWorkTimeCorrection.rejected, (state) => {
-      state.batchPunchLoading = false;
-    });
   },
 });
 

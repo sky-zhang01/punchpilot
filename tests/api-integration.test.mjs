@@ -9,13 +9,14 @@
  *   - Auth protection (401 for unauthenticated)
  *   - Input validation
  *
- * Note: The app uses an in-memory rate limiter (10 attempts / 15 min per IP).
+ * Note: The app uses an in-memory rate limiter (10 attempts / 15 min per
+ *       verified client IP).
  *       We login once at suite level and reuse the token to avoid hitting the limit.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
 import bcrypt from 'bcryptjs';
-import { initDatabase, getDb } from '../server/db.js';
+import { createSession, deleteSession, initDatabase, getDb, getSession } from '../server/db.js';
 
 // Initialize database before importing app (app.js imports modules that need DB)
 initDatabase();
@@ -80,6 +81,21 @@ describe('Security Headers', () => {
     expect(csp).toContain("style-src 'self' 'unsafe-inline'");
   });
 
+  it('keeps the OAuth callback CSP-compatible without inline executable data', async () => {
+    const marker = 'oauth-sensitive-marker';
+    const injected = `${marker}<img src=x onerror=alert(1)>`;
+    const res = await request(app)
+      .get('/api/config/oauth-callback')
+      .query({ error: injected });
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('src="/oauth-callback.js"');
+    expect(res.text).not.toContain(injected);
+    expect(res.text).not.toContain(marker);
+    expect(res.text).not.toContain('postMessage(');
+    expect(res.headers['content-security-policy']).toContain("script-src 'self'");
+  });
+
   it('returns Referrer-Policy', async () => {
     const res = await request(app).get('/api/auth/status');
     expect(res.headers['referrer-policy']).toBe('strict-origin-when-cross-origin');
@@ -122,6 +138,131 @@ describe('Security Headers', () => {
   });
 });
 
+describe('Cross-site write protection', () => {
+  it('rejects browser write requests marked as cross-site', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .set('Sec-Fetch-Site', 'cross-site')
+      .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects a mismatched Origin on state-changing requests', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .set('Origin', 'https://cross-site.example.invalid')
+      .set('Host', 'punchpilot.example.invalid')
+      .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects a same-host Origin with a different scheme', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .set('Origin', 'http://punchpilot.example.invalid')
+      .set('Host', 'punchpilot.example.invalid')
+      .set('X-Forwarded-Proto', 'https')
+      .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
+    expect(res.status).toBe(403);
+  });
+
+  it('allows same-origin and non-browser API clients', async () => {
+    const previousOrigin = process.env.PUNCHPILOT_PUBLIC_ORIGIN;
+    process.env.PUNCHPILOT_PUBLIC_ORIGIN = 'https://punchpilot.example.invalid';
+    let sameOrigin;
+    try {
+      sameOrigin = await request(app)
+        .post('/api/auth/login')
+        .set('Origin', 'https://punchpilot.example.invalid')
+        .set('Host', 'punchpilot.example.invalid')
+        .set('X-Forwarded-Proto', 'https')
+        .set('X-PunchPilot-Request', '1')
+        .send({});
+    } finally {
+      if (previousOrigin === undefined) delete process.env.PUNCHPILOT_PUBLIC_ORIGIN;
+      else process.env.PUNCHPILOT_PUBLIC_ORIGIN = previousOrigin;
+    }
+    const noOrigin = await request(app)
+      .post('/api/auth/login')
+      .send({});
+
+    expect(sameOrigin.status).toBe(400);
+    expect(noOrigin.status).toBe(400);
+  });
+
+  it('requires the application marker for cookie-authenticated writes without metadata', async () => {
+    const blocked = await request(app)
+      .put('/api/config/oauth-select-company')
+      .set('Cookie', [`session_token=${SESSION_TOKEN}`])
+      .send({});
+    const marked = await request(app)
+      .put('/api/config/oauth-select-company')
+      .set('Cookie', [`session_token=${SESSION_TOKEN}`])
+      .set('X-PunchPilot-Request', '1')
+      .send({});
+    const explicitToken = await request(app)
+      .put('/api/config/oauth-select-company')
+      .set('X-Session-Token', SESSION_TOKEN)
+      .send({});
+
+    expect(blocked.status).toBe(403);
+    expect(marked.status).toBe(400);
+    expect(explicitToken.status).toBe(400);
+  });
+
+  it('rejects a Host and Origin that agree with each other but not the canonical origin', async () => {
+    const previousOrigin = process.env.PUNCHPILOT_PUBLIC_ORIGIN;
+    process.env.PUNCHPILOT_PUBLIC_ORIGIN = 'https://punchpilot.example.invalid';
+    try {
+      const res = await request(app)
+        .post('/api/auth/login')
+        .set('Origin', 'https://host-injection.example.invalid')
+        .set('Host', 'host-injection.example.invalid')
+        .set('X-Forwarded-Proto', 'https')
+        .set('X-PunchPilot-Request', '1')
+        .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
+
+      expect(res.status).toBe(403);
+    } finally {
+      if (previousOrigin === undefined) delete process.env.PUNCHPILOT_PUBLIC_ORIGIN;
+      else process.env.PUNCHPILOT_PUBLIC_ORIGIN = previousOrigin;
+    }
+  });
+
+  it('allows zero-configuration browser writes only on loopback', async () => {
+    const previousOrigin = process.env.PUNCHPILOT_PUBLIC_ORIGIN;
+    const previousRedirect = process.env.OAUTH_REDIRECT_URI;
+    delete process.env.PUNCHPILOT_PUBLIC_ORIGIN;
+    delete process.env.OAUTH_REDIRECT_URI;
+    try {
+      const res = await request(app)
+        .post('/api/auth/login')
+        .set('Origin', 'http://127.0.0.1')
+        .set('Host', '127.0.0.1')
+        .set('X-PunchPilot-Request', '1')
+        .send({});
+
+      expect(res.status).toBe(400);
+    } finally {
+      if (previousOrigin === undefined) delete process.env.PUNCHPILOT_PUBLIC_ORIGIN;
+      else process.env.PUNCHPILOT_PUBLIC_ORIGIN = previousOrigin;
+      if (previousRedirect === undefined) delete process.env.OAUTH_REDIRECT_URI;
+      else process.env.OAUTH_REDIRECT_URI = previousRedirect;
+    }
+  });
+
+  it('rejects a browser write without the application request marker', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .set('Origin', 'https://punchpilot.example.invalid')
+      .set('Host', 'punchpilot.example.invalid')
+      .set('X-Forwarded-Proto', 'https')
+      .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
+
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('HSTS Header', () => {
   it('UT-SEC-05: no HSTS on plain HTTP request', async () => {
     const res = await request(app).get('/api/auth/status');
@@ -137,6 +278,18 @@ describe('HSTS Header', () => {
     expect(hsts).toBeDefined();
     expect(hsts).toContain('max-age=31536000');
     expect(hsts).toContain('includeSubDomains');
+  });
+
+  it('sends HSTS from the canonical HTTPS origin without forwarded-protocol headers', async () => {
+    const previousOrigin = process.env.PUNCHPILOT_PUBLIC_ORIGIN;
+    process.env.PUNCHPILOT_PUBLIC_ORIGIN = 'https://punchpilot.example.invalid';
+    try {
+      const res = await request(app).get('/api/auth/status');
+      expect(res.headers['strict-transport-security']).toContain('max-age=31536000');
+    } finally {
+      if (previousOrigin === undefined) delete process.env.PUNCHPILOT_PUBLIC_ORIGIN;
+      else process.env.PUNCHPILOT_PUBLIC_ORIGIN = previousOrigin;
+    }
   });
 });
 
@@ -163,11 +316,30 @@ describe('Cookie Secure Flag (v0.4.2)', () => {
     if (res.status === 429) return; // Skip if rate-limited
     expect(res.status).toBe(200);
     const cookies = res.headers['set-cookie'];
-    const sessionCookie = Array.isArray(cookies)
+    const cookieHeader = Array.isArray(cookies)
       ? cookies.find(c => c.startsWith('session_token='))
       : cookies;
-    expect(sessionCookie).toBeDefined();
-    expect(sessionCookie).toContain('Secure');
+    expect(cookieHeader).toBeDefined();
+    expect(cookieHeader).toContain('Secure');
+  });
+
+  it('uses a Secure cookie for the canonical HTTPS origin without forwarded-protocol headers', async () => {
+    const previousOrigin = process.env.PUNCHPILOT_PUBLIC_ORIGIN;
+    process.env.PUNCHPILOT_PUBLIC_ORIGIN = 'https://punchpilot.example.invalid';
+    try {
+      const res = await request(app)
+        .post('/api/auth/login')
+        .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
+      expect(res.status).toBe(200);
+      const cookies = res.headers['set-cookie'];
+      const cookieHeader = Array.isArray(cookies)
+        ? cookies.find(c => c.startsWith('session_token='))
+        : cookies;
+      expect(cookieHeader).toContain('Secure');
+    } finally {
+      if (previousOrigin === undefined) delete process.env.PUNCHPILOT_PUBLIC_ORIGIN;
+      else process.env.PUNCHPILOT_PUBLIC_ORIGIN = previousOrigin;
+    }
   });
 });
 
@@ -217,6 +389,34 @@ describe('Auth: Login', () => {
       : cookies.startsWith('session_token=') ? cookies : undefined;
     expect(sessionCookie).toBeDefined();
     expect(sessionCookie).toContain('HttpOnly');
+    expect(sessionCookie).toContain('Path=/');
+  });
+
+  it('rejects non-string login fields without throwing', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ username: { value: DEFAULT_USER }, password: [DEFAULT_PASS] });
+    expect(res.status).toBe(400);
+  });
+
+  it('stores only a one-way hash of the bearer token in SQLite', () => {
+    const session = getSession(SESSION_TOKEN);
+    expect(session).toBeDefined();
+    expect(session.id).not.toBe(SESSION_TOKEN);
+    expect(session.id).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
+  it('migrates a legacy plaintext session token on first successful lookup', () => {
+    const legacyToken = 'synthetic-legacy-token';
+    const user = getDb().prepare('SELECT id FROM users WHERE username = ?').get(DEFAULT_USER);
+    getDb()
+      .prepare('INSERT OR REPLACE INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)')
+      .run(legacyToken, user.id, new Date(Date.now() + 60_000).toISOString());
+
+    const session = getSession(legacyToken);
+    expect(session.id).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(getDb().prepare('SELECT id FROM sessions WHERE id = ?').get(legacyToken)).toBeUndefined();
+    deleteSession(legacyToken);
   });
 });
 
@@ -242,6 +442,22 @@ describe('Auth: Status', () => {
       .set('x-session-token', 'invalid-token-12345');
     expect(res.status).toBe(200);
     expect(res.body.authenticated).toBe(false);
+  });
+
+  it('rejects a legacy session that is not bound to a user', async () => {
+    const token = ['synthetic', 'unbound', 'session', 'token'].join('-');
+    createSession(token, null, new Date(Date.now() + 60_000).toISOString());
+
+    const protectedRes = await request(app)
+      .get('/api/config')
+      .set('x-session-token', token);
+    const statusRes = await request(app)
+      .get('/api/auth/status')
+      .set('x-session-token', token);
+
+    expect(protectedRes.status).toBe(401);
+    expect(statusRes.body.authenticated).toBe(false);
+    expect(getSession(token)).toBeUndefined();
   });
 });
 
@@ -311,9 +527,23 @@ describe('Auth: Password Change', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('admin');
   });
+
+  it('PUT /api/auth/password rejects values beyond bcrypt input capacity', async () => {
+    const res = await request(app)
+      .put('/api/auth/password')
+      .set('x-session-token', SESSION_TOKEN)
+      .send({ old_password: DEFAULT_PASS, new_password: `Valid1${'x'.repeat(67)}` });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('72 UTF-8 bytes');
+  });
 });
 
 describe('Auth Protection: Protected endpoints return 401', () => {
+  it('screenshot artifacts require authentication', async () => {
+    const res = await request(app).get('/screenshots/nonexistent.png');
+    expect(res.status).toBe(401);
+  });
+
   const protectedEndpoints = [
     ['GET', '/api/config'],
     ['GET', '/api/config/account'],
@@ -349,6 +579,7 @@ describe('Config Endpoints (authenticated)', () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('freee_configured');
     expect(res.body).toHaveProperty('freee_username');
+    expect(res.body).toHaveProperty('freee_company_name');
     // Password must NOT be returned
     expect(res.body.password).toBeUndefined();
     expect(res.body.freee_password).toBeUndefined();
@@ -358,7 +589,11 @@ describe('Config Endpoints (authenticated)', () => {
     const res = await request(app)
       .put('/api/config/account')
       .set('x-session-token', SESSION_TOKEN)
-      .send({ username: 'testuser@example.com', password: 'testpassword123' });
+      .send({
+        username: 'testuser@example.com',
+        password: 'testpassword123',
+        company_name: 'Example Company',
+      });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
 
@@ -368,6 +603,7 @@ describe('Config Endpoints (authenticated)', () => {
       .set('x-session-token', SESSION_TOKEN);
     expect(getRes.body.freee_username).toBe('testuser@example.com');
     expect(getRes.body.freee_configured).toBe(true);
+    expect(getRes.body.freee_company_name).toBe('Example Company');
     // Password must NOT be returned
     expect(getRes.body.password).toBeUndefined();
   });
@@ -410,20 +646,77 @@ describe('Logs Endpoint (authenticated)', () => {
     expect(Array.isArray(res.body.rows)).toBe(true);
     expect(res.body).toHaveProperty('total');
   });
+
+  it('rejects unbounded or malformed pagination values', async () => {
+    const negative = await request(app)
+      .get('/api/logs?limit=-1')
+      .set('x-session-token', SESSION_TOKEN);
+    const oversized = await request(app)
+      .get('/api/logs?limit=101')
+      .set('x-session-token', SESSION_TOKEN);
+    const malformed = await request(app)
+      .get('/api/logs?page=not-a-number')
+      .set('x-session-token', SESSION_TOKEN);
+
+    expect(negative.status).toBe(400);
+    expect(oversized.status).toBe(400);
+    expect(malformed.status).toBe(400);
+  });
 });
 
 describe('Rate Limiting', () => {
+  it('does not count successful logins against the failed-attempt budget', async () => {
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      const res = await request(app)
+        .post('/api/auth/login')
+        .set('X-Forwarded-For', '198.51.100.42')
+        .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
+      expect(res.status).toBe(200);
+    }
+  });
+
   it('rate limiter returns 429 after excessive attempts', async () => {
-    // This is tested implicitly — the app has a rate limiter (10 per 15min).
-    // We verify the rate limiter structure exists in app.js
-    const { default: fs } = await import('fs');
-    const { default: path } = await import('path');
-    const { fileURLToPath } = await import('url');
-    const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    const appSrc = fs.readFileSync(path.resolve(__dirname, '..', 'server', 'app.js'), 'utf8');
-    expect(appSrc).toContain('loginRateLimiter');
-    expect(appSrc).toContain('RATE_LIMIT_MAX');
-    expect(appSrc).toContain('429');
+    const blockedIp = '198.51.100.88';
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const failed = await request(app)
+        .post('/api/auth/login')
+        .set('X-Forwarded-For', blockedIp)
+        .send({ username: DEFAULT_USER, password: 'wrong-password' });
+      expect(failed.status).toBe(401);
+    }
+
+    const blocked = await request(app)
+      .post('/api/auth/login')
+      .set('X-Forwarded-For', blockedIp)
+      .send({ username: DEFAULT_USER, password: 'wrong-password' });
+    const independent = await request(app)
+      .post('/api/auth/login')
+      .set('X-Forwarded-For', '198.51.100.89')
+      .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
+
+    expect(blocked.status).toBe(429);
+    expect(independent.status).toBe(200);
+  });
+
+  it('does not let one IP reset its budget by rotating usernames', async () => {
+    const blockedIp = '198.51.100.90';
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const failed = await request(app)
+        .post('/api/auth/login')
+        .set('X-Forwarded-For', blockedIp)
+        .send({
+          username: `unknown-user-${attempt}`,
+          password: 'wrong-password',
+        });
+      expect(failed.status).toBe(401);
+    }
+
+    const blocked = await request(app)
+      .post('/api/auth/login')
+      .set('X-Forwarded-For', blockedIp)
+      .send({ username: 'one-more-user', password: 'wrong-password' });
+
+    expect(blocked.status).toBe(429);
   });
 });
 
@@ -444,6 +737,17 @@ describe('Input Validation / XSS Protection', () => {
       .send('not json');
     // Express will fail to parse or treat as empty body → 400 or rate-limited 429
     expect([400, 429]).toContain(res.status);
+  });
+
+  it('batch withdrawal rejects non-numeric request IDs before background processing', async () => {
+    const res = await request(app)
+      .post('/api/attendance/batch-withdraw')
+      .set('x-session-token', SESSION_TOKEN)
+      .send({ requests: [{ id: '../unexpected', type: 'WorkTime' }] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('positive integer');
+    expect(res.body.task_id).toBeUndefined();
   });
 });
 
