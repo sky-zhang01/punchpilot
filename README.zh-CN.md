@@ -1,205 +1,112 @@
 # PunchPilot
 
-[freee HR](https://www.freee.co.jp/hr/) 智能考勤自动化工具。以 Docker 容器方式自部署，自带 Web 管理面板。
+**为 [freee 人事劳务](https://www.freee.co.jp/hr/)（freee人事労務）自动打卡，运行在你自己的电脑或服务器上。**
 
 [**English**](README.md) | [**日本語**](README.ja.md)
 
-## 功能特性
+如果你的公司用 freee 人事劳务记录考勤，你每个工作日都要上班打卡、开始和结束休息、下班打卡。漏打一次，事后就得提交补卡申请。PunchPilot 按你设定的时间替你打这些卡，并跳过你不上班的日子。它的网页面板还能补漏打的日子、申请休假、提交月度结算；如果你在 freee 中是审批人，还能审批下属的申请。
 
-- **自动打卡** — 按设定时间自动出退勤，自动跳过周末和节假日（日本/中国）
-- **手动触发** — 在面板上一键执行签到、签退、开始休息、结束休息
-- **多次休息支持** — 支持每日不限次数的休息周期；面板和日历动态显示每次休息的起止时间
-- **实时打卡状态** — 面板展示 freee 的真实打卡时间，进度条实时追踪
-- **批量补卡** — 一键补录缺勤日的考勤记录
-- **休假申请** — 提交、跟踪、取消有休、特别休假、加班和缺勤申请
-- **批量操作** — 批量休假申请、批量取消、批量审批/驳回
-- **3 路安全回退策略**：直接 API > 审批申请 > 经确认的网页表单（Playwright）
-- **月度策略缓存** — 自动跳过已知失败的方式，每月初重新检测
-- **OAuth 授权保护** — 授权过期或被撤销时暂停自动打卡并提示重新授权，避免静默漏打
-- **已承认休假保护** — 每次计划打卡前重新确认 freee；优先使用 Public API，Browser-only 模式则读取已登录的网页考勤视图
-- **审批工作流** — 提交、跟踪、撤回勤务修正申请；管理者批量审批/驳回
-- **假日日历** — 日本国定假日和中国假日（含调休/补班）
-- **Web 管理面板** — 日历视图、执行日志、实时状态
-- **多语言** — 英语、日语、中文
+PunchPilot 是单用户工具：每个人为自己的 freee 账号各自运行一份 PunchPilot。它是独立的开源项目，与 freee 株式会社没有关联。
+
+## 平常的一天
+
+1. 每天零点刚过，PunchPilot 规划当天的上班、开始休息、结束休息和下班时间。每一项可以是固定时刻，也可以在时间窗内随机取一分钟。默认值为：上班 09:50–10:00，开始休息 12:00–12:30，结束休息 13:00–13:30，下班 19:00–20:00。
+2. 遇到周末、日本法定节假日、你自己添加的自定义假日，以及 freee 上显示为全天休假、缺勤或公司休息日的日子，PunchPilot 会整天不打卡。如果在 **自动打卡跳过节假日** 中也选择了中国，中国法定节假日同样会跳过，而落在周末的调休补班日会照常打卡。半天或按小时的休假只要没有覆盖全天工时，就不会跳过当天。
+3. 每次打卡前，它会再查一次 freee。如果你已经手动打过卡，它什么也不做。如果它无法确认你的状态，就会暂停，而不会凭猜测打卡：仪表盘上会显示暂停，**日志** 里会记录原因。
+4. 只有当天工作超过 6 小时，才会安排 60–90 分钟的休息，依据是日本《劳动基准法》第 34 条。
+5. 如果到了上班时间 PunchPilot 没在运行，它不会替你打一张迟到的上班卡：只有晚了不超过 5 分钟，才会立即打上班卡；否则跳过当天的自动打卡，需要你自己在 freee 上打卡。
+
+## 常见情况
+
+补卡、各类申请、审批和自定义假日都在 **日历与假日** 页面；**自动打卡** 开关在 **设置 → 调度配置**；**手动触发** 在仪表盘上。补卡和各类申请需要 freee API 连接；申请列表和审批只在公司使用 freee 审批路线时才会出现。
+
+| 你想要… | 这样做 |
+|---|---|
+| 补上忘记打卡的日子 | **补签到 → 选择所有缺勤**，然后提交。已经有打卡记录或本来就休息的日子会自动跳过。 |
+| 按计划请一天假 | **休假申请**：带薪休假（全天、半天或按小时）、特别休假或缺勤。freee 上出现全天休假后，那天会自动跳过。 |
+| 临时请病假，或者休假还没批下来 | 在上班时间之前关闭 **自动打卡**，下一个工作日之前记得重新打开。PunchPilot 只跳过 freee 上已经显示的休假。 |
+| 去休长假或出差 | 关闭 **自动打卡**，回来后再打开。 |
+| 加班到很晚 | 在下班时间窗开始之前关闭 **自动打卡**；下班时在 **手动触发** 里点 **签退**，然后重新打开 **自动打卡**。 |
+| 提前下班 | 自己打下班卡即可。PunchPilot 看到这次打卡后，会跳过自动下班打卡。 |
+| 申请加班或假日出勤 | **休假申请 → 加班申请**，或 **出勤申请 → 假日出勤**。假日出勤申请始终使用你保存的 freee 网页登录信息提交。 |
+| 撤回一个申请 | **查看申请**，在审批前撤回。 |
+| 审批下属的申请 | **查看申请 → 待审批**：可以逐条或批量批准、驳回。 |
+| 月末结算 | **月度结算申请**。只有公司使用审批路线，或已保存 freee 网页登录信息时，才会显示这个按钮。 |
+| 现在就打卡 | **仪表盘 → 手动触发**。 |
+| 公司放假那天不打卡 | **假日管理 → 自定义假日**。 |
+| 想知道今天为什么没打卡 | 先看仪表盘上的状态说明。节假日、休假和暂停的原因，可以在 **日志** 里的“每日调度检查”记录中找到。 |
+
+freee 要求重新登录时，仪表盘上会出现带 **重新授权** 按钮的提示；在你重新授权之前，自动打卡会一直暂停。
+
+## PunchPilot 不会做的事
+
+- PunchPilot 的服务端只连接 freee 和公开的节假日日历，没有任何遥测。
+- 无法确认你的考勤状态、休假，或者当前操作的是哪个 freee 账号时，它不会打卡，而是暂停并告诉你。
+- 它不会覆盖 freee 上已有的打卡记录。
+- 它不会发送邮件或聊天通知，请自己查看仪表盘和日志。
+- 它不替你判断所在公司是否允许自动打卡，请遵守公司的考勤规定。
+
+## 开始之前
+
+- **一个 freee 人事劳务的员工账号。**
+- **一个 freee 开发者应用**（Client ID 和 Client Secret）。自动打卡和各类申请都通过 freee API 进行，所以这一项是必需的。在应用里登记回调地址 `http://localhost:8681/api/config/oauth-callback`；如果改了 `PORT`，换成对应的端口；如果使用你自己的 HTTPS 地址，则登记 `https://<你的地址>/api/config/oauth-callback`。
+- **可选：你的 freee 网页登录信息**（邮箱、密码和准确的事务所名称）。假日出勤申请总是用它提交；公司的审批路线无法通过 API 处理时，也会用到它。
+- **一台在工作时间内保持开机、不会进入睡眠的电脑**，装有 Docker 和 Docker Compose。会进入睡眠的笔记本电脑会漏打卡。支持 `linux/amd64` 和 64 位 `linux/arm64`。Windows 和 macOS 上的 Docker Desktop 运行的是同一个镜像，但本项目没有对它做测试。
 
 ## 快速开始
 
 ```bash
-# 克隆仓库
 git clone https://github.com/sky-zhang01/punchpilot.git
 cd punchpilot
-
-# 创建本地配置文件
 cp .env.example .env
-
-# 启动
 docker compose up -d
-
-# 打开面板
-open http://localhost:8681
 ```
 
-首次启动时，PunchPilot 会为 `admin` 用户生成高熵一次性密码。不要把它复制进日志，使用以下命令读取后登录，并修改用户名和密码：
+1. 在同一台电脑上打开 <http://localhost:8681>。
+2. 读取一次性密码，以 `admin` 登录，然后设置你自己的用户名和密码：
 
-```bash
-docker compose exec punchpilot cat /app/keystore/initial-admin-password
-```
+   ```bash
+   docker compose exec punchpilot cat /app/keystore/initial-admin-password
+   ```
 
-完成首次改密后，bootstrap 文件会自动删除。然后配置：
-1. **打卡通道** — 有 API 权限时使用 OAuth API 模式；无 API 权限时使用 Browser 模式并填写 freee 网页凭证
-2. **休假保护** — 能获得 OAuth 只读权限时优先使用；Browser-only 模式会从已登录的 freee 网页考勤视图确认休假
-3. **排班** — 设置工作时间和自动打卡时间
+3. 在 **设置 → API 配置（OAuth2）** 中填入 Client ID 和 Client Secret，点击 **保存应用凭据**；然后点击 **使用 freee 授权**，如果你有多个事务所，再选择其中一个。
+4. 可选：在 **设置 → freee 网页登录** 中填入 freee 邮箱、密码和准确的事务所名称，保存时会自动验证。
+5. 在 **设置 → 调度配置** 中设定打卡时间和节假日选项。
+6. 在设置中 **关闭模拟模式**。新安装默认处于模拟模式，只模拟上班、休息和下班打卡。
 
-未配置 OAuth 授权时，Browser 模式会在打卡前通过同一登录会话确认当天考勤。如果无法明确匹配当天记录，或返回的数据结构不受支持，计划打卡会暂停而不会提交。
+侧边栏上的 **模拟模式** 标签消失后，PunchPilot 就开始真实打卡了。仪表盘上会显示下一次计划打卡的时间。第一次上班时间过后，请到 freee 上确认这次打卡已经记录下来。
 
-保存 Browser 凭证后，或把现有 Browser 模式部署升级到 v0.5.0 后，请在设置页执行一次**验证**。PunchPilot 明确确认对应的 freee 员工身份前，计划任务会保持暂停。
+## 从其他设备访问
 
-## 系统架构
+默认只能在运行 PunchPilot 的那台电脑上通过 `http://localhost:8681` 登录。从其他设备用普通 `http://` 打开时，页面也许能显示，但登录会被有意拒绝。如果想用手机或其他电脑访问：
 
-```
-┌──────────────┐     ┌────────────────────────────────────┐
-│   浏览器      │────▶│         PunchPilot (Docker)        │
-│   管理面板    │     │                                    │
-└──────────────┘     │  Express API ─── React (Ant Design)│
-                     │       │                            │
-                     │  ┌────┴────┐    ┌────────────────┐ │
-                     │  │ SQLite  │    │  Playwright    │ │
-                     │  │ (数据)   │    │ (网页模式)      │ │
-                     │  └─────────┘    └────────────────┘ │
-                     │       │                            │
-                     │  ┌────┴────┐    ┌────────────────┐ │
-                     │  │ 调度器   │    │ freee HR API   │ │
-                     │  │ (cron)  │    │  (OAuth2)      │ │
-                     │  └─────────┘    └────────────────┘ │
-                     └────────────────────────────────────┘
-```
+1. 把 PunchPilot 放到 HTTPS 反向代理后面。
+2. 在 `.env` 中设置 `PUNCHPILOT_PUBLIC_ORIGIN`（例如 `https://punchpilot.example.com`）和 `TRUST_PROXY`。
+3. 在 freee 应用里登记对应的回调地址。
 
-**技术栈**：Node.js、Express 5、React 19、Ant Design 6、Vite 8、Playwright、SQLite、Docker
+之后请通过这个 HTTPS 地址登录，`localhost` 将无法再登录。
 
-## 批量补卡策略
+## 更新、备份与设置
 
-补录缺勤考勤时，PunchPilot 按顺序尝试 3 种安全策略：
+- **更新：** 在 `punchpilot` 文件夹中先运行 `git pull`，再运行 `docker compose up -d`，Compose 会下载新镜像。如果你在 `.env` 中设置了 `PUNCHPILOT_IMAGE`，也要改成新版本。更新前请先看 [CHANGELOG](CHANGELOG.md) 中的升级须知。正在执行的打卡或批量任务会先完成，这可能需要几分钟。
+- **备份：** 把 `./data` 文件夹、keystore Docker 卷（通常名为 `punchpilot_keystore`）和你的 `.env` 放在一起备份。没有对应的 keystore，保存的 freee 凭证就无法解密。`./data` 中的其他内容（日志、打卡计划、事务所名称）没有加密，请把备份放在别人看不到的地方。
+- **设置：** 常用的选项有 `TZ`（打卡时间按哪个时区计算）、`PORT`、`PUID`/`PGID`（数据文件归属的用户和用户组，部分 NAS 需要改成别的值）、`PUNCHPILOT_PUBLIC_ORIGIN` 和 `TRUST_PROXY`。其他选项的说明见 [`.env.example`](.env.example)。
 
-| 策略 | 方式 | 速度 | 前提条件 |
-|------|------|------|----------|
-| 1. 直接写入 | `PUT /work_records` | 即时 | 写入权限 |
-| 2. 审批申请 | `POST /approval_requests` | 即时 | 审批路由 |
-| 3. 网页表单 | Playwright 浏览器 | 取决于网页响应 | freee 网页登录凭证 |
+## 常见问题
 
-每月初，PunchPilot 自动检测当前企业适用的最优策略并缓存。历史补卡不会使用逐条打刻 API，因为部分成功后无法回滚。
+**忘记了 PunchPilot 的密码怎么办？** 没有找回密码的功能。连续登录失败 3 次后，登录页上会显示一条恢复出厂设置的命令。它会清除 PunchPilot 的所有数据和设置，但不影响你在 freee 上的记录。运行后，用 `docker compose restart punchpilot` 重新启动，再从快速开始的第 2 步重新设置。
 
-## 安全性
+**我的 freee 密码安全吗？** 保存的凭证会在你自己的服务器上加密存储。在标准的 Docker Compose 部署中，自动化浏览器运行在 Chromium 的沙箱里。详情以及如何报告漏洞，请见 [SECURITY.md](SECURITY.md)。
 
-- **加密存储**：所有凭证（freee 密码、OAuth 令牌）均使用 AES-256-GCM 加密；密钥通过 scrypt 派生
-- **密钥隔离**：加密密钥存储在 Docker 命名卷中，与数据绑定挂载物理分离
-- **认证加固**：高熵一次性初始密码、bcrypt 密码哈希、首次登录强制改密、CSPRNG 会话、登录频率限制（10次/15分钟）
-- **会话存储**：SQLite 中仅保存会话令牌的单向哈希
-- **安全头**：CSP（含 form-action、base-uri）、HSTS、X-Frame-Options DENY、X-Content-Type-Options nosniff、Permissions-Policy、COEP、CORP
-- **OAuth fail-closed 行为**：授权过期或被撤销时暂停定时任务，并在面板和日志中显示重新授权状态
-- **休假保护 fail-closed 行为**：如无法通过 API 或 Browser 模式确认当天考勤记录，则暂停计划任务，避免误打卡
-- **静态缓存**：哈希资源（1年不可变）、favicon（1天）、index.html（不缓存）
-- **非 root 运行**：拒绝 0 或非法 `PUID`/`PGID`，启动应用前完成降权（默认 1000，TrueNAS 可设为 568）
-- **无遥测**：凭证和考勤数据只发送给 freee；节假日模块仅获取公共日历数据
-- **浏览器产物**：截图默认关闭；手动启用后仍需登录访问并会自动过期
-- **浏览器隔离**：标准 Compose 部署以非 root 运行 Chromium，并启用 namespace/seccomp sandbox
-- **依赖来源校验**：发布前检查 npm 注册表签名、lockfile SHA-512 和 7 天发布冷却期；紧急安全例外必须精确、公开且带有效期
-- **错误脱敏**：客户端错误不会暴露令牌、密码、凭证表单截图或 freee 页面原文
+**能不连接 freee 先试用吗？** 可以。保持模拟模式开启，快速开始的第 3、4 步先不填，打卡就只是模拟。注意模拟模式只管打卡：一旦连接了 freee，补签到、休假申请、审批和月度结算都会真实发送到 freee。
 
-## 平台支持
+## 参与开发
 
-PunchPilot 以多架构 Docker 镜像分发。
-
-| 架构 | 平台 | 典型硬件 |
-|------|------|----------|
-| `linux/amd64` | x86_64 | Intel/AMD 服务器、PC、大多数云主机 |
-| `linux/arm64` | aarch64 | Apple M 系列（M1/M2/M3/M4）、AWS Graviton、树莓派 4+ |
-
-> **Windows / macOS**：通过 [Docker Desktop](https://www.docker.com/products/docker-desktop/) 运行同一 Linux 镜像（内部使用轻量级 Linux 虚拟机）。
-
-```bash
-# 拉取固定版本镜像
-docker pull ghcr.io/sky-zhang01/punchpilot:0.5.1
-
-# Compose 会拉取同一多架构版本
-docker compose pull
-docker compose up -d
-
-# 生产环境可使用 release notes 中的 manifest digest 严格固定
-PUNCHPILOT_IMAGE=ghcr.io/sky-zhang01/punchpilot@sha256:<digest> docker compose up -d
-```
-
-## 配置说明
-
-### 环境变量
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `TZ` | `Asia/Tokyo` | 容器时区 |
-| `PORT` | `8681` | 服务端口 |
-| `PUID` / `PGID` | `1000` | 运行用户/用户组；标准 TrueNAS Apps 环境将两者设为 `568` |
-| `PUNCHPILOT_IMAGE` | `ghcr.io/sky-zhang01/punchpilot:0.5.1` | Compose 使用的公开镜像标签或 release manifest digest |
-| `TRUST_PROXY` | 禁用 | 可信反向代理的 IP/CIDR，或 `loopback`、`linklocal`、`uniquelocal`；未设置时忽略转发头 |
-| `PUNCHPILOT_PUBLIC_ORIGIN` | 仅 loopback | 非 loopback 访问的规范 HTTPS origin；用于固定写请求校验、Secure cookie、HSTS 和 OAuth callback，不信任请求头 |
-| `OAUTH_REDIRECT_URI` | 自动派生 | 可选的 freee 完整 callback URI；须与规范 origin 相同且路径为 `/api/config/oauth-callback` |
-| `SHUTDOWN_GRACE_MS` | `510000` | 关停时等待当前调度、浏览器、批处理、账号操作和 HTTP 请求完成的时间 |
-| `APP_SECRET` | 在 `keystore` 中生成 | 可选加密密钥，至少 32 字节；持久化后必须与现有 keystore 密钥完全一致，否则拒绝启动 |
-| `PUNCHPILOT_INITIAL_ADMIN_PASSWORD` | 未设置 | 可选初始密码，至少 16 字节；容器环境可被检查，优先使用默认文件方式 |
-| `PUNCHPILOT_INITIAL_ADMIN_PASSWORD_FILE` | `/app/keystore/initial-admin-password` | 初始秘密文件；缺失时以 `0600` 权限生成，首次改密后删除 |
-| `BROWSER_SCREENSHOTS` | `off` | `off`、`errors` 或 `all`；仅在受控排障时启用 |
-| `CHROMIUM_SANDBOX` | `false` | 启用 Chromium 内部 sandbox；随附 Compose 使用已审查的 seccomp profile 将其设为 `true` |
-| `BROWSER_IDLE_TIMEOUT_MS` | `300000` | Chromium 空闲后关闭的等待时间 |
-| `BROWSER_SESSION_TTL_MS` | `28800000` | 仅内存保存的网页会话复用时长，不写入磁盘 |
-| `AUTOMATION_QUEUE_TIMEOUT_MS` | `540000` | 串行账号或浏览器任务的最长排队时间；大于单次任务硬超时 |
-| `AUTOMATION_OPERATION_TIMEOUT_MS` | `480000` | 单次串行浏览器任务的硬超时；超出 `1..480000` 时拒绝启动 |
-
-随附 Compose 通过固定的 Playwright seccomp profile、最小启动 capabilities 和 `no-new-privileges` 启用 Chromium sandbox。仅使用镜像的平台，只有在容器运行时应用同一 profile 后才能设置 `CHROMIUM_SANDBOX=true`；生产环境不得改用 `seccomp=unconfined` 或 `SYS_ADMIN`。
-
-通过域名或反向代理访问面板时必须设置 `PUNCHPILOT_PUBLIC_ORIGIN`。仅 `localhost`、`127.0.0.1` 和 `[::1]` 可使用明文 HTTP；外部 origin 必须使用 HTTPS。若设置 `OAUTH_REDIRECT_URI`，两者 origin 必须一致。
-
-### Docker 卷
-
-| 路径 | 类型 | 用途 |
-|------|------|------|
-| `./data` | 绑定挂载 | SQLite 数据库、日志 |
-| `./screenshots` | 绑定挂载 | 手动启用且需认证访问的调试截图 |
-| `keystore` | 命名卷 | 加密密钥和一次性管理员初始文件（隔离存储） |
-
-## 开发
-
-本地开发需要 Node.js 24 系列中的 24.15 或更高版本以及 npm 12.2.0。仓库内的 `.nvmrc`、package engine 检查、CI 和容器构建会执行同一工具链约束。
-
-```bash
-# 安装 CI 和镜像构建器中经过审阅的 npm 版本
-npm install --global npm@12.2.0 --ignore-scripts --no-audit --no-fund
-
-# 安装依赖
-npm ci --ignore-scripts
-npm --prefix client ci --ignore-scripts
-npm run audit:release-age
-
-# 启动开发服务器（自动重载）
-npm run dev
-
-# 运行测试
-npm test
-
-# 运行覆盖率与 E2E smoke
-npm run test:coverage
-npm --prefix client run test:coverage
-npm --prefix client run build
-npm run test:e2e
-
-# 构建前端
-cd client && npx vite build
-
-# 不拉取公开版本，改为构建本地镜像
-cd ..
-docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
-```
+本地开发和测试方法见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 致谢
 
-本项目受 [@newbdez33](https://github.com/newbdez33) 的 [freee-checkin](https://github.com/newbdez33/freee-checkin) 项目启发并在其基础上构建。原项目提供了基于 Playwright 的 freee 考勤自动化基础。PunchPilot 在此之上扩展了 Web 管理界面、OAuth API 集成、多策略批量补卡和企业级安全特性。
+PunchPilot 起源于 [@newbdez33](https://github.com/newbdez33) 的 [freee-checkin](https://github.com/newbdez33/freee-checkin)，它提供了最初基于浏览器的 freee 考勤自动化。
 
 ## 许可证
 

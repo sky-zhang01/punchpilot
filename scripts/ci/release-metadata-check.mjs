@@ -19,7 +19,10 @@ function fail(message) {
 }
 
 const root = process.cwd();
-const tag = argValue('--tag') || process.env.GITHUB_REF_NAME || '';
+// Without --tag, only a tag build names a release. Branch and pull request builds
+// set GITHUB_REF_NAME to a branch name or pull request number instead.
+const refTag = process.env.GITHUB_REF?.startsWith('refs/tags/') ? process.env.GITHUB_REF.slice('refs/tags/'.length) : '';
+const tag = argValue('--tag') || refTag;
 const mode = argValue('--mode') || 'local';
 const rootPkg = readJson(path.join(root, 'package.json'));
 const clientPkg = readJson(path.join(root, 'client', 'package.json'));
@@ -51,6 +54,26 @@ if (tag && tag !== expectedTag) {
 
 if (!dockerfile.includes(`org.opencontainers.image.version="${rootPkg.version}"`)) {
   fail(`Dockerfile OCI version label does not match ${rootPkg.version}`);
+}
+
+// Users install through docker-compose.yml and copy .env.example, so every image
+// reference there must name the version being released.
+for (const file of ['docker-compose.yml', '.env.example']) {
+  const filePath = path.join(root, file);
+  if (!fs.existsSync(filePath)) {
+    fail(`${file} is missing`);
+    continue;
+  }
+  const text = fs.readFileSync(filePath, 'utf8');
+  // Take the whole reference so malformed or nested values fail, and drop only
+  // punctuation that ends the surrounding sentence or quote.
+  const tags = [...text.matchAll(/ghcr\.io\/sky-zhang01\/punchpilot:([^\s"'}@]+)/g)]
+    .map((match) => match[1].replace(/[.,;:`'")\]]+$/, ''));
+  if (tags.length === 0) {
+    fail(`${file} does not reference ghcr.io/sky-zhang01/punchpilot:${rootPkg.version}`);
+  } else if (tags.some((tag) => tag !== rootPkg.version)) {
+    fail(`${file} image tag ${[...new Set(tags)].join(', ')} does not match ${rootPkg.version}`);
+  }
 }
 
 if (!changelog.includes(`## [${rootPkg.version}]`)) {

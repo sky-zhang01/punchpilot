@@ -112,6 +112,23 @@
         "!typescript"
       ],
       "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Hold public workflow action updates for manual approval because they only run after a release is public",
+      "matchManagers": ["github-actions"],
+      "matchFileNames": [".github/workflows/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"],
+      "groupName": "public workflow actions",
+      "dependencyDashboardApproval": true,
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Group source CI action updates separately from public workflows",
+      "matchManagers": ["github-actions"],
+      "matchFileNames": [".gitea/workflows/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"],
+      "groupName": "source workflow actions",
+      "minimumReleaseAge": "7 days"
     }
   ]
 }

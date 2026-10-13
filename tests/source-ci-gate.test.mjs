@@ -411,6 +411,8 @@ async function createPublicationFixture(ancestry = 'clean') {
   for (const file of ['package-lock.json', 'client/package-lock.json']) fs.writeFileSync(path.join(source, file), JSON.stringify({ version, packages: { '': { version } } }));
   fs.writeFileSync(path.join(source, 'Dockerfile'), `FROM scratch\nLABEL org.opencontainers.image.version="${version}"\n`);
   fs.writeFileSync(path.join(source, 'CHANGELOG.md'), `## [${version}]\n\n### Changed\n- Public fixture release.\n`);
+  fs.writeFileSync(path.join(source, 'docker-compose.yml'), `services:\n  app:\n    image: \${PUNCHPILOT_IMAGE:-ghcr.io/sky-zhang01/punchpilot:${version}}\n`);
+  fs.writeFileSync(path.join(source, '.env.example'), `# PUNCHPILOT_IMAGE=ghcr.io/sky-zhang01/punchpilot:${version}\n`);
   fs.writeFileSync(path.join(source, 'internal.txt'), 'private source content excluded from E\n');
   fs.writeFileSync(path.join(source, 'app.mjs'), 'throw new Error("E application scripts must never execute in the consumer");\n');
   const reviewedFiles = ['publication-contract.mjs', 'isolated-publisher.mjs', 'export-public-tree.mjs', 'publication-preflight.mjs', 'public-release-privacy-gate.py', 'release-metadata-check.mjs', 'mint-app-token.mjs'];
@@ -435,7 +437,7 @@ async function createPublicationFixture(ancestry = 'clean') {
     git(publicSource, 'push', '-q', remote, `${publicBase}:refs/heads/main`);
   }
   git(source, 'add', '.'); git(source, 'commit', '-qm', 'release fixture source'); commit = git(source, 'rev-parse', 'HEAD');
-  const policy = { version: 1, include: ['README.md', '.github/', 'package.json', 'package-lock.json', 'client/', 'Dockerfile', 'CHANGELOG.md', 'app.mjs'], exclude: ['.gitea/', '.githooks/', '.public-export/', 'scripts/', 'internal.txt'] };
+  const policy = { version: 1, include: ['README.md', '.github/', 'package.json', 'package-lock.json', 'client/', 'Dockerfile', 'CHANGELOG.md', 'docker-compose.yml', '.env.example', 'app.mjs'], exclude: ['.gitea/', '.githooks/', '.public-export/', 'scripts/', 'internal.txt'] };
   const exported = exportPublicTree({ repoRoot: source, source: commit, publicBase, policy, scan: false });
   const message = `v${version}\n\nsource: gitea/${commit}\nsource-tree: ${exported.treeSha}\n`;
   execFileSync('git', ['-c', 'gpg.format=openpgp', '-c', 'gpg.program=gpg', '-c', `user.signingkey=${fingerprint}`, 'tag', '-s', `v${version}`, commit, '-m', message], { cwd: source, env: { ...process.env, GNUPGHOME: gpgHome }, stdio: 'ignore' });

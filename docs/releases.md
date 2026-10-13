@@ -1,6 +1,6 @@
 # Public releases
 
-PunchPilot on GitHub is a derived publication. The independently installed publisher is the sole writer of public `main`, the public version tag and the GitHub Release. It does not reuse source-forge commit ancestry. The detailed operator commands and input boundaries are in [Public Promotion Boundary](branching.md#public-promotion-boundary).
+PunchPilot on GitHub is a derived publication. The independently installed publisher is the sole writer of public `main`, the public version tag and the GitHub Release. It does not reuse source-forge commit ancestry.
 
 Each public release commit carries the tree produced by `scripts/ci/export-public-tree.mjs` (`exportedTree`), bound to a provenance record that includes `sourceCommit`, `exportedTree`, `policyHash`, and `pathsetSha256`. Paths not selected by the source repository's pre-export allowlist policy are absent from the published tree.
 

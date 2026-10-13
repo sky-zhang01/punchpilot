@@ -1,7 +1,7 @@
 # =============================================================================
 # Stage 1: Shared npm CLI base
 # =============================================================================
-FROM node:24.21.0-trixie-slim@sha256:8ec5d7557396cfe32d21c3f9c13072355ceab22b584578ca4bb28af31120cffe AS npm-base
+FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS npm-base
 
 WORKDIR /tmp
 ADD --checksum=sha256:6666b48816b39b86c3febac7b51a4ee4de6c5ca589c382ad8004b6b113f86677 \
@@ -50,23 +50,26 @@ RUN npm run build
 # =============================================================================
 # Stage 4: Runtime - slim image with only Chromium (no Firefox/WebKit)
 # =============================================================================
-FROM node:24.21.0-trixie-slim@sha256:8ec5d7557396cfe32d21c3f9c13072355ceab22b584578ca4bb28af31120cffe AS runtime
+FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS runtime
 
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.title="PunchPilot" \
       org.opencontainers.image.description="Smart attendance automation for freee HR" \
-      org.opencontainers.image.version="0.5.1" \
+      org.opencontainers.image.version="0.5.2" \
       org.opencontainers.image.revision="$VCS_REF" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.source="https://github.com/sky-zhang01/punchpilot"
 
 WORKDIR /app
 
+# Debian drops superseded unstable packages from its pool, so fetch these exact
+# files from the permanent snapshot archive; the checksums pin the same bytes.
+ARG DEB_SNAPSHOT=20260801T143419Z
 ADD --checksum=sha256:bbf13c9326764d05e37e6590debdaa6f33af6bd822e3ca1204789d9d1dc23b11 \
-    https://deb.debian.org/debian/pool/main/s/sqlite3/libsqlite3-0_3.53.4-2_amd64.deb \
+    https://snapshot.debian.org/archive/debian/${DEB_SNAPSHOT}/pool/main/s/sqlite3/libsqlite3-0_3.53.4-2_amd64.deb \
     /tmp/libsqlite3-0_3.53.4-2_amd64.deb
 ADD --checksum=sha256:e417fb0642502c090d84a6f5fce1a2e5961dfe18644415ddce77a1a67cd2fc89 \
-    https://deb.debian.org/debian/pool/main/s/sqlite3/libsqlite3-0_3.53.4-2_arm64.deb \
+    https://snapshot.debian.org/archive/debian/${DEB_SNAPSHOT}/pool/main/s/sqlite3/libsqlite3-0_3.53.4-2_arm64.deb \
     /tmp/libsqlite3-0_3.53.4-2_arm64.deb
 
 ENV TZ=Asia/Tokyo

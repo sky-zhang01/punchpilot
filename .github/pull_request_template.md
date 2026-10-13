@@ -12,4 +12,4 @@
 
 - [ ] Tests pass (`npm test`)
 - [ ] Lint pass (`npm run lint:security`)
-- [ ] Docker build works (`docker compose build`)
+- [ ] Docker build works (`docker compose -f docker-compose.yml -f docker-compose.build.yml build`)

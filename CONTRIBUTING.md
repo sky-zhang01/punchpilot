@@ -4,34 +4,63 @@ Thanks for your interest in contributing! Here's how to get started.
 
 ## Development Setup
 
+Local development requires Node.js 24.15 or newer in the Node 24 line and npm 12.2.0. The included `.nvmrc`, the package engine checks and the container build enforce the same toolchain. Dependency install scripts are disabled on purpose.
+
 ```bash
-# Clone and install
+# Clone the repository
 git clone https://github.com/sky-zhang01/punchpilot.git
 cd punchpilot
-npm install
-cd client && npm install && cd ..
+
+# Use the expected npm version
+npm install --global npm@12.2.0 --ignore-scripts --no-audit --no-fund
+
+# Install dependencies
+npm ci --ignore-scripts
+npm --prefix client ci --ignore-scripts
 
 # Copy environment config
 cp .env.example .env
 
-# Start dev server (auto-reload)
+# Build the web UI once; the server serves it from client/dist
+npm --prefix client run build
+
+# Start the dev server (auto-reload)
 npm run dev
+```
+
+Mock Mode is on in a fresh database, so you can work on the app without a freee account.
+
+## Tests
+
+```bash
+npm test                                # server unit and integration tests
+npm run test:coverage                   # server coverage
+npm --prefix client run test:coverage   # client tests
+npm --prefix client run build           # required before the E2E smoke test
+npm run install-browsers                # installs Chromium for the E2E smoke test
+npm run test:e2e                        # end-to-end smoke test
+npm run lint:security                   # security lint
+npm run audit:release-age               # dependency release-age check
+```
+
+To run your local changes in Docker instead of the published image:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
 ## Pull Request Process
 
-Public `main` is written only by the documented publication path. This GitHub repository is a published artifact, not the development forge. GitHub pull requests are intake for maintainers: a reviewable patch that, if accepted, is reproduced on the source forge and published through that path.
-
-1. Fork the repo and create a feature branch from `main`
-2. Make your changes
+1. Fork the repo and create a feature branch from `main`.
+2. Make your changes and add or update tests.
 3. Run lint and tests before submitting:
    ```bash
    npm run lint:security
    npm test
    ```
-4. Open a GitHub pull request against `main` and fill in the PR template so maintainers can review the patch. Accepted changes are reproduced on the source forge and published through the documented publication path.
+4. Open a pull request against `main` and fill in the PR template. Maintainers review the change and, if accepted, include it in a future release instead of merging the pull request directly.
 
-See [docs/releases.md](docs/releases.md) for how public releases are produced.
+Some automated checks need configuration that is only available to maintainers, so they can fail on pull requests from forks. Maintainers run those checks when they review the change.
 
 ## Code Style
 

@@ -36,11 +36,10 @@ const en = {
     enterUsername: "Please enter username",
     enterPassword: "Please enter password",
     failed: "Login failed",
-    version: "v0.2.0",
     resetHint:
       "Can't remember your credentials? Run this command to factory reset:",
     resetCommand: "docker exec -it punchpilot node server/reset-password.js",
-    resetWarning: "This will erase ALL data and settings.",
+    resetWarning: "This will erase ALL data and settings. Then restart it with: docker compose restart punchpilot",
   },
 
   // Change Password (first-login setup)

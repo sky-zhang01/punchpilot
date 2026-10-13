@@ -42,8 +42,11 @@ function resetFixture(prepare, input = 'RESET\n') {
 
 it('resets only selected instance files and preserves unrelated keystore entries', () => {
   const state = resetFixture();
+  expect(state.result.status).toBe(0);
   expect(state.result.stdout).toContain('Factory reset complete');
   expect(state.result.stdout).toContain('A new one-time administrator password will be generated');
+  expect(state.result.stdout).toContain('docker compose restart punchpilot');
+  expect(state.result.stdout).not.toContain('restart automatically');
   expect(state.databaseRemains).toBe(false);
   expect(state.keyRemains).toBe(false);
   expect(state.unrelatedKey).toBe('keep');
@@ -64,6 +67,9 @@ it('preserves a configured external password file and explains the restart sourc
   expect(state.result.stdout).toContain('Factory reset complete');
   expect(state.result.stdout).toContain('Configured initial administrator password sources remain in effect');
   expect(state.result.stdout).not.toContain('A new one-time administrator password will be generated');
+  // A restart keeps the old .env values, so a rotated password needs a recreated container.
+  expect(state.result.stdout).toContain('docker compose up -d --force-recreate punchpilot');
+  expect(state.result.stdout).not.toContain('docker compose restart punchpilot');
   expect(state.externalPassword).toBe('synthetic external password');
   expect(state.databaseRemains).toBe(false);
   expect(state.keyRemains).toBe(false);

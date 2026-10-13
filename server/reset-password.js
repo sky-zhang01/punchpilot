@@ -8,7 +8,10 @@
  *   - Database (users, settings, credentials, tokens) is deleted
  *   - Encryption key (.app-secret) is deleted — all encrypted data becomes unrecoverable
  *   - Logs and screenshots are purged
- *   - Container restarts automatically (Docker restart policy)
+ *   - The running server still holds the old files open, so restart the
+ *     container afterwards: docker compose restart punchpilot
+ *     (recreate it with docker compose up -d --force-recreate punchpilot when
+ *     the initial password comes from .env, because a restart keeps old values)
  *   - First login uses the configured password source, or a new generated password
  *
  * Usage:
@@ -85,12 +88,15 @@ async function main() {
   console.log('    - Execution logs');
   console.log('    - Screenshots');
   console.log('');
-  console.log('  After reset, the container will restart automatically.');
   if (configuredInitialPassword) {
     console.log('  Configured initial administrator password sources remain in effect after reset.');
     console.log('  External password files are preserved outside the generated keystore password path.');
-    console.log('  Rotate or remove external password configuration before restarting.');
+    console.log('  After reset, rotate or remove that configuration, then recreate the container so');
+    console.log('  it is read again (a restart keeps old .env values; recreating also pulls the image');
+    console.log('  named in docker-compose.yml):');
+    console.log('    docker compose up -d --force-recreate punchpilot');
   } else {
+    console.log('  After reset, restart the container: docker compose restart punchpilot');
     console.log('  A new one-time administrator password will be generated after restart.');
     console.log('  Read it from the keystore, then change it at first login.');
   }
@@ -167,17 +173,24 @@ async function main() {
   }
 
   console.log('');
-  console.log('  The container will now exit and restart automatically.');
-  console.log(configuredInitialPassword
-    ? '  Apply your intended external initial password configuration before restarting.'
-    : '  Read the new one-time administrator password from the keystore.');
+  if (configuredInitialPassword) {
+    console.log('  Apply your intended initial password configuration, then recreate the container');
+    console.log('  so PunchPilot reads it and starts from a clean state (this also pulls the image');
+    console.log('  named in docker-compose.yml):');
+    console.log('    docker compose up -d --force-recreate punchpilot');
+  } else {
+    console.log('  Restart the container now so PunchPilot starts from a clean state:');
+    console.log('    docker compose restart punchpilot');
+    console.log('  Read the new one-time administrator password from the keystore.');
+  }
   console.log('');
 
   rl.close();
 
-  // Exit with code 1 — Docker "restart: unless-stopped" will auto-restart the container.
-  // On restart, server.js creates a fresh database and one-time administrator password.
-  process.exit(1);
+  // This tool runs beside the server (docker exec), so exiting here cannot restart the
+  // container. The operator restarts it; on start, server.js creates a fresh database and
+  // one-time administrator password, and the entrypoint restores data directory ownership.
+  process.exit(0);
 }
 
 main().catch(() => {

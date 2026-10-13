@@ -18,7 +18,7 @@ PunchPilot is a self-hosted attendance automation service for freee HR. The prot
 - Express API to SQLite: trusted local process boundary; data is still encrypted for stored secrets.
 - Express API to freee API: OAuth bearer token boundary.
 - Browser automation to freee Web: higher-risk credential boundary; used in explicit browser mode and when API-based workflows cannot complete a required operation.
-- Docker host to container: persistent data, logs, screenshots, and keystore are separate mounts.
+- Docker host to container: persistent data (including logs), screenshots, and keystore are separate mounts.
 - CI and release workflows: source mode verifies live source refs, exact CI and signed source tags; isolated consumption uses independently installed E-only inputs. Source execution evidence remains advisory against runner compromise. Public artifacts are independently rebuilt and scanned on GitHub-hosted runners.
 
 ## Main Abuse Paths
@@ -76,4 +76,4 @@ PunchPilot is a self-hosted attendance automation service for freee HR. The prot
 
 ## Release Gate
 
-Before release, require dependency audit, security lint, unit coverage, client build, E2E smoke, privacy and multi-architecture build/scanning results bound to the exact candidate. Install source/consumer modes as documented in [branching.md](branching.md#public-promotion-boundary); the source hook refuses public writes and the isolated publisher's hook calls trusted installed consumer gates. Legitimate signer and live owner/platform/runner admission remain production prerequisites. Actual GitHub Git/Release/settings/GHCR writes require explicit user confirmation; local mechanism tests do not satisfy those live checks. Changelog and release notes must describe product changes only and must not include internal development process, local paths, internal hosts, tokens, or private tracker references.
+Before release, require dependency audit, security lint, unit coverage, client build, E2E smoke, privacy and multi-architecture build/scanning results bound to the exact candidate. The source hook refuses public writes, and the isolated publisher's hook calls trusted installed consumer gates. Legitimate signer and live owner/platform/runner admission remain production prerequisites. Actual GitHub Git/Release/settings/GHCR writes require explicit user confirmation; local mechanism tests do not satisfy those live checks. Changelog and release notes must describe product changes only and must not include internal development process, local paths, internal hosts, tokens, or private tracker references.

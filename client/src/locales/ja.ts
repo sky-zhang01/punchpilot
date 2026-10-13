@@ -36,10 +36,9 @@ const ja = {
     enterUsername: "ユーザー名を入力してください",
     enterPassword: "パスワードを入力してください",
     failed: "ログインに失敗しました",
-    version: "v0.2.0",
     resetHint: "ログイン情報を忘れた場合、以下のコマンドで初期化できます：",
     resetCommand: "docker exec -it punchpilot node server/reset-password.js",
-    resetWarning: "すべてのデータと設定が削除されます。",
+    resetWarning: "すべてのデータと設定が削除されます。その後 docker compose restart punchpilot で再起動してください。",
   },
 
   // Change Password (first-login setup)

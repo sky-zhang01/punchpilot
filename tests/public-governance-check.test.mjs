@@ -328,3 +328,13 @@ describe('actual source and public entry consumers', () => {
     }
   });
 });
+
+const governanceWorkflow = new URL('../.gitea/workflows/public-governance-check.yml', import.meta.url);
+const governanceWorkflowIt = fs.existsSync(governanceWorkflow) ? it : it.skip;
+describe('source governance workflow', () => {
+  governanceWorkflowIt('observes only when explicitly enabled and keeps read-only permissions', () => {
+    const workflow = fs.readFileSync(governanceWorkflow, 'utf8');
+    expect(workflow).toMatch(/\n  observe:\n    name: [^\n]+\n    if: \$\{\{ vars\.PUNCHPILOT_PUBLIC_GOVERNANCE_ENABLED == 'true' \}\}\n/);
+    expect(workflow).toContain('\npermissions:\n  contents: read\n');
+  });
+});

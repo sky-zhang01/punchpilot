@@ -17,12 +17,14 @@ We will acknowledge your report within 48 hours and aim to release a fix within 
 
 ## Security Design
 
-PunchPilot handles sensitive credentials (freee OAuth tokens, user passwords) and takes the following precautions:
+PunchPilot handles sensitive data: your freee login, freee API tokens and your attendance records. It is designed around these protections:
 
-- **Encryption**: AES-256-GCM for all stored credentials; key derived via scrypt (N=16384, r=8, p=1)
-- **Key isolation**: Encryption key stored in a Docker named volume, separate from the data bind mount
-- **Auth hardening**: bcrypt password hashing, forced password change on first login, CSPRNG session tokens, login rate limiting (10/15min)
-- **Security headers**: CSP, HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff
-- **Non-root execution**: Container drops privileges via `PUID`/`PGID` env vars (default UID 1000; set to 568 for TrueNAS)
-- **Sanitized logs**: No tokens, passwords, or PII in server logs or client error responses
-- **No external telemetry**: All data stays between you and freee's servers
+- **Your data stays with you.** PunchPilot runs on your own machine and itself connects only to freee and to public holiday calendars. There is no telemetry.
+- **Encrypted credentials.** The freee password, the API client secret and tokens are encrypted (AES-256-GCM). The encryption key is kept in a separate Docker volume from the database.
+- **Protected sign-in.** A one-time administrator password is created on first start and must be replaced. Passwords are hashed with bcrypt, sessions are stored only as one-way hashes, and repeated failed sign-in attempts are rate-limited.
+- **Protection against cross-site requests.** Browser requests that sign in or change data are accepted only from pages served at `localhost`, or at the HTTPS address set in `PUNCHPILOT_PUBLIC_ORIGIN` once it is configured. Standard browser security headers are applied. This is not a network firewall: the port is reachable from your network, so restrict it with a firewall if you do not need access from other devices.
+- **Safe failure.** When PunchPilot cannot confirm your attendance status, your leave or which freee account it is acting for, it pauses instead of punching.
+- **Isolated browser automation.** The automated browser does not receive PunchPilot's secrets through its environment, and in the standard Docker Compose setup the pages it opens run inside Chromium's sandbox. Screenshots are off by default, require sign-in to view and are deleted after seven days.
+- **Least privilege.** The container runs as a non-root user set by `PUID`/`PGID`.
+- **Clean logs and errors.** Tokens, passwords and freee page content are kept out of logs and error messages.
+- **Dependency checks.** Dependencies are installed with integrity checks, and release images are scanned for vulnerabilities before publication.

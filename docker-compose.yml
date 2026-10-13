@@ -1,6 +1,6 @@
 services:
   punchpilot:
-    image: ${PUNCHPILOT_IMAGE:-ghcr.io/sky-zhang01/punchpilot:0.5.1}
+    image: ${PUNCHPILOT_IMAGE:-ghcr.io/sky-zhang01/punchpilot:0.5.2}
     pull_policy: always
     container_name: punchpilot
     init: true
@@ -30,7 +30,6 @@ services:
       - "${PORT:-8681}:${PORT:-8681}"
     volumes:
       - ./data:/app/data
-      - ./logs:/app/logs
       - ./screenshots:/app/screenshots
       - keystore:/app/keystore
     networks:

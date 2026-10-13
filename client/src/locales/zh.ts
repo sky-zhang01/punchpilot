@@ -36,10 +36,9 @@ const zh = {
     enterUsername: "请输入用户名",
     enterPassword: "请输入密码",
     failed: "登录失败",
-    version: "v0.2.0",
     resetHint: "无法登录？运行以下命令恢复出厂设置：",
     resetCommand: "docker exec -it punchpilot node server/reset-password.js",
-    resetWarning: "这将清除所有数据和设置。",
+    resetWarning: "这将清除所有数据和设置。之后请运行 docker compose restart punchpilot 重启。",
   },
 
   // Change Password (first-login setup)

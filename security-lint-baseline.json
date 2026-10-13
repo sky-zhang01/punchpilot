@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "eslint_version": "10.11.0",
-  "plugin_security_version": "4.1.0",
+  "eslint_version": "10.12.0",
+  "plugin_security_version": "4.2.0",
   "config_sha256": "ac25fdc1c9cab97369a34ff3986e3243d4c6fc7dee2320049d8df51dc16c5693",
   "warnings": [
     {
@@ -657,7 +657,7 @@
       "rule": "security/detect-non-literal-fs-filename",
       "message": "Found mkdirSync from package \"fs\" with non literal argument at index 0",
       "source_line_sha256": "1a86302d80ee6ae9ff5234c0ffb5b70f142fdcaa8a9f149f5ad3b114a952c5ab",
-      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "source_file_sha256": "8740665f4d58e6193754b6227ef9d84ee6f7a4f96bf5ed8dc53038aaa15a9faa",
       "column": 5,
       "occurrence": 1
     },
@@ -666,7 +666,7 @@
       "rule": "security/detect-non-literal-fs-filename",
       "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
       "source_line_sha256": "34b58b2cb9846cb1ec416615d00170f75c9e2c601e832dcfc9f70d7eccaabf69",
-      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "source_file_sha256": "8740665f4d58e6193754b6227ef9d84ee6f7a4f96bf5ed8dc53038aaa15a9faa",
       "column": 20,
       "occurrence": 1
     },
@@ -675,7 +675,7 @@
       "rule": "security/detect-non-literal-fs-filename",
       "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
       "source_line_sha256": "37f367f4369aab464e64177cee82ca70589471f1b8fafdbccf346d287c9e35c3",
-      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "source_file_sha256": "8740665f4d58e6193754b6227ef9d84ee6f7a4f96bf5ed8dc53038aaa15a9faa",
       "column": 18,
       "occurrence": 1
     },
@@ -684,7 +684,7 @@
       "rule": "security/detect-non-literal-fs-filename",
       "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
       "source_line_sha256": "5dc1242ac22b74d49abc7348b3b472164fa86594f2f4da159bad865438a24579",
-      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "source_file_sha256": "8740665f4d58e6193754b6227ef9d84ee6f7a4f96bf5ed8dc53038aaa15a9faa",
       "column": 16,
       "occurrence": 1
     },
@@ -693,7 +693,7 @@
       "rule": "security/detect-non-literal-fs-filename",
       "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
       "source_line_sha256": "8eebf57bbb22c368fae6883ec41de1e3c8cd608cca9fcb765da056c7f4efa5aa",
-      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "source_file_sha256": "8740665f4d58e6193754b6227ef9d84ee6f7a4f96bf5ed8dc53038aaa15a9faa",
       "column": 24,
       "occurrence": 1
     },
@@ -702,7 +702,7 @@
       "rule": "security/detect-non-literal-fs-filename",
       "message": "Found lstatSync from package \"fs\" with non literal argument at index 0",
       "source_line_sha256": "a72c6346d9eaa0fb020a02214f3c84ada287a0de89cfb474e7ffeb340910f190",
-      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "source_file_sha256": "8740665f4d58e6193754b6227ef9d84ee6f7a4f96bf5ed8dc53038aaa15a9faa",
       "column": 26,
       "occurrence": 1
     },
@@ -711,7 +711,7 @@
       "rule": "security/detect-non-literal-fs-filename",
       "message": "Found mkdirSync from package \"fs\" with non literal argument at index 0",
       "source_line_sha256": "c6094120cd30e06b3d540a334d78c5c868c97a1945b1f5c405062fe94e10eac8",
-      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "source_file_sha256": "8740665f4d58e6193754b6227ef9d84ee6f7a4f96bf5ed8dc53038aaa15a9faa",
       "column": 5,
       "occurrence": 1
     },
@@ -720,7 +720,7 @@
       "rule": "security/detect-non-literal-fs-filename",
       "message": "Found existsSync from package \"fs\" with non literal argument at index 0",
       "source_line_sha256": "dc8a5aa67b7ea51d42f59f6555bbf9fa177e80df33ccf72ec52a441ee535e778",
-      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "source_file_sha256": "8740665f4d58e6193754b6227ef9d84ee6f7a4f96bf5ed8dc53038aaa15a9faa",
       "column": 8,
       "occurrence": 1
     },
@@ -729,7 +729,7 @@
       "rule": "security/detect-non-literal-fs-filename",
       "message": "Found readdirSync from package \"fs\" with non literal argument at index 0",
       "source_line_sha256": "f0824eabc7ad48138055ab38be2fa7d96df7c8e087454d84976956cd92062541",
-      "source_file_sha256": "beba85235f32547278e464dad7c52b063a9112507eb44340550834e4224b1e55",
+      "source_file_sha256": "8740665f4d58e6193754b6227ef9d84ee6f7a4f96bf5ed8dc53038aaa15a9faa",
       "column": 22,
       "occurrence": 1
     },
