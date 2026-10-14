@@ -518,6 +518,9 @@ export async function executeAction(
     expectedIdentityKey = null,
     expectedDate = null,
     mutationAuthorizationGuard = null,
+    // API mode only. Called under the account and automation locks before a
+    // punch is sent; resolves to "recorded", "not_recorded" or "unreadable".
+    recordedPunchCheck = null,
   } = {},
 ) {
   try {
@@ -603,6 +606,28 @@ export async function executeAction(
         const error = new Error("Attendance state could not be confirmed.");
         error.code = "ATTENDANCE_STATE_UNCONFIRMED";
         throw error;
+      }
+      if (typeof recordedPunchCheck === "function") {
+        // A retried punch may already be in freee: the earlier request may have
+        // landed, or the user punched meanwhile. Checked before the state test
+        // because a landed break or check-out changes what the state allows.
+        const recorded = await recordedPunchCheck();
+        if (recorded === "recorded") {
+          console.log(`[API] ${actionType} is already in today's freee punch history; not sending it again`);
+          return {
+            status: "success",
+            screenshotBefore: null,
+            screenshotAfter: null,
+            durationMs: Date.now() - start,
+            error: "Confirmed in freee punch history after a temporary freee API failure.",
+            confirmedFromHistory: true,
+          };
+        }
+        if (recorded !== "not_recorded") {
+          const error = new Error("freee punch history could not be read before retrying.");
+          error.code = "API_TRANSIENT";
+          throw error;
+        }
       }
       const valid = isActionValidForState(actionType, state);
       if (!valid.ok) {

@@ -28,10 +28,23 @@ import {
 } from './work-record-status.js';
 import { safeErrorMetadata } from './logger.js';
 import { withAccountOperation } from './account-operation.js';
-import { normalizeAutomationErrorCode } from './automation-diagnostics.js';
+import {
+  normalizeAutomationErrorCode,
+  TRANSIENT_FREEE_API_ERROR_CODES,
+} from './automation-diagnostics.js';
 
 const AUTH_TRANSIENT_RETRY_DELAYS_MS = [30_000, 120_000, 300_000];
 const STATE_RETRY_DELAYS_MS = [60_000, 180_000, 300_000];
+// About an hour in total: long enough for a short freee outage, while a late
+// check-in is still better than none.
+const API_TRANSIENT_RETRY_DELAYS_MS = [60_000, 120_000, 300_000, 600_000, 900_000, 1_800_000];
+// Allowed difference between this host's clock and the time freee records.
+// Kept small so an earlier punch of the same type (for example a short break
+// just before) is not mistaken for the retried one; the host is expected to
+// keep its clock synchronised.
+const PUNCH_HISTORY_CLOCK_TOLERANCE_MS = 60_000;
+// A retried action must land before the next action in this order runs.
+const DAILY_ACTION_ORDER = ['checkin', 'break_start', 'break_end', 'checkout'];
 const NON_WORKING_RECHECK_BUFFER_MS = 60_000;
 const SCHEDULE_CANCELLATION_CODES = new Set([
   'SCHEDULE_GENERATION_STALE',
@@ -59,6 +72,10 @@ function isAuthRequiredResult(result) {
 
 function isAuthTransientResult(result) {
   return resultErrorCode(result) === FREEE_AUTH_ERROR_CODES.AUTH_TRANSIENT;
+}
+
+function isApiTransientCode(code) {
+  return getConnectionMode() === 'api' && TRANSIENT_FREEE_API_ERROR_CODES.has(code);
 }
 
 function isWebNonWorkingDayResult(result) {
@@ -127,6 +144,8 @@ export class Scheduler {
     this.todaySchedule = {};
     this.skippedActions = new Set(); // Actions skipped due to smart startup
     this.terminalActions = new Set(); // Actions already completed or irreversibly skipped today
+    // Terminal only because the configuration pauses them today; they never ran.
+    this.configurationPausedActions = new Set();
     this.startupAnalysis = null; // Last startup analysis result
     this.smartSkipLoggedForDate = null;
     this.activeIdentityKey = 'legacy';
@@ -138,6 +157,9 @@ export class Scheduler {
     this.shutdownRequested = false;
     this.shutdownPromise = null;
     this.cancelledMutationRetries = new Map();
+    // First attempt time of scheduled actions waiting to retry after a transient
+    // freee API failure, keyed by date, identity and action.
+    this.apiTransientRetries = new Map();
     this.cancellationReconciliationRequested = false;
     this.cancellationReconciliationPromise = null;
   }
@@ -192,6 +214,7 @@ export class Scheduler {
     this.todaySchedule = {};
     this.skippedActions.clear();
     this.terminalActions.clear();
+    this.configurationPausedActions.clear();
     this.smartSkipLoggedForDate = null;
 
     const today = getTodayString();
@@ -250,6 +273,7 @@ export class Scheduler {
       if (pauseCode && !existing?.executed) {
         this.terminalActions.add(cfg.action_type);
         this.skippedActions.add(cfg.action_type);
+        this.configurationPausedActions.add(cfg.action_type);
         // Configuration cannot overwrite evidence from an attempted action.
         if (!existing || (existing.attempts === 0 && ['pending', 'paused_configuration'].includes(existing.last_status))) {
           updateDailyScheduleStatus(today, cfg.action_type, 'paused_configuration', pauseCode, false, identityKey);
@@ -260,6 +284,11 @@ export class Scheduler {
       this.todaySchedule[cfg.action_type] = resolvedTime;
     }
     this.pruneCancelledMutationRetries(
+      today,
+      identityKey,
+      new Set(Object.keys(this.todaySchedule)),
+    );
+    this.pruneApiTransientRetries(
       today,
       identityKey,
       new Set(Object.keys(this.todaySchedule)),
@@ -489,21 +518,34 @@ export class Scheduler {
 
     // Schedule future actions
     for (const [actionType, timeStr] of Object.entries(this.todaySchedule)) {
-      if (this.skippedActions.has(actionType)) {
+      // A retry after a transient freee API failure continues even when the
+      // state-derived plan would skip the action (for example a check-in more
+      // than five minutes late); the punch-history and state checks in
+      // executeAction settle an action that is already done.
+      const resumesApiRetry = !this.terminalActions.has(actionType) &&
+        this.apiTransientRetries.has(
+          this.apiTransientRetryKey(context.date, actionType, context.identityKey),
+        );
+      // Remembered for the "next action already due" case below, which keeps
+      // the plan's skip instead of turning a settled action into a failure.
+      const wasSkippedByPlan = this.skippedActions.has(actionType);
+      if (this.skippedActions.has(actionType) && !resumesApiRetry) {
         this.consumeCancelledMutationRetry(
           context.date,
           actionType,
           context.identityKey,
         );
+        this.clearApiTransientRetry(context.date, actionType, context.identityKey);
         console.log(`[Scheduler] ${actionType} at ${timeStr} skipped (smart startup)`);
         continue;
       }
-      if (!plan.execute.includes(actionType)) {
+      if (!plan.execute.includes(actionType) && !resumesApiRetry) {
         this.consumeCancelledMutationRetry(
           context.date,
           actionType,
           context.identityKey,
         );
+        this.clearApiTransientRetry(context.date, actionType, context.identityKey);
         continue;
       }
 
@@ -514,14 +556,64 @@ export class Scheduler {
           actionType,
           context.identityKey,
         );
+        let pendingApiRetry = this.apiTransientRetries.has(
+          this.apiTransientRetryKey(context.date, actionType, context.identityKey),
+        );
+        if (pendingApiRetry && this.msUntilNextScheduledAction(actionType) <= 0) {
+          // Too late: the next action in the day is already due.
+          this.clearApiTransientRetry(context.date, actionType, context.identityKey);
+          if (wasSkippedByPlan) {
+            // The current plan already settled this action as unnecessary, so
+            // the unresolved retry ends as a skip, not as a failure.
+            updateDailyScheduleStatus(
+              context.date,
+              actionType,
+              'skipped',
+              'freee API was temporarily unavailable and the next scheduled action is already due; the action stays skipped because the current plan does not need it.',
+              false,
+              context.identityKey,
+            );
+          } else {
+            updateDailyScheduleStatus(
+              context.date,
+              actionType,
+              'transient_failure',
+              'freee API was temporarily unavailable and the next scheduled action is already due; check freee and punch manually if needed.',
+              false,
+              context.identityKey,
+            );
+          }
+          pendingApiRetry = false;
+        }
         if (cancelledMutationRetry) {
+          // Rescheduling cleared the retry timer; run it now. When both a
+          // cancelled mutation and an API retry are pending this path runs
+          // once with the anchor in place, so its history re-check still
+          // protects the punch.
           console.log(`[Scheduler] Retrying ${actionType} after a cancelled pre-dispatch mutation`);
+          // Running the retry settles the action, so a state-derived skip of
+          // it no longer holds.
+          this.skippedActions.delete(actionType);
           await this.runAction(
             actionType,
             timeStr,
             context,
           );
           if (!this.scheduleContextIsCurrent(context)) return;
+        } else if (pendingApiRetry) {
+          // Arm the retry instead of running it inside the scheduling loop:
+          // an inline run would hold the loop behind the account lock for the
+          // whole non-working-day check and punch request, and the actions
+          // scheduled after this one would pass their time and be dropped as
+          // "already passed" without ever running. The armed timer keeps the
+          // punch-history anchor, so a punch that landed is not resent.
+          console.log(`[Scheduler] Retrying ${actionType} after a transient freee API failure`);
+          // Running the retry settles the action, so a state-derived skip of
+          // it no longer holds.
+          this.skippedActions.delete(actionType);
+          this.armApiTransientRetryTimer(actionType, timeStr, 0, context, 0);
+        } else if (resumesApiRetry) {
+          // The retry stopped above because the next action is already due.
         } else if (
           actionType === 'checkin' &&
           !this.hasPriorScheduledActionRun(context)
@@ -551,6 +643,9 @@ export class Scheduler {
         actionType,
         context.identityKey,
       );
+      // Arming the timer re-arms a pending API retry whose action the plan had
+      // skipped; the punch-history and state checks settle it when it fires.
+      this.skippedActions.delete(actionType);
       console.log(`[Scheduler] Scheduling ${actionType} at ${timeStr} (in ${Math.round(ms / 60000)} min)`);
       this.replaceTimer(actionType, setTimeout(() => {
         this.removeTimer(actionType);
@@ -595,6 +690,7 @@ export class Scheduler {
     context = this.createScheduleContext(),
   ) {
     const today = context.date;
+    const attemptStartedAt = Date.now();
     if (!this.actionContextIsCurrent(context, actionType)) return;
 
     // Check master toggle
@@ -673,6 +769,19 @@ export class Scheduler {
       if (nonWorkingStatus.verificationFailed) {
         const reason = 'Automatic action paused because the non-working-day guard could not be verified.';
         if (
+          isApiTransientCode(nonWorkingStatus.errorCode) &&
+          this.scheduleApiTransientRetry(
+            actionType,
+            scheduledTime,
+            attempt,
+            'The non-working-day guard is waiting for freee to respond.',
+            context,
+            attemptStartedAt,
+          )
+        ) {
+          return;
+        }
+        if (
           nonWorkingStatus.errorCode === FREEE_AUTH_ERROR_CODES.AUTH_TRANSIENT &&
           attempt < AUTH_TRANSIENT_RETRY_DELAYS_MS.length
         ) {
@@ -722,6 +831,40 @@ export class Scheduler {
       return;
     }
 
+    // The retry deadline was checked when its timer was armed, but the guards
+    // above can take long enough for the next action of the day to come due or
+    // even run meanwhile. Re-check before anything is sent so a late retry
+    // cannot land after the next action's time or after it has run.
+    if (
+      this.apiTransientRetries.has(this.apiTransientRetryKey(today, actionType, context.identityKey)) &&
+      this.msUntilNextScheduledAction(actionType) <= 0
+    ) {
+      this.clearApiTransientRetry(today, actionType, context.identityKey);
+      if (this.skippedActions.has(actionType)) {
+        // The current plan already settled this action as unnecessary, so the
+        // unresolved retry ends as a skip, not as a failure.
+        updateDailyScheduleStatus(
+          today,
+          actionType,
+          'skipped',
+          'freee API was temporarily unavailable and the next scheduled action is already due; the action stays skipped because the current plan does not need it.',
+          false,
+          context.identityKey,
+        );
+      } else {
+        updateDailyScheduleStatus(
+          today,
+          actionType,
+          'transient_failure',
+          'freee API was temporarily unavailable and the next scheduled action is already due; check freee and punch manually if needed.',
+          false,
+          context.identityKey,
+        );
+      }
+      console.warn(`[Scheduler] Not retrying ${actionType}: the next scheduled action is already due`);
+      return;
+    }
+
     console.log(`[Scheduler] Executing ${actionType} (scheduled: ${scheduledTime})`);
     const result = await executeAction(actionType, {
       expectedIdentityKey: context.identityKey,
@@ -730,6 +873,9 @@ export class Scheduler {
         actionType,
         context,
       ),
+      // The anchor is looked up under the automation lock, so an attempt that
+      // fails while this one queues behind the lock is still honoured here.
+      recordedPunchCheck: this.recordedPunchCheckFor(today, actionType, context.identityKey),
     });
     if (!this.identityIsCurrent(context.identityKey)) {
       updateDailyScheduleStatus(
@@ -826,8 +972,27 @@ export class Scheduler {
         const reason = `${result.error || 'Token refresh failed'} The authorization was not marked invalid because the failure is transient.`;
         updateDailyScheduleStatus(today, actionType, 'transient_failure', reason, true, context.identityKey);
       }
+    } else if (result.status === 'failure' && isApiTransientCode(resultErrorCode(result))) {
+      const scheduled = this.scheduleApiTransientRetry(
+        actionType,
+        scheduledTime,
+        attempt,
+        result.error || 'freee API is temporarily unavailable.',
+        context,
+        attemptStartedAt,
+      );
+      if (!scheduled) {
+        const reason = `${result.error || 'freee API is temporarily unavailable.'} Retries stopped because they were used up or the next scheduled action is due; check freee and punch manually if needed.`;
+        updateDailyScheduleStatus(today, actionType, 'transient_failure', reason, true, context.identityKey);
+      }
     } else if (result.status === 'failure') {
       updateDailyScheduleStatus(today, actionType, 'failure', result.error || null, true, context.identityKey);
+    }
+
+    // The punch-history anchor is needed only while a retry is still armed. A
+    // run from a replaced schedule leaves it to the current one.
+    if (this.scheduleContextIsCurrent(context) && !this.hasPendingRetryTimer(actionType)) {
+      this.clearApiTransientRetry(today, actionType, context.identityKey);
     }
 
     // After any successful action, re-evaluate the plan so Dashboard reflects reality.
@@ -876,6 +1041,192 @@ export class Scheduler {
     }, delayMs));
   }
 
+  /**
+   * Schedules the next attempt after a transient freee API failure. Returns false
+   * when the retries are used up or the next action in the day is due first, so
+   * the caller can record the final status.
+   */
+  scheduleApiTransientRetry(
+    actionType,
+    scheduledTime,
+    attempt,
+    error,
+    context,
+    attemptStartedAt,
+  ) {
+    // The checks below deliberately avoid actionContextIsCurrent, whose side
+    // effects (date_changed / identity_changed statuses) do not belong to the
+    // classification of an attempt that already ran.
+    if (context.date !== getTodayString() || !this.identityIsCurrent(context.identityKey)) {
+      return true;
+    }
+    const today = context.date;
+    const key = this.apiTransientRetryKey(today, actionType, context.identityKey);
+    if (!this.lifecycleIsCurrent(context.generation)) {
+      // A settings save or company switch replaced the generation while the
+      // request was in flight, but the failed write is still unresolved.
+      // Record the anchor so the schedule that replaced this one re-checks
+      // the punch history instead of assuming nothing was sent, and let a
+      // reconciliation pass re-resolve the day with the anchor in place.
+      if (!this.shutdownRequested) {
+        this.pruneApiTransientRetries(today, context.identityKey);
+        if (!this.apiTransientRetries.has(key)) {
+          this.apiTransientRetries.set(key, {
+            date: today,
+            identityKey: context.identityKey,
+            actionType,
+            firstAttemptAt: attemptStartedAt,
+            retries: 0,
+          });
+        }
+        updateDailyScheduleStatus(today, actionType, 'retrying', error, true, context.identityKey);
+        this.requestCancellationReconciliation();
+      }
+      return true;
+    }
+    this.pruneApiTransientRetries(today, context.identityKey);
+    const pending = this.apiTransientRetries.get(key) || {
+      date: today,
+      identityKey: context.identityKey,
+      actionType,
+      firstAttemptAt: attemptStartedAt,
+      retries: 0,
+    };
+    const delayMs = API_TRANSIENT_RETRY_DELAYS_MS[pending.retries];
+    // A late check-in or break must not land after the next action has run.
+    if (delayMs === undefined || delayMs >= this.msUntilNextScheduledAction(actionType)) {
+      this.apiTransientRetries.delete(key);
+      return false;
+    }
+    pending.retries += 1;
+    this.apiTransientRetries.set(key, pending);
+    updateDailyScheduleStatus(today, actionType, 'retrying', error, true, context.identityKey);
+    console.warn(`[Scheduler] freee API temporarily unavailable for ${actionType}; retry ${pending.retries}/${API_TRANSIENT_RETRY_DELAYS_MS.length} in ${Math.round(delayMs / 1000)}s`);
+    this.armApiTransientRetryTimer(actionType, scheduledTime, attempt, context, delayMs);
+    return true;
+  }
+
+  /**
+   * Arms the timer that runs the next attempt of a pending API-transient retry.
+   * Besides the failure classification, the rescheduling loop uses this to
+   * re-arm a pending retry without running it inline, so the loop keeps moving
+   * and actions scheduled after the retried one are not dropped as "already
+   * passed" while the retry is still in flight.
+   */
+  armApiTransientRetryTimer(actionType, scheduledTime, attempt, context, delayMs) {
+    const key = this.apiTransientRetryKey(context.date, actionType, context.identityKey);
+    const retryKey = `${actionType}:api-retry`;
+    this.replaceTimer(retryKey, setTimeout(() => {
+      this.removeTimer(retryKey);
+      if (!this.lifecycleIsCurrent(context.generation)) return;
+      // A manual punch or a plan refresh may have settled the action meanwhile.
+      if (this.skippedActions.has(actionType)) {
+        this.apiTransientRetries.delete(key);
+        return;
+      }
+      // API retries count in pending.retries, so the shared attempt index used by
+      // OAuth and state retries is passed on unchanged.
+      void this.trackRun(
+        this.runActionAttempt(
+          actionType,
+          scheduledTime,
+          attempt,
+          context,
+        ),
+        {
+          kind: 'scheduled_action',
+          actionType,
+          generation: context.generation,
+          date: context.date,
+        },
+      ).catch((retryError) => {
+        console.error('[Scheduler] freee API retry failed', safeErrorMetadata(retryError));
+      });
+    }, delayMs));
+  }
+
+  /**
+   * Milliseconds left before a retry of this action would land after the next
+   * action of the day: 0 once a later action has already run, otherwise the
+   * time until the next later action that is still planned.
+   */
+  msUntilNextScheduledAction(actionType) {
+    const index = DAILY_ACTION_ORDER.indexOf(actionType);
+    if (index === -1) return Infinity;
+    for (const next of DAILY_ACTION_ORDER.slice(index + 1)) {
+      const time = Reflect.get(this.todaySchedule, next);
+      if (!time || this.configurationPausedActions.has(next)) continue;
+      // A later action that already ran fixes the order of the day; for
+      // example a check-out skipped as "not checked in" must not be followed
+      // by the retried check-in it was waiting for.
+      if (this.terminalActions.has(next)) return 0;
+      if (this.skippedActions.has(next)) continue;
+      try {
+        return msUntilTimeInTz(time);
+      } catch {
+        continue;
+      }
+    }
+    return Infinity;
+  }
+
+  /**
+   * Looks for the action in today's freee punch history since the first failed
+   * attempt. freee accepts a second check-out, so a retry must not rely on the
+   * attendance state alone.
+   */
+  async punchRecordedSince(actionType, firstAttemptAt) {
+    const punchTimes = await this._fetchTodayPunchTimes();
+    if (!Array.isArray(punchTimes)) return 'unreadable';
+    const recorded = punchTimes.some((punch) =>
+      punch?.type === actionType &&
+      Date.parse(punch.datetime) >= firstAttemptAt - PUNCH_HISTORY_CLOCK_TOLERANCE_MS);
+    return recorded ? 'recorded' : 'not_recorded';
+  }
+
+  /**
+   * Builds the recordedPunchCheck callback for executeAction. The anchor is
+   * looked up only when the callback runs, under the account and automation
+   * locks: a manual punch can queue behind a scheduled attempt that has not
+   * failed yet, and its anchor appears only after that attempt fails.
+   */
+  recordedPunchCheckFor(date, actionType, identityKey) {
+    return async () => {
+      const pendingRetry = this.apiTransientRetries.get(
+        this.apiTransientRetryKey(date, actionType, identityKey),
+      );
+      // Without an anchor there is no unresolved write to double-check, so no
+      // punch history is read and the first attempt stays cheap.
+      if (!pendingRetry) return 'not_recorded';
+      return this.punchRecordedSince(actionType, pendingRetry.firstAttemptAt);
+    };
+  }
+
+  hasPendingRetryTimer(actionType) {
+    return [`${actionType}:retry`, `${actionType}:state-retry`, `${actionType}:api-retry`]
+      .some((key) => Reflect.has(this.timers, key));
+  }
+
+  clearApiTransientRetry(date, actionType, identityKey) {
+    this.apiTransientRetries.delete(this.apiTransientRetryKey(date, actionType, identityKey));
+  }
+
+  apiTransientRetryKey(date, actionType, identityKey) {
+    return `${date}\0${identityKey}\0${actionType}`;
+  }
+
+  pruneApiTransientRetries(date, identityKey, allowedActions = null) {
+    for (const [key, retry] of this.apiTransientRetries) {
+      if (
+        retry.date !== date ||
+        retry.identityKey !== identityKey ||
+        (allowedActions && !allowedActions.has(retry.actionType))
+      ) {
+        this.apiTransientRetries.delete(key);
+      }
+    }
+  }
+
   scheduleStateRetry(
     actionType,
     scheduledTime,
@@ -922,6 +1273,7 @@ export class Scheduler {
       clearTimeout(timer);
     }
     this.timers = {};
+    this.apiTransientRetries.clear();
     console.warn(`[Scheduler] Cancelled today's pending timers (${reason})`);
   }
 
@@ -1153,6 +1505,15 @@ export class Scheduler {
     const operationIdentity = captureManualOperationIdentity();
     const result = await executeAction(actionType, {
       expectedIdentityKey: operationIdentity.automationIdentityKey,
+      // While a scheduled retry is pending, its earlier request may have landed;
+      // check freee's punch history before sending the same punch by hand. The
+      // anchor is looked up under the automation lock, so a scheduled attempt
+      // that fails while this manual call queues behind the lock still counts.
+      recordedPunchCheck: this.recordedPunchCheckFor(
+        getTodayString(),
+        actionType,
+        operationIdentity.automationIdentityKey,
+      ),
     });
 
     insertLog({
@@ -1210,12 +1571,21 @@ export class Scheduler {
       for (const act of plan.skip) {
         if (!this.skippedActions.has(act)) {
           this.skippedActions.add(act);
-          // Cancel timer for this action if it was scheduled
-          const timer = this.removeTimer(act);
-          if (timer) {
-            clearTimeout(timer);
-            console.log(`[Scheduler] Cancelled timer for ${act} (now skipped after ${trigger})`);
+          // Cancel the action's timer and any pending retry of it
+          let cancelledRetry = false;
+          for (const key of [act, `${act}:retry`, `${act}:state-retry`, `${act}:api-retry`]) {
+            const timer = this.removeTimer(key);
+            if (timer) {
+              clearTimeout(timer);
+              cancelledRetry ||= key !== act;
+              console.log(`[Scheduler] Cancelled timer for ${key} (now skipped after ${trigger})`);
+            }
           }
+          const today = getTodayString();
+          if (cancelledRetry) {
+            updateDailyScheduleStatus(today, act, 'skipped', `No longer needed after ${trigger}.`, false, this.activeIdentityKey);
+          }
+          this.clearApiTransientRetry(today, act, this.activeIdentityKey);
         }
       }
 
@@ -1284,6 +1654,7 @@ export class Scheduler {
       setDailySchedule(scheduleDate, 'checkout', resolvedTime, this.activeIdentityKey);
       this.terminalActions.delete('checkout');
       this.skippedActions.delete('checkout');
+      this.clearApiTransientRetry(scheduleDate, 'checkout', this.activeIdentityKey);
     }
   }
 
@@ -1301,6 +1672,7 @@ export class Scheduler {
     markDailyScheduleExecuted(today, actionType, status, error, this.activeIdentityKey);
     this.terminalActions.add(actionType);
     this.skippedActions.add(actionType);
+    this.apiTransientRetries.delete(this.apiTransientRetryKey(today, actionType, this.activeIdentityKey));
   }
 
   markReverifiableNonWorkingDaySkip(today, actionType, error) {
@@ -1472,6 +1844,7 @@ export class Scheduler {
     this.todaySchedule = {};
     this.skippedActions.clear();
     this.terminalActions.clear();
+    this.configurationPausedActions.clear();
   }
 
   stopAll() {

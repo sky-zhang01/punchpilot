@@ -1,6 +1,6 @@
 services:
   punchpilot:
-    image: ${PUNCHPILOT_IMAGE:-ghcr.io/sky-zhang01/punchpilot:0.5.2}
+    image: ${PUNCHPILOT_IMAGE:-ghcr.io/sky-zhang01/punchpilot:0.5.3}
     pull_policy: always
     container_name: punchpilot
     init: true

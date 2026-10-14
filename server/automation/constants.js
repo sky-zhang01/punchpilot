@@ -107,10 +107,23 @@ function assertOwnedScreenshotDirectory(
 ) {
   const root = path.resolve(directory); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- operator-controlled diagnostics root, followed by ownership and no-symlink checks.
   // The resolved path is accepted only after no-symlink, owner, and mode checks below.
-  if (create) fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const created = create &&
+    fs.mkdirSync(root, { recursive: true, mode: 0o700 }) !== undefined;
 
-  const metadata = fs.lstatSync(root);
+  let metadata = fs.lstatSync(root);
   const currentUid = process.getuid?.();
+  // Inherited ACLs (for example NFSv4 ACLs on TrueNAS datasets) can widen the
+  // mode requested for a directory created here, so tighten it before the mode
+  // check. A directory that already existed is still judged as found.
+  if (
+    created &&
+    !metadata.isSymbolicLink() &&
+    metadata.isDirectory() &&
+    (currentUid == null || metadata.uid === currentUid)
+  ) {
+    fs.chmodSync(root, 0o700);
+    metadata = fs.lstatSync(root);
+  }
   if (
     metadata.isSymbolicLink() ||
     !metadata.isDirectory() ||
@@ -188,8 +201,7 @@ function assertScreenshotRootMarker(root) {
     const currentUid = process.getuid?.();
     if (
       !metadata.isFile() ||
-      (currentUid != null && metadata.uid !== currentUid) ||
-      (metadata.mode & 0o077) !== 0
+      (currentUid != null && metadata.uid !== currentUid)
     ) {
       throw unsafeScreenshotDirectory("Screenshot directory marker is invalid");
     }
@@ -197,6 +209,9 @@ function assertScreenshotRootMarker(root) {
     if (fs.readFileSync(descriptor, "utf8") !== SCREENSHOT_ROOT_MARKER_CONTENT) {
       throw unsafeScreenshotDirectory("Screenshot directory marker is invalid");
     }
+    // An own marker with the exact content whose mode an inherited ACL widened
+    // is tightened in place, as the keystore secret is.
+    if ((metadata.mode & 0o077) !== 0) fs.fchmodSync(descriptor, 0o600);
   } catch (error) {
     if (error?.code === "SCREENSHOT_DIRECTORY_UNSAFE") throw error;
     throw unsafeScreenshotDirectory("Screenshot directory marker is invalid");
@@ -217,14 +232,22 @@ function ensureClaimedScreenshotRoot(directory) {
   }
 
   assertClaimableScreenshotRoot(root);
+  let descriptor = null;
   try {
     // The fixed marker is created only after validating every existing root entry.
-    fs.writeFileSync(marker, SCREENSHOT_ROOT_MARKER_CONTENT, {
-      flag: "wx",
-      mode: 0o600,
-    });
+    descriptor = fs.openSync(
+      marker,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL |
+        (fs.constants.O_NOFOLLOW || 0),
+      0o600,
+    );
+    // Inherited ACLs can widen the creation mode.
+    fs.fchmodSync(descriptor, 0o600);
+    fs.writeSync(descriptor, SCREENSHOT_ROOT_MARKER_CONTENT);
   } catch (error) {
     if (error?.code !== "EEXIST") throw error;
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
   }
   assertScreenshotRootMarker(root);
   return root;

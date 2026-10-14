@@ -513,7 +513,12 @@ async function createPublicationApi({ admission, version }, prepared) {
       let body = ''; request.on('data', (chunk) => { body += chunk; }); request.on('end', () => { controls.releaseWrites += 1; controls.release = { ...JSON.parse(body), id: 42, assets: [], token: responseCanary }; if (controls.loseReleaseResponse) response.destroy(); else json(response, { accepted: true }, 202); });
     } else { controls.releaseReads += 1; json(response, controls.release && controls.releaseReads > 2 ? controls.release : {}, controls.release && controls.releaseReads > 2 ? 200 : 404); }
   });
-  const api = (options) => githubRequest({ ...options, readToken: 'fixture-reader', ...(options.method === 'POST' ? { token: 'fixture-writer' } : {}), request: (options, callback) => https.request({ ...options, hostname: 'localhost', port: publicApi.server.address().port, ca: fs.readFileSync(certificate) }, callback) });
+  // agent: false gives every fixture request its own connection. With Node's
+  // default keep-alive agent, a request could reuse a socket the fixture server
+  // was closing after its keep-alive timeout (the steps between calls run git
+  // and gpg for longer than that) and fail with ECONNRESET instead of the
+  // response the test expects.
+  const api = (options) => githubRequest({ ...options, readToken: 'fixture-reader', ...(options.method === 'POST' ? { token: 'fixture-writer' } : {}), request: (options, callback) => https.request({ ...options, hostname: 'localhost', port: publicApi.server.address().port, ca: fs.readFileSync(certificate), agent: false }, callback) });
   return { ...publicApi, api, controls };
 }
 

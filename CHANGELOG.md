@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-10-15
+
+### Upgrade notes
+- Upgrading from a version before 0.5.0? Read the 0.5.0 upgrade notes in CHANGELOG.md first.
+
+### Fixed
+- When the freee API is temporarily unavailable or rate-limited, scheduled punches are retried for about an hour instead of failing for the rest of the day. Before each retry, PunchPilot checks freee's punch history so that a punch which went through, or one you made by hand, is not sent again, and it gives up rather than punch after the next scheduled action of the day.
+- The check for leave and non-working days is retried the same way instead of pausing every remaining action after a single failed request.
+- Screenshots work on storage that applies inherited permissions, such as TrueNAS datasets with ACLs, and startup no longer reports `SCREENSHOT_DIRECTORY_UNSAFE` there.
+
+### Changed
+- Docker Compose now installs 0.5.3 by default.
+
 ## [0.5.2] - 2026-10-14
 
 ### Upgrade notes

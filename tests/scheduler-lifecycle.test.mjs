@@ -242,9 +242,10 @@ describe('scheduler lifecycle serialization', () => {
     });
 
     await expect(running).resolves.toMatchObject({ status: 'success' });
-    expect(mocks.executeAction).toHaveBeenCalledWith('checkin', {
+    expect(mocks.executeAction).toHaveBeenCalledWith('checkin', expect.objectContaining({
       expectedIdentityKey: 'v1:account-a',
-    });
+    }));
+    expect(typeof mocks.executeAction.mock.calls[0][1].recordedPunchCheck).toBe('function');
     expect(mocks.insertLog).toHaveBeenCalledWith(expect.objectContaining({
       action_type: 'checkin',
       screenshot_after: '/screenshots/account-a-result.png',

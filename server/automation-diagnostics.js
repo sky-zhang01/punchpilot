@@ -1,3 +1,13 @@
+// freee API failures that are temporary or leave the write outcome unknown.
+// Scheduled actions retry them after checking freee's punch history, so a
+// punch that did land is not sent again.
+export const TRANSIENT_FREEE_API_ERROR_CODES = new Set([
+  'API_TRANSIENT',
+  'RATE_LIMITED',
+  'API_RESPONSE_UNCONFIRMED',
+  'ATTENDANCE_STATE_UNCONFIRMED',
+]);
+
 const AUTOMATION_ERROR_CODES = new Set([
   'ACCOUNT_OPERATION_QUEUE_TIMEOUT',
   'ACCOUNT_OPERATION_SHUTTING_DOWN',
