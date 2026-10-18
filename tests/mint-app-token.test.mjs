@@ -243,10 +243,22 @@ describe('GitHub App installation-token minter', () => {
       if (options.method === 'GET') replies.push({ statusCode: 200 });
       return https.request(options, callback);
     };
-    const { withAppToken } = await loadMinter();
-    await expect(withAppToken({ env: baseEnv, now: () => now, request, timeoutMs: 10, wait: undefined },
-      async () => 'success')).rejects.toThrow('revocation');
-    expect(https.calls.filter(({ options }) => options.method === 'GET').length).toBeGreaterThan(0);
+    // The deadline is measured with Date.now(); a simulated clock keeps the
+    // number of checks independent of how fast the CI runner is.
+    let clock = 1_000_000;
+    const clockSpy = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const wait = vi.fn(async (ms) => {
+      clock += ms;
+    });
+    try {
+      const { withAppToken } = await loadMinter();
+      await expect(withAppToken({ env: baseEnv, now: () => now, request, timeoutMs: 2500, wait },
+        async () => 'success')).rejects.toThrow('revocation');
+    } finally {
+      clockSpy.mockRestore();
+    }
+    expect(https.calls.filter(({ options }) => options.method === 'GET')).toHaveLength(3);
+    expect(wait.mock.calls).toEqual([[1000], [1000], [500]]);
   });
 
   it.each([

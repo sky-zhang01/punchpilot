@@ -98,14 +98,31 @@ ALLOWED_PRIVATE_PATHS = {
 }
 
 ALLOWED_BINARY_ARTIFACTS = {
-    "client/public/android-chrome-192x192.png": "f5ea1eb795796cc4306b3bedb38922bfa19541d3965a5eec2c877d60433786e6",
-    "client/public/android-chrome-512x512.png": "f276ab53880f9711e1483ec37b4da8be36816f67787fff95b90fb1c5acc427ec",
-    "client/public/apple-touch-icon.png": "49c9f5d6edb55d0f34e3165194dc98b335df09a4bb1427ae5691b999ed969a83",
-    "client/public/favicon-16x16.png": "6327376bcf68b825016c3888eb2ab8fc3eb018160e45a2f62703f3e937c32cdc",
-    "client/public/favicon-32x32.png": "d52df6c886e2ed20a777547f7651559fc8f62169b481d71dad214cbb750b323d",
-    "client/public/favicon.ico": "88f7d3c44a8d10e825d8126a4e73d659715c8aa32036834ea2926f02c184c44d",
+    "client/public/android-chrome-192x192.png": "76157cf6adfd82468d9171107d5724f162b3b304f9e1af22129e294c92c0f228",
+    "client/public/android-chrome-512x512.png": "c4d66193c13eae96facf90d502150af478388747ada4faf468386eb734248e0a",
+    "client/public/apple-touch-icon.png": "510e43799d64d882ef01d6239c69f2ad2c407edc195ea871e08ab444aec359fa",
+    "client/public/favicon-16x16.png": "96de85977d06387f2c1e90f2cab97cca6a039f9a309593f5c2e3227b7c7fb4b4",
+    "client/public/favicon-32x32.png": "89ba840ab3f53ff1a4ec8eadedd9503db04e16b46e175097ada25d79cb7df5b1",
+    "client/public/favicon.ico": "35a28ba4c29c178268f162a6cba443f5d681795174c9b39a9fe4ecaf3ddcae38",
     "client/public/logo-256.png": "885e639e7c83c55d88c097360b191790716e85ba216e186563e7225aba5fbbd3",
 }
+
+# Exact bytes that earlier public releases published at these paths before a
+# later release replaced them, one entry per published version. They are
+# already public and were reviewed when published, so every --ref and
+# --commit-range scan accepts them: the publisher's ancestry scan and the public
+# repository's own --ref HEAD check still see them in public history. Content
+# scanned for a new publication (export tree, publication tree, working tree)
+# must match ALLOWED_BINARY_ARTIFACTS. Add an entry only for bytes verified to
+# be in published public history at that path.
+SUPERSEDED_PUBLIC_BINARY_ARTIFACTS = (
+    {"client/public/android-chrome-192x192.png": "f5ea1eb795796cc4306b3bedb38922bfa19541d3965a5eec2c877d60433786e6"},
+    {"client/public/android-chrome-512x512.png": "f276ab53880f9711e1483ec37b4da8be36816f67787fff95b90fb1c5acc427ec"},
+    {"client/public/apple-touch-icon.png": "49c9f5d6edb55d0f34e3165194dc98b335df09a4bb1427ae5691b999ed969a83"},
+    {"client/public/favicon-16x16.png": "6327376bcf68b825016c3888eb2ab8fc3eb018160e45a2f62703f3e937c32cdc"},
+    {"client/public/favicon-32x32.png": "d52df6c886e2ed20a777547f7651559fc8f62169b481d71dad214cbb750b323d"},
+    {"client/public/favicon.ico": "88f7d3c44a8d10e825d8126a4e73d659715c8aa32036834ea2926f02c184c44d"},
+)
 
 # Frozen public history materials: exact original bytes, never new publication content.
 # Source proof: history-privacy/reviewed-materials-primary-proof.json and image/crypto readbacks.
@@ -1489,9 +1506,13 @@ def record_allowlist_finding(
         ))
 
 
-def binary_path_allowed(path: str, digest: str) -> bool:
+def binary_path_allowed(path: str, digest: str, *, allow_superseded: bool = False) -> bool:
     normalized = policy_path(path)
-    return ALLOWED_BINARY_ARTIFACTS.get(normalized) == digest
+    if ALLOWED_BINARY_ARTIFACTS.get(normalized) == digest:
+        return True
+    return allow_superseded and any(
+        entry.get(normalized) == digest for entry in SUPERSEDED_PUBLIC_BINARY_ARTIFACTS
+    )
 
 
 def decode_nul_paths(output: bytes) -> set[str]:
@@ -1938,6 +1959,7 @@ def scan_blob(
     high_entropy_exempt_lines: set[int] | None = None,
     forced_high_entropy_lines: set[int] | None = None,
     reviewed_material: dict | None = None,
+    allow_superseded: bool = False,
 ) -> str | None:
     declared_binary = Path(policy_path(path)).suffix.lower() in BINARY_EXTENSIONS
     reviewed_bytes = (
@@ -1965,7 +1987,7 @@ def scan_blob(
     text = None if declared_binary else decode_text(data)
     if text is None:
         digest = hashlib.sha256(data).hexdigest()
-        if not binary_path_allowed(path, digest) and not reviewed_binary:
+        if not binary_path_allowed(path, digest, allow_superseded=allow_superseded) and not reviewed_binary:
             findings.append(Finding("FAIL", path, 0, f"{label_prefix}unreviewed binary artifact"))
         scan_embedded_strings(findings, path, data, rules, label_prefix)
         return digest
@@ -2175,6 +2197,8 @@ def scan_tree_objects(
     rules: list[PatternRule],
     findings: list[Finding],
     pathset: set[str] | None = None,
+    *,
+    allow_superseded: bool = False,
 ) -> None:
     paths_by_object: dict[str, list[str]] = {}
     for entry in tree_entries(root, tree_ish):
@@ -2192,7 +2216,7 @@ def scan_tree_objects(
             if data is None:
                 record_oversized_finding(findings, rel)
             else:
-                scan_blob(findings, rel, data, rules)
+                scan_blob(findings, rel, data, rules, allow_superseded=allow_superseded)
 
 
 def openpgp_signature_packet_is_bound(
@@ -2574,7 +2598,7 @@ def scan_ref(
     object_type = run_git(root, "cat-file", "-t", ref).decode("ascii").strip()
     if object_type == "tag":
         scan_tag_object(root, ref, rules, findings)
-    scan_tree_objects(root, ref, rules, findings, pathset)
+    scan_tree_objects(root, ref, rules, findings, pathset, allow_superseded=True)
 
 
 def reviewed_history_material(
@@ -2679,6 +2703,7 @@ def scan_commit_range(
                     reviewed_history_material(surface, historical_path, data)
                     if commit in reviewed_commits else None
                 ),
+                allow_superseded=True,
             )
 
     blob_paths: dict[str, set[str]] = {}
@@ -2731,6 +2756,7 @@ def scan_commit_range(
                         reviewed_history_material(surface, rel, data)
                         if historical_commit in reviewed_commits else None
                     ),
+                    allow_superseded=True,
                 )
 
 

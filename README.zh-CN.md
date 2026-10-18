@@ -1,8 +1,14 @@
-# PunchPilot
+<p align="center">
+  <img src="client/public/logo-256.png" alt="PunchPilot 标志" width="128" height="128">
+</p>
 
-**为 [freee 人事劳务](https://www.freee.co.jp/hr/)（freee人事労務）自动打卡，运行在你自己的电脑或服务器上。**
+<h1 align="center">PunchPilot</h1>
 
-[**English**](README.md) | [**日本語**](README.ja.md)
+<h3 align="center">为 <a href="https://www.freee.co.jp/hr/">freee 人事劳务</a>（freee人事労務）自动打卡，运行在你自己的电脑或服务器上。</h3>
+
+<p align="center"><a href="README.md"><b>English</b></a> | <a href="README.ja.md"><b>日本語</b></a></p>
+
+<p align="center"><b>快速跳转：</b> <a href="#快速开始">快速开始</a> · <a href="#punchpilot-不会做的事">PunchPilot 不会做的事</a> · <a href="#常见问题">常见问题</a></p>
 
 如果你的公司用 freee 人事劳务记录考勤，你每个工作日都要上班打卡、开始和结束休息、下班打卡。漏打一次，事后就得提交补卡申请。PunchPilot 按你设定的时间替你打这些卡，并跳过你不上班的日子。它的网页面板还能补漏打的日子、申请休假、提交月度结算；如果你在 freee 中是审批人，还能审批下属的申请。
 
@@ -14,7 +20,7 @@ PunchPilot 是单用户工具：每个人为自己的 freee 账号各自运行�
 2. 遇到周末、日本法定节假日、你自己添加的自定义假日，以及 freee 上显示为全天休假、缺勤或公司休息日的日子，PunchPilot 会整天不打卡。如果在 **自动打卡跳过节假日** 中也选择了中国，中国法定节假日同样会跳过，而落在周末的调休补班日会照常打卡。半天或按小时的休假只要没有覆盖全天工时，就不会跳过当天。
 3. 每次打卡前，它会再查一次 freee。如果你已经手动打过卡，它什么也不做。如果它无法确认你的状态，就会暂停，而不会凭猜测打卡：仪表盘上会显示暂停，**日志** 里会记录原因。
 4. 只有当天工作超过 6 小时，才会安排 60–90 分钟的休息，依据是日本《劳动基准法》第 34 条。
-5. 如果到了上班时间 PunchPilot 没在运行，它不会替你打一张迟到的上班卡：只有晚了不超过 5 分钟，才会立即打上班卡；否则跳过当天的自动打卡，需要你自己在 freee 上打卡。
+5. 如果到了上班时间 PunchPilot 没在运行，它不会替你打一张迟到的上班卡：只有晚了不超过 5 分钟，才会立即打上班卡；否则跳过当天的自动打卡，需要你自己在 freee 上打卡。5 分钟的限制针对的是计划时间 PunchPilot 没在运行的情形。如果 PunchPilot 正在运行、只是 freee 暂时不可用或被限流，它会在大约一小时内重试这次打卡，每次重试前都先查 freee 的打卡记录，避免重复打卡；如果下一次重试会落在当天下一个计划动作的时间或之后，就提前停止重试。重试期间，仪表盘上这一步可能已经显示为失败；如果最终仍然失败，**日志** 里会记录原因，请自己在 freee 上打卡。
 
 ## 常见情况
 
@@ -50,7 +56,7 @@ freee 要求重新登录时，仪表盘上会出现带 **重新授权** 按钮�
 
 - **一个 freee 人事劳务的员工账号。**
 - **一个 freee 开发者应用**（Client ID 和 Client Secret）。自动打卡和各类申请都通过 freee API 进行，所以这一项是必需的。在应用里登记回调地址 `http://localhost:8681/api/config/oauth-callback`；如果改了 `PORT`，换成对应的端口；如果使用你自己的 HTTPS 地址，则登记 `https://<你的地址>/api/config/oauth-callback`。
-- **可选：你的 freee 网页登录信息**（邮箱、密码和准确的事务所名称）。假日出勤申请总是用它提交；公司的审批路线无法通过 API 处理时，也会用到它。
+- **可选：你的 freee 网页登录信息**（邮箱、密码和准确的事务所（公司）名称）。假日出勤申请总是用它提交；公司的审批路线无法通过 API 处理时，也会用到它。
 - **一台在工作时间内保持开机、不会进入睡眠的电脑**，装有 Docker 和 Docker Compose。会进入睡眠的笔记本电脑会漏打卡。支持 `linux/amd64` 和 64 位 `linux/arm64`。Windows 和 macOS 上的 Docker Desktop 运行的是同一个镜像，但本项目没有对它做测试。
 
 ## 快速开始
@@ -81,7 +87,7 @@ docker compose up -d
 默认只能在运行 PunchPilot 的那台电脑上通过 `http://localhost:8681` 登录。从其他设备用普通 `http://` 打开时，页面也许能显示，但登录会被有意拒绝。如果想用手机或其他电脑访问：
 
 1. 把 PunchPilot 放到 HTTPS 反向代理后面。
-2. 在 `.env` 中设置 `PUNCHPILOT_PUBLIC_ORIGIN`（例如 `https://punchpilot.example.com`）和 `TRUST_PROXY`。
+2. 在 `.env` 中设置 `PUNCHPILOT_PUBLIC_ORIGIN`（例如 `https://punchpilot.example.com`）和 `TRUST_PROXY`。`TRUST_PROXY` 填反向代理连接 PunchPilot 时使用的地址。尽量填代理的确切 IP 地址或网段；容器网络也可以用 `loopback`、`linklocal`、`uniquelocal` 这几个命名范围（见 `.env.example`）。它是地址列表，不是开关：填 `true` 这样的值会被拒绝，PunchPilot 将无法启动。
 3. 在 freee 应用里登记对应的回调地址。
 
 之后请通过这个 HTTPS 地址登录，`localhost` 将无法再登录。
@@ -98,7 +104,7 @@ docker compose up -d
 
 **我的 freee 密码安全吗？** 保存的凭证会在你自己的服务器上加密存储。在标准的 Docker Compose 部署中，自动化浏览器运行在 Chromium 的沙箱里。详情以及如何报告漏洞，请见 [SECURITY.md](SECURITY.md)。
 
-**能不连接 freee 先试用吗？** 可以。保持模拟模式开启，快速开始的第 3、4 步先不填，打卡就只是模拟。注意模拟模式只管打卡：一旦连接了 freee，补签到、休假申请、审批和月度结算都会真实发送到 freee。
+**能不连接 freee 先试用吗？** 可以。保持模拟模式开启，快速开始的第 3、4 步先不填，打卡就只是模拟。注意模拟模式只管打卡：一旦连接了 freee，补卡、休假申请、审批和月度结算都会真实发送到 freee。
 
 ## 参与开发
 

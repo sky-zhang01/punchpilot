@@ -1316,6 +1316,87 @@ describe('public release privacy gate for outgoing history', () => {
 
     expect(result.status, result.stdout + result.stderr).toBe(0);
   });
+
+  it('pins every reviewed binary to the bytes committed at its path', () => {
+    const result = spawnSync(python, ['-c', `
+import hashlib, importlib.util, json, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('fixture_gate', sys.argv[1])
+gate = importlib.util.module_from_spec(spec); sys.modules[spec.name] = gate; spec.loader.exec_module(gate)
+root = Path(sys.argv[2])
+print(json.dumps({
+  'pins': {path: [digest, hashlib.sha256((root / path).read_bytes()).hexdigest()]
+           for path, digest in gate.ALLOWED_BINARY_ARTIFACTS.items()},
+  'superseded_overlap': sorted(path for entry in gate.SUPERSEDED_PUBLIC_BINARY_ARTIFACTS
+                               for path, digest in entry.items() if gate.ALLOWED_BINARY_ARTIFACTS.get(path) == digest),
+  'superseded_unpinned': sorted({path for entry in gate.SUPERSEDED_PUBLIC_BINARY_ARTIFACTS for path in entry}
+                                - set(gate.ALLOWED_BINARY_ARTIFACTS)),
+}))
+`, gate, projectRoot], { encoding: 'utf8' });
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    const checks = JSON.parse(result.stdout);
+    for (const [assetPath, [pinned, actual]] of Object.entries(checks.pins)) {
+      expect(actual, assetPath).toBe(pinned);
+    }
+    expect(checks.superseded_overlap).toEqual([]);
+    expect(checks.superseded_unpinned).toEqual([]);
+  });
+
+  it('accepts a superseded public binary only when scanning published refs and history', () => {
+    const root = createRepo();
+    const assetPath = path.join('client', 'public', 'favicon-16x16.png');
+    const supersededBytes = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from([0, 1, 2, 3, 0, 4, 5, 6, 0]),
+    ]);
+    fs.mkdirSync(path.dirname(path.join(root, assetPath)), { recursive: true });
+    fs.writeFileSync(path.join(root, assetPath), supersededBytes);
+    git(root, 'add', assetPath);
+    git(root, 'commit', '-q', '-m', 'publish the earlier image');
+    const published = git(root, 'rev-parse', 'HEAD');
+    fs.copyFileSync(path.join(projectRoot, assetPath), path.join(root, assetPath));
+    git(root, 'add', assetPath);
+    git(root, 'commit', '-q', '-m', 'replace the image');
+    const replaced = git(root, 'rev-parse', 'HEAD');
+    const mktree = (input) => execFileSync('git', ['mktree'], { cwd: root, input, encoding: 'utf8' }).trim();
+    const movedBlob = git(root, 'rev-parse', `${published}:${assetPath}`);
+    const movedTree = mktree(`040000 tree ${mktree(`100644 blob ${movedBlob}\tfavicon-16x16.png\n`)}\tdocs\n`);
+
+    const result = spawnSync(python, ['-c', `
+import hashlib, importlib.util, json, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('fixture_gate', sys.argv[1])
+gate = importlib.util.module_from_spec(spec); sys.modules[spec.name] = gate; spec.loader.exec_module(gate)
+root = Path(sys.argv[2]); published, replaced, moved_tree, superseded = sys.argv[3:]
+rules = list(gate.BASE_RULES)
+def labels(scan):
+  findings = []; scan(findings); return [finding.label for finding in findings]
+def checks():
+  return {
+    'history': labels(lambda f: gate.scan_commit_range(root, replaced, rules, f, expected_ref=replaced)),
+    'published_ref': labels(lambda f: gate.scan_ref(root, published, rules, f)),
+    'new_publication_tree': labels(lambda f: gate.scan_tree_objects(root, published, rules, f)),
+    'other_path': labels(lambda f: gate.scan_ref(root, moved_tree, rules, f)),
+  }
+gate.SUPERSEDED_PUBLIC_BINARY_ARTIFACTS = ({'client/public/favicon-16x16.png': superseded},)
+accepted = checks()
+gate.SUPERSEDED_PUBLIC_BINARY_ARTIFACTS = ()
+print(json.dumps({'accepted': accepted, 'unlisted': checks()}))
+`, gate, root, published, replaced, movedTree, createHash('sha256').update(supersededBytes).digest('hex')], {
+      encoding: 'utf8',
+    });
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    const { accepted, unlisted } = JSON.parse(result.stdout);
+    const unreviewed = expect.stringContaining('unreviewed binary artifact');
+    expect(accepted.history).not.toContainEqual(unreviewed);
+    expect(accepted.published_ref).not.toContainEqual(unreviewed);
+    expect(accepted.new_publication_tree).toContainEqual(unreviewed);
+    expect(accepted.other_path).toContainEqual(unreviewed);
+    expect(unlisted.history).toContainEqual(unreviewed);
+    expect(unlisted.published_ref).toContainEqual(unreviewed);
+  });
 });
 
 describe('public release privacy gate publication mode', () => {

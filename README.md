@@ -1,8 +1,14 @@
-# PunchPilot
+<p align="center">
+  <img src="client/public/logo-256.png" alt="PunchPilot logo" width="128" height="128">
+</p>
 
-**Automatic clock-in and clock-out for [freee HR](https://www.freee.co.jp/hr/) (freee人事労務), running on your own computer or server.**
+<h1 align="center">PunchPilot</h1>
 
-[**中文**](README.zh-CN.md) | [**日本語**](README.ja.md)
+<h3 align="center">Automatic clock-in and clock-out for <a href="https://www.freee.co.jp/hr/">freee HR</a> (freee人事労務), running on your own computer or server.</h3>
+
+<p align="center"><a href="README.zh-CN.md"><b>中文</b></a> | <a href="README.ja.md"><b>日本語</b></a></p>
+
+<p align="center"><b>Jump to:</b> <a href="#quick-start">Quick start</a> · <a href="#what-punchpilot-will-not-do">What PunchPilot will not do</a> · <a href="#faq">FAQ</a></p>
 
 If your company records attendance in freee HR, you have to clock in, start and end a break, and clock out every working day. Miss one and you have to file a correction later. PunchPilot makes those punches for you on a schedule you choose and skips the days you are not working. Its web dashboard also lets you fix missed days, request leave, close the month and, if you are an approver in freee, approve your team's requests.
 
@@ -14,7 +20,7 @@ PunchPilot is a single-user tool: each person runs their own copy for their own 
 2. It skips the whole day on weekends, Japanese public holidays, custom holidays you add, and days that freee shows as full-day leave, absence or a company holiday. If you also select China under **Holiday Skip for Auto-Punch**, Chinese public holidays are skipped too, and China's weekend make-up workdays (调休) are punched as normal workdays. Half-day or hourly leave that does not cover the whole workday does not skip the day.
 3. Just before each punch it checks freee again. If you already punched by hand, it does nothing. If it cannot confirm your status, it pauses instead of guessing: the dashboard shows the pause and the Logs page records the reason.
 4. A 60–90 minute break is added only when the workday is longer than six hours, following Japan's Labor Standards Act (Article 34).
-5. If PunchPilot was not running at check-in time, it does not record a late arrival. It checks in only if it is up to five minutes late. Otherwise it skips that day's automatic punches, and you punch in freee yourself.
+5. If PunchPilot was not running at check-in time, it does not record a late arrival. It checks in only if it is up to five minutes late. Otherwise it skips that day's automatic punches, and you punch in freee yourself. The five-minute limit is for when PunchPilot was not running at the planned time. If PunchPilot is running but freee is temporarily unavailable or rate-limited, it retries the punch for about an hour and checks freee's punch history before each retry, so nothing is punched twice. It stops early if the next retry would land at or after the day's next planned action. The dashboard can show the step as failed while retries are still running; if the punch still fails in the end, the Logs page records the reason, and you punch in freee yourself.
 
 ## Common situations
 
@@ -81,7 +87,7 @@ When the **Mock Mode** tag disappears from the sidebar, PunchPilot punches for r
 By default, you can sign in only on the computer that runs PunchPilot, at `http://localhost:8681`. From another device the page may open over plain `http://`, but sign-in is refused on purpose. To use it from your phone or another computer:
 
 1. Put PunchPilot behind an HTTPS reverse proxy.
-2. In `.env`, set `PUNCHPILOT_PUBLIC_ORIGIN` (for example `https://punchpilot.example.com`) and `TRUST_PROXY`.
+2. In `.env`, set `PUNCHPILOT_PUBLIC_ORIGIN` (for example `https://punchpilot.example.com`) and `TRUST_PROXY`. `TRUST_PROXY` is the address your reverse proxy connects to PunchPilot from. Use the proxy's exact IP address or CIDR range where possible; the named ranges `loopback`, `linklocal` and `uniquelocal` are also accepted for container networks (see `.env.example`). It is a list of addresses, not an on/off switch: a value such as `true` is rejected and PunchPilot will not start.
 3. Register the matching callback URL in your freee app.
 
 After that, sign in at the HTTPS address. Sign-in at `localhost` stops working.

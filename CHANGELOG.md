@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2026-10-19
+
+### Upgrade notes
+- Upgrading from a version before 0.5.0? Read the 0.5.0 upgrade notes in CHANGELOG.md first.
+
+### Fixed
+- The browser tab icons and the installed-app icons now have a transparent background. Before, they sat on a white or light checkered square, which stood out in dark mode. The iPhone and iPad home-screen icon now fills its tile without a white border.
+
+### Changed
+- The README in English, Chinese and Japanese now opens with the PunchPilot logo. It also explains how scheduled punches are retried when freee is temporarily unavailable, and what `TRUST_PROXY` accepts.
+- Docker Compose now installs 0.5.4 by default.
+
 ## [0.5.3] - 2026-10-15
 
 ### Upgrade notes
