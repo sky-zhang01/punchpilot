@@ -36,7 +36,8 @@ import {
   sanitizeError,
 } from "./utils.js";
 
-const router = Router();
+// Case-sensitive like the app router (app.js), so path variants cannot reach a handler.
+const router = Router({ caseSensitive: true });
 
 const CLIENT_ERROR_MESSAGES = Object.freeze({
   approval_request_failed: "The leave approval request was rejected.",

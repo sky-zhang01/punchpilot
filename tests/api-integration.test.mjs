@@ -406,6 +406,20 @@ describe('Auth: Login', () => {
     expect(session.id).toMatch(/^sha256:[a-f0-9]{64}$/);
   });
 
+  it('does not accept a stored session hash as a session token', async () => {
+    const stored = getSession(SESSION_TOKEN).id;
+    expect(stored).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(getSession(stored)).toBeUndefined();
+    for (const header of [['X-Session-Token', stored], ['Authorization', `Bearer ${stored}`], ['Cookie', `session_token=${stored}`]]) {
+      const res = await request(app).get('/api/status').set(header[0], header[1]);
+      expect(res.status).toBe(401);
+    }
+    deleteSession(stored);
+    expect(getSession(SESSION_TOKEN)?.id).toBe(stored);
+    const ok = await request(app).get('/api/status').set('X-Session-Token', SESSION_TOKEN);
+    expect(ok.status).toBe(200);
+  });
+
   it('migrates a legacy plaintext session token on first successful lookup', () => {
     const legacyToken = 'synthetic-legacy-token';
     const user = getDb().prepare('SELECT id FROM users WHERE username = ?').get(DEFAULT_USER);
@@ -698,6 +712,25 @@ describe('Rate Limiting', () => {
     expect(independent.status).toBe(200);
   });
 
+  it('throttles and blocks case and trailing-slash variants of the login path', async () => {
+    const ip = '198.51.100.91';
+    for (const path of ['/api/auth/Login', '/API/auth/login', '/api/Auth/login']) {
+      const res = await request(app).post(path).set('X-Forwarded-For', ip)
+        .send({ username: DEFAULT_USER, password: 'wrong-password' });
+      expect([404, 429]).toContain(res.status);
+    }
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const failed = await request(app).post('/api/auth/login/').set('X-Forwarded-For', ip)
+        .send({ username: DEFAULT_USER, password: 'wrong-password' });
+      expect(failed.status).toBe(401);
+    }
+    for (const path of ['/api/auth/login', '/api/auth/login/', '/api/auth/Login']) {
+      const blocked = await request(app).post(path).set('X-Forwarded-For', ip)
+        .send({ username: DEFAULT_USER, password: DEFAULT_PASS });
+      expect(blocked.status).toBe(429);
+    }
+  });
+
   it('does not let one IP reset its budget by rotating usernames', async () => {
     const blockedIp = '198.51.100.90';
     for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -762,5 +795,46 @@ describe('404 for unknown API routes', () => {
       .get('/api/nonexistent')
       .set('x-session-token', SESSION_TOKEN);
     expect(res.status).toBe(404);
+  });
+});
+
+describe('Case-variant paths cannot bypass authentication or the write-origin guard', () => {
+  const blocked = (res) => {
+    expect([401, 403, 404]).toContain(res.status);
+    expect(res.text).not.toContain('freee_configured');
+    expect(res.text).not.toContain('auto_checkin_enabled');
+  };
+
+  it('does not serve API data for upper- or mixed-case API paths without a session', async () => {
+    for (const path of ['/API/config/account', '/Api/logs', '/API/status', '/api/CONFIG/account', '/aPi/attendance/records']) {
+      blocked(await request(app).get(path));
+    }
+  });
+
+  it('does not change settings through case-variant write paths', async () => {
+    const before = await request(app).get('/api/status').set('X-Session-Token', SESSION_TOKEN);
+    expect(before.status).toBe(200);
+    for (const path of ['/API/config/toggle', '/Api/config/toggle', '/api/Config/toggle']) {
+      blocked(await request(app).put(path).set('Content-Type', 'application/json').send({}));
+    }
+    const after = await request(app).get('/api/status').set('X-Session-Token', SESSION_TOKEN);
+    expect(after.body.auto_checkin_enabled).toBe(before.body.auto_checkin_enabled);
+  });
+
+  it('rejects cross-site punch triggers on case-variant paths', async () => {
+    for (const path of ['/API/schedule/trigger/check_in', '/Api/Schedule/trigger/check_in']) {
+      blocked(await request(app)
+        .post(path)
+        .set('Origin', 'https://attacker.example')
+        .set('Sec-Fetch-Site', 'cross-site')
+        .set('Content-Type', 'application/json')
+        .send({}));
+    }
+  });
+
+  it('does not serve screenshots on case-variant paths without a session', async () => {
+    for (const path of ['/Screenshots/checkin-20261020-092000.png', '/SCREENSHOTS/x.png']) {
+      blocked(await request(app).get(path));
+    }
   });
 });

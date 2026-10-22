@@ -32,7 +32,8 @@ import {
 } from "./utils.js";
 import { withAccountOperation } from "../../account-operation.js";
 
-const router = Router();
+// Case-sensitive like the app router (app.js), so path variants cannot reach a handler.
+const router = Router({ caseSensitive: true });
 const MAX_BATCH_REQUESTS = 50;
 const MAX_INCOMING_DETAIL_LOOKUPS = 50;
 const INCOMING_DETAIL_CONCURRENCY = 4;

@@ -28,7 +28,8 @@ import {
 } from "./approval-list-service.js";
 import { withAccountOperation } from "../../account-operation.js";
 
-const router = Router();
+// Case-sensitive like the app router (app.js), so path variants cannot reach a handler.
+const router = Router({ caseSensitive: true });
 
 function stableApprovalText(value, maxLength, fallback = "") {
   if (typeof value !== "string") return fallback;

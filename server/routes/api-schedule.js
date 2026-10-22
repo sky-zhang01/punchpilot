@@ -4,7 +4,8 @@ import { todayStringInTz } from '../timezone.js';
 import { scheduler } from '../scheduler.js';
 import logger, { safeErrorMetadata } from '../logger.js';
 
-const router = Router();
+// Case-sensitive like the app router (app.js), so path variants cannot reach a handler.
+const router = Router({ caseSensitive: true });
 const log = logger.child('Schedule');
 
 

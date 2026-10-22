@@ -46,7 +46,8 @@ import {
 import { resolveOAuthRedirectUri } from '../public-origin.js';
 import { normalizeAutomationErrorCode } from '../automation-diagnostics.js';
 
-const router = Router();
+// Case-sensitive like the app router (app.js), so path variants cannot reach a handler.
+const router = Router({ caseSensitive: true });
 
 const VALID_ACTIONS = ACTION_TYPES;
 const WEB_USERNAME_MAX_BYTES = 320;

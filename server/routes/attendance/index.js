@@ -5,7 +5,8 @@ import approvalRouter from "./approval.js";
 import leaveRouter from "./leave.js";
 import batchOperationsRouter from "./batch-operations.js";
 
-const router = Router();
+// Case-sensitive like the app router (app.js), so path variants cannot reach a handler.
+const router = Router({ caseSensitive: true });
 
 router.use(recordsRouter);
 router.use(batchRouter);

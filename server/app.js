@@ -28,6 +28,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const log = logger.child('Express');
 
 const app = express();
+// Express matches routes case-insensitively by default, while the auth gate and the
+// write-origin guard check lowercase prefixes. Without this, /API/... reached the API
+// routers without a session or an origin check.
+app.set('case sensitive routing', true);
 
 function configuredTrustProxy(value = process.env.TRUST_PROXY) {
   if (!value?.trim()) return false;
@@ -75,7 +79,7 @@ app.use((req, res, next) => {
 
 // Request logging middleware (API requests only, skip static files)
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/')) {
+  if (req.path.toLowerCase().startsWith('/api/')) {
     const start = Date.now();
     res.on('finish', () => {
       const duration = Date.now() - start;
@@ -156,7 +160,7 @@ function loginRateLimiter(req, res, next) {
 
 function sameOriginWriteGuard(req, res, next) {
   if (
-    !req.path.startsWith('/api/') ||
+    !req.path.toLowerCase().startsWith('/api/') ||
     ['GET', 'HEAD', 'OPTIONS'].includes(req.method)
   ) {
     return next();
@@ -231,8 +235,14 @@ app.use('/api/', (req, res, next) => {
   next();
 });
 
-// Apply rate limiter to login endpoint before auth middleware
-app.post('/api/auth/login', loginRateLimiter);
+// Apply the rate limiter to the login endpoint before auth middleware. Match the
+// path case-insensitively and without trailing slashes, the way a non-strict router
+// would, so no variant of /api/auth/login can reach the handler unthrottled.
+app.use((req, res, next) => (
+  req.method === 'POST' && req.path.toLowerCase().replace(/\/+$/, '') === '/api/auth/login'
+    ? loginRateLimiter(req, res, next)
+    : next()
+));
 
 // Auth middleware (protects /api/* except auth endpoints)
 app.use(authMiddleware);
@@ -310,7 +320,8 @@ app.use(express.static(clientDist, {
 
 // SPA fallback — index.html must not be cached (entry point for all client routes)
 app.get('/{*splat}', (req, res) => {
-  if (!req.path.startsWith('/api/') && !req.path.startsWith('/screenshots/')) {
+  const pathname = req.path.toLowerCase();
+  if (!pathname.startsWith('/api/') && !pathname.startsWith('/screenshots/')) {
     res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.sendFile(path.join(clientDist, 'index.html'));
   } else {

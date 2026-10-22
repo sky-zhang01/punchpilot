@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { loginHandler, logoutHandler, statusHandler, changePasswordHandler } from '../auth.js';
 
-const router = Router();
+// Case-sensitive like the app router (app.js), so path variants cannot reach a handler.
+const router = Router({ caseSensitive: true });
 
 router.post('/login', loginHandler);
 router.post('/logout', logoutHandler);

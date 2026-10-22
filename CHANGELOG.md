@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] - 2026-10-23
+
+### Upgrade notes
+- Upgrading from a version before 0.5.0? Read the 0.5.0 upgrade notes in CHANGELOG.md first.
+- Update as soon as you can: this release fixes an authentication bypass that affects all earlier versions.
+
+### Security
+- Fixed an authentication bypass. API requests whose path used upper- or mixed-case letters, such as `/API/...`, skipped the sign-in check and the same-origin check. Anyone who could reach PunchPilot's port could read and change its settings, trigger punches and submit attendance requests, and a web page you visited could do the same through your browser.
+- A copy of PunchPilot's database could be used to take over an active sign-in session: the stored session hash was accepted as a sign-in token. It no longer is.
+- The Docker image now runs on Node.js 24.22.1, which fixes the vulnerabilities in the Node.js security release of 21 October 2026.
+- The Chromium used for freee Web automation moves to version 156 (Playwright 1.64.1), which includes Chrome security fixes.
+- Express 5.3.0 and the web app's i18next 26.4.5 include security fixes.
+
+### Changed
+- Updated other web app and test dependencies.
+- Docker Compose now installs 0.5.6 by default.
+
 ## [0.5.5] - 2026-10-22
 
 ### Upgrade notes

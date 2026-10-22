@@ -10,7 +10,8 @@ import {
 } from '../db.js';
 import { getTodayString } from '../holiday.js';
 
-const router = Router();
+// Case-sensitive like the app router (app.js), so path variants cannot reach a handler.
+const router = Router({ caseSensitive: true });
 const LOG_STATUSES = new Set(['success', 'failure', 'skipped']);
 
 function positiveInteger(value, fallback = null) {

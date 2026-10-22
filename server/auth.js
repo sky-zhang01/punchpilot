@@ -47,19 +47,23 @@ function extractToken(req) {
  * Attaches req.userId and req.user for downstream handlers.
  */
 export function authMiddleware(req, res, next) {
+  // Compare lowercase paths so a case variant such as /API/... cannot skip this
+  // gate even if routing ever matches it (app.js also makes routing case-sensitive).
+  const pathname = req.path.toLowerCase();
+
   // Allow auth endpoints without token
   if (
-    req.path === '/api/auth/login' ||
-    req.path === '/api/auth/status' ||
-    req.path === '/api/config/oauth-callback'
+    pathname === '/api/auth/login' ||
+    pathname === '/api/auth/status' ||
+    pathname === '/api/config/oauth-callback'
   ) {
     return next();
   }
 
   // Allow non-API routes except persisted browser artifacts.
   const protectedArtifact =
-    req.path === '/screenshots' || req.path.startsWith('/screenshots/');
-  if (!req.path.startsWith('/api/') && !protectedArtifact) {
+    pathname === '/screenshots' || pathname.startsWith('/screenshots/');
+  if (!pathname.startsWith('/api/') && !protectedArtifact) {
     return next();
   }
 

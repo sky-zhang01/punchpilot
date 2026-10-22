@@ -14,7 +14,8 @@ import {
   isEditableWorkRecord,
 } from "../../work-record-status.js";
 
-const router = Router();
+// Case-sensitive like the app router (app.js), so path variants cannot reach a handler.
+const router = Router({ caseSensitive: true });
 
 function parseYearMonth(rawYear, rawMonth) {
   if (

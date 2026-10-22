@@ -10,7 +10,8 @@ import { withAccountOperation } from '../account-operation.js';
 
 const log = logger.child('Holidays');
 
-const router = Router();
+// Case-sensitive like the app router (app.js), so path variants cannot reach a handler.
+const router = Router({ caseSensitive: true });
 
 const SUPPORTED_COUNTRIES = ['jp', 'cn'];
 

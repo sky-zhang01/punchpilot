@@ -37,7 +37,8 @@ import {
   releaseAccountOperation,
 } from "../../account-operation.js";
 
-const router = Router();
+// Case-sensitive like the app router (app.js), so path variants cannot reach a handler.
+const router = Router({ caseSensitive: true });
 
 const DIRECT_WEB_FALLBACK_ERROR_CODES = new Set([
   FREEE_API_ERROR_CODES.DIRECT_EDIT_DISABLED,

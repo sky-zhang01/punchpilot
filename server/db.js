@@ -859,6 +859,13 @@ function hashedSessionId(token) {
   return `sha256:${crypto.createHash('sha256').update(String(token)).digest('hex')}`;
 }
 
+// A stored session id ("sha256:<hex>") is never a token the app hands out. The
+// legacy plaintext lookups below must not accept one, or a copy of the database
+// would be enough to replay any active session.
+function isLegacyTokenCandidate(token) {
+  return typeof token === 'string' && token.length > 0 && !token.startsWith('sha256:');
+}
+
 export function createSession(token, userId, expiresAt) {
   return getDb().prepare(
     'INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)'
@@ -870,6 +877,7 @@ export function getSession(token) {
   const hashedId = hashedSessionId(token);
   const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(hashedId);
   if (session) return session;
+  if (!isLegacyTokenCandidate(token)) return undefined;
 
   const legacySession = db.prepare('SELECT * FROM sessions WHERE id = ?').get(token);
   if (!legacySession) return undefined;
@@ -879,7 +887,11 @@ export function getSession(token) {
 }
 
 export function deleteSession(token) {
-  return getDb()
+  const db = getDb();
+  if (!isLegacyTokenCandidate(token)) {
+    return db.prepare('DELETE FROM sessions WHERE id = ?').run(hashedSessionId(token));
+  }
+  return db
     .prepare('DELETE FROM sessions WHERE id IN (?, ?)')
     .run(hashedSessionId(token), token);
 }
