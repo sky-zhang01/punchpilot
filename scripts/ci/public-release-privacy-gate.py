@@ -105,6 +105,17 @@ ALLOWED_BINARY_ARTIFACTS = {
     "client/public/favicon-32x32.png": "89ba840ab3f53ff1a4ec8eadedd9503db04e16b46e175097ada25d79cb7df5b1",
     "client/public/favicon.ico": "35a28ba4c29c178268f162a6cba443f5d681795174c9b39a9fe4ecaf3ddcae38",
     "client/public/logo-256.png": "885e639e7c83c55d88c097360b191790716e85ba216e186563e7225aba5fbbd3",
+    "docs/images/dashboard-done-en.png": "8303407734168eb36eaa48d2a4ff41ae7176bea5da128d41d0010d7012079c63",
+    "docs/images/dashboard-done-ja.png": "d6c49d45bf74a2ad456b27841cf932b2808b424fa9c3dd3c9ee376a66ef0c916",
+    "docs/images/dashboard-done-zh.png": "39913425e1adccdf9154e2abdebd1af99d22a2082b3f980f78df7d4cb66d4551",
+    "docs/images/dashboard-plan-en.png": "c6a378e5052dfb9f973dbd654e514f20e19bd411b50a0782c77eb7c147771db6",
+    "docs/images/dashboard-plan-ja.png": "49ab9cc41942d9ceb057e53a5a5360440180117edc5b2fe8754b58c118d32011",
+    "docs/images/dashboard-plan-zh.png": "4056a83a293089b308b26221e9d68d6f8b239f78bb2bb2d445b57f90ee8a9676",
+    "docs/images/holidays-en.png": "fe6f0d59c698abf49fe94fdfd046bacf7b27ddb04b4414fdd0124099009bc3be",
+    "docs/images/login-en.png": "8952755d464780dbcacf7a82bd2ebf894e2301b8063988cd8690418b8af5a08b",
+    "docs/images/settings-schedule-en.png": "d15b91bc327e289bcd15da98ae52ad79065ad3ac458395092e12bfcd26270ac7",
+    "docs/images/settings-schedule-ja.png": "6b2430237b77a297ec71f484a2972c6917c011bbc339fbb3a596339ccbe869b0",
+    "docs/images/settings-schedule-zh.png": "8883f3b274322c9db1ea9c158ec8f252f23f7f1b948c62d81414b44d67141a7a",
 }
 
 # Exact bytes that earlier public releases published at these paths before a

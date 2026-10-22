@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - 2026-10-22
+
+### Upgrade notes
+- Upgrading from a version before 0.5.0? Read the 0.5.0 upgrade notes in CHANGELOG.md first.
+
+### Changed
+- The README in English, Chinese and Japanese has been rewritten for first-time users. It shows what PunchPilot does with screenshots, then walks through installation in six steps, each saying what you should see.
+- Detailed rules, everyday tasks, freee app setup, remote access and configuration now have their own pages under `docs/`.
+- Updated the Vite development dependency to clear a security advisory. The Docker image is not affected.
+- Docker Compose now installs 0.5.5 by default.
+
 ## [0.5.4] - 2026-10-19
 
 ### Upgrade notes

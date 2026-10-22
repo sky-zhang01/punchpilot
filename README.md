@@ -1,65 +1,94 @@
 <p align="center">
-  <img src="client/public/logo-256.png" alt="PunchPilot logo" width="128" height="128">
+  <img src="client/public/logo-256.png" alt="PunchPilot logo" width="96" height="96">
 </p>
 
 <h1 align="center">PunchPilot</h1>
 
-<h3 align="center">Automatic clock-in and clock-out for <a href="https://www.freee.co.jp/hr/">freee HR</a> (freee人事労務), running on your own computer or server.</h3>
+<p align="center"><b>Never forget to clock in or out again. PunchPilot punches in <a href="https://www.freee.co.jp/hr/">freee HR</a> (freee人事労務) for you, on your own computer or server.</b></p>
 
-<p align="center"><a href="README.zh-CN.md"><b>中文</b></a> | <a href="README.ja.md"><b>日本語</b></a></p>
+<p align="center"><a href="README.zh-CN.md">简体中文</a> | <a href="README.ja.md">日本語</a></p>
 
-<p align="center"><b>Jump to:</b> <a href="#quick-start">Quick start</a> · <a href="#what-punchpilot-will-not-do">What PunchPilot will not do</a> · <a href="#faq">FAQ</a></p>
+<p align="center"><a href="#a-day-with-punchpilot">A day with PunchPilot</a> · <a href="#is-it-safe">Is it safe?</a> · <a href="#install">Install</a> · <a href="#faq">FAQ</a></p>
 
-If your company records attendance in freee HR, you have to clock in, start and end a break, and clock out every working day. Miss one and you have to file a correction later. PunchPilot makes those punches for you on a schedule you choose and skips the days you are not working. Its web dashboard also lets you fix missed days, request leave, close the month and, if you are an approver in freee, approve your team's requests.
+<p align="center">
+  <img src="docs/images/dashboard-done-en.png" alt="PunchPilot dashboard after a check-in: the check-in step is ticked and the next planned punch is shown" width="720">
+  <br>
+  <sub>Demo run in Mock Mode with sample data. Nothing was sent to freee.</sub>
+</p>
 
-PunchPilot is a single-user tool: each person runs their own copy for their own freee account. It is an independent open-source project and is not affiliated with freee K.K.
+> [!WARNING]
+> PunchPilot writes to your attendance record. Whether automatic punching is allowed is your company's rule, so check it before use.
+> Unofficial tool, not affiliated with freee K.K.; use at your own risk.
 
-## A normal day
+*Single user · self-hosted · MIT · needs someone comfortable with Docker to install it once.*
 
-1. Shortly after midnight, PunchPilot plans the day: check-in, break start, break end and check-out. Each one can be a fixed time or a random minute inside a window. The defaults are check-in 09:50–10:00, break start 12:00–12:30, break end 13:00–13:30 and check-out 19:00–20:00.
-2. It skips the whole day on weekends, Japanese public holidays, custom holidays you add, and days that freee shows as full-day leave, absence or a company holiday. If you also select China under **Holiday Skip for Auto-Punch**, Chinese public holidays are skipped too, and China's weekend make-up workdays (调休) are punched as normal workdays. Half-day or hourly leave that does not cover the whole workday does not skip the day.
-3. Just before each punch it checks freee again. If you already punched by hand, it does nothing. If it cannot confirm your status, it pauses instead of guessing: the dashboard shows the pause and the Logs page records the reason.
-4. A 60–90 minute break is added only when the workday is longer than six hours, following Japan's Labor Standards Act (Article 34).
-5. If PunchPilot was not running at check-in time, it does not record a late arrival. It checks in only if it is up to five minutes late. Otherwise it skips that day's automatic punches, and you punch in freee yourself. The five-minute limit is for when PunchPilot was not running at the planned time. If PunchPilot is running but freee is temporarily unavailable or rate-limited, it retries the punch for about an hour and checks freee's punch history before each retry, so nothing is punched twice. It stops early if the next retry would land at or after the day's next planned action. The dashboard can show the step as failed while retries are still running; if the punch still fails in the end, the Logs page records the reason, and you punch in freee yourself.
+## A day with PunchPilot
 
-## Common situations
+If your company records attendance in freee HR, you must clock in, start and end a break, and clock out every working day. Miss one and you have to file a correction later. PunchPilot does the punching for you.
 
-Corrections, requests, approvals and custom holidays are on the **Calendar & Holidays** page. **Auto Scheduling** is in **Settings → Schedule Configuration**, and **Manual Trigger** is on the Dashboard. Corrections and requests need the freee API connection. Request lists and approvals appear when your company uses freee approval routes.
+### It plans your day
 
-| You want to… | Do this |
-|---|---|
-| Fix days you forgot to punch | **Punch Correction → Select All Missing**, then submit. Days that already have punches or are days off are skipped. |
-| Take a planned day off | **Leave Request**: paid leave (full day, half day or hourly), special leave or absence. Once freee shows the full-day leave, that day is skipped automatically. |
-| Call in sick, or take leave that is not approved yet | Turn off **Auto Scheduling** before check-in, and turn it back on before your next working day. PunchPilot only skips leave that freee already shows. |
-| Go on vacation or a business trip | Turn off **Auto Scheduling**, and turn it back on when you return. |
-| Work late | Turn off **Auto Scheduling** before the check-out window. When you leave, press **Check-out** in **Manual Trigger**, then turn **Auto Scheduling** back on. |
-| Leave early | Clock out yourself. PunchPilot sees the punch and skips the automatic check-out. |
-| Record overtime or work on a holiday | **Leave Request → Overtime Request**, or **Work Request → Holiday Work**. Holiday work requests always use your freee Web login. |
-| Take back a request | **View Requests**, then withdraw it while it is still pending. |
-| Approve your team's requests | **View Requests → Incoming Requests**: approve or reject one at a time or in bulk. |
-| Close the month | **Monthly Closing**. It appears when your company uses approval routes or a freee Web login is saved. |
-| Punch right now | **Dashboard → Manual Trigger**. |
-| Take a company holiday off | **Holiday Management → Custom Holidays**. |
-| Find out why nothing happened today | Check the status on the dashboard. For holidays, leave and pauses, the "Daily Schedule Check" entry in **Logs** gives the reason. |
+<p align="center">
+  <img src="docs/images/dashboard-plan-en.png" alt="Dashboard showing four planned punches: check-in, break start, break end and check-out" width="720">
+  <br>
+  <sub><b>Four punches at the times you set.</b> Each is a fixed time or a random minute inside a window. Demo data.</sub>
+</p>
 
-When freee asks you to sign in again, the dashboard shows a **Re-authorize** banner. Automatic punching stays paused until you do.
+Shortly after midnight it plans check-in, break start, break end and check-out. The defaults are check-in 09:50–10:00, break start 12:00–12:30, break end 13:00–13:30 and check-out 19:00–20:00.
 
-## What PunchPilot will not do
+### It punches, and you stay in control
 
-- The PunchPilot server connects only to freee and to public holiday calendars. There is no telemetry.
-- It does not punch when it cannot confirm your attendance status, your leave, or which freee account it is acting for. It pauses and tells you.
-- It never overwrites punches that are already in freee.
-- It does not send email or chat notifications. Check the dashboard and logs.
-- It does not decide whether automatic punching is allowed where you work. Follow your company's attendance rules.
+As in the screenshot at the top: **before each punch it re-checks freee.** Already punched by hand? It does nothing. Cannot confirm your status? It pauses and says so on the dashboard.
 
-## Before you start
+It never overwrites punches that are already in freee.
 
-- **A freee HR employee account.**
-- **A freee developer app** (Client ID and Client Secret). Automatic punching and requests go through the freee API, so this is required. Register this callback URL in the app: `http://localhost:8681/api/config/oauth-callback`. If you change `PORT`, use that port instead. If you use your own HTTPS address, register `https://<your address>/api/config/oauth-callback`.
-- **Optional: your freee Web login** (email, password and the exact company name). Holiday work requests always use it. PunchPilot also uses it when your company's approval routes cannot be handled through the API.
-- **A computer that stays on and awake during working hours**, with Docker and Docker Compose. A laptop that goes to sleep misses punches. Supported platforms are `linux/amd64` and 64-bit `linux/arm64`. Docker Desktop on Windows and macOS runs the same image, but the project does not test it.
+### It skips days off
 
-## Quick start
+<p align="center">
+  <img src="docs/images/holidays-en.png" alt="Calendar for October with holiday skip set to Japan; Japanese and Chinese public holidays are marked" width="720">
+  <br>
+  <sub><b>Weekends, Japanese public holidays and your own custom holidays are skipped automatically.</b></sub>
+</p>
+
+Days that freee shows as full-day leave are skipped too. China public holidays are optional.
+
+If PunchPilot was off at check-in time, it still checks in when it is up to five minutes late; otherwise punch in freee yourself. Retry and edge-case rules are in [docs/how-it-works.md](docs/how-it-works.md).
+
+With a connected freee account, the same web page can also fix missed days, file leave and work requests, close the month and approve requests. These are described in [docs/daily-use.md](docs/daily-use.md) and are not shown here because they need a real freee account.
+
+## What else it can do
+
+- **Fix missed days.** Punch Correction, then Select All Missing.
+- **Request leave, overtime or holiday work.**
+- **Withdraw a pending request.**
+- **Approve your team's requests**, if you are an approver in freee.
+- **Close the month.**
+- **Punch now.** Manual Trigger on the Dashboard.
+
+In Mock Mode, Punch now works without freee. Real punches and everything else here need a freee connection from Install step 5: the API connection, or for some items the freee Web login. The full "You want to... do this" guide in [docs/daily-use.md](docs/daily-use.md) says which item uses which.
+
+## Is it safe?
+
+- **It runs on your own machine.** The server talks only to freee and to public holiday calendars. There is no telemetry.
+- **Credentials are stored encrypted** on your own server.
+- **What you hand over:** a freee developer app (Client ID and Secret) through OAuth, and optionally your freee Web login (email, password and the exact company name) for features that need it.
+- **It pauses and logs instead of guessing**, for example when it cannot confirm your attendance status, your leave or which freee account it acts for.
+- **It sends no email or chat notifications.** Check the dashboard and Logs.
+
+**Safe to try first:** a fresh install starts in Mock Mode, which only simulates punches. No punch reaches freee until you turn it off. Once freee is connected, corrections and requests you file are sent to freee for real, even in Mock Mode.
+
+Details: [SECURITY.md](SECURITY.md) and [docs/security-threat-model.md](docs/security-threat-model.md).
+
+## Install
+
+**You need:**
+
+- A computer, NAS or server that stays on and awake during working hours and runs Docker with Compose (`linux/amd64` or 64-bit `linux/arm64`). A laptop that sleeps misses punches.
+- A freee HR employee account.
+- A freee developer app (Client ID and Client Secret). Setup guide: [docs/freee-app-setup.md](docs/freee-app-setup.md).
+- If Docker is new to you, ask a colleague to do steps 1 and 2.
+
+### 1. Get it and start it
 
 ```bash
 git clone https://github.com/sky-zhang01/punchpilot.git
@@ -68,52 +97,113 @@ cp .env.example .env
 docker compose up -d
 ```
 
-1. On the same computer, open <http://localhost:8681>.
-2. Read the one-time password, then sign in as `admin` and choose your own username and password:
+The defaults suit a PC. A NAS may need other `PUID`/`PGID` values, see [docs/configuration.md](docs/configuration.md).
 
-   ```bash
-   docker compose exec punchpilot cat /app/keystore/initial-admin-password
-   ```
+You should see the `punchpilot` container running.
 
-3. In **Settings → API Configuration (OAuth2)**, enter your Client ID and Client Secret and click **Save App Credentials**. Then click **Authorize with freee**, and choose your company if you have more than one.
-4. Optional: in **Settings → freee Web Login**, enter your freee email, password and exact company name. PunchPilot checks them when you save.
-5. In **Settings → Schedule Configuration**, set your times and holiday options.
-6. **Turn off Mock Mode** in Settings. New installations start in Mock Mode, which only simulates the clock-in, break and clock-out punches.
+### 2. Read the one-time admin password
 
-When the **Mock Mode** tag disappears from the sidebar, PunchPilot punches for real. The dashboard shows the next planned punch. After your first check-in time, confirm in freee that the punch arrived.
+```bash
+docker compose exec punchpilot cat /app/keystore/initial-admin-password
+```
 
-## Opening PunchPilot from another device
+You should see a password printed in the terminal.
 
-By default, you can sign in only on the computer that runs PunchPilot, at `http://localhost:8681`. From another device the page may open over plain `http://`, but sign-in is refused on purpose. To use it from your phone or another computer:
+### 3. Open PunchPilot and sign in
 
-1. Put PunchPilot behind an HTTPS reverse proxy.
-2. In `.env`, set `PUNCHPILOT_PUBLIC_ORIGIN` (for example `https://punchpilot.example.com`) and `TRUST_PROXY`. `TRUST_PROXY` is the address your reverse proxy connects to PunchPilot from. Use the proxy's exact IP address or CIDR range where possible; the named ranges `loopback`, `linklocal` and `uniquelocal` are also accepted for container networks (see `.env.example`). It is a list of addresses, not an on/off switch: a value such as `true` is rejected and PunchPilot will not start.
-3. Register the matching callback URL in your freee app.
+Open <http://localhost:8681> on that machine and sign in as `admin` with that password. Then choose your own username and password.
 
-After that, sign in at the HTTPS address. Sign-in at `localhost` stops working.
+<p align="center">
+  <img src="docs/images/login-en.png" alt="PunchPilot sign-in card with username and password fields" width="420">
+  <br>
+  <sub>The language menu at the top right of the sign-in page switches to 日本語 or 中文.</sub>
+</p>
 
-## Updating, backup and settings
+> [!NOTE]
+> A NAS or server has no local browser. Set up HTTPS first, see [Remote access](#remote-access-nas-or-server).
 
-- **Update:** in the `punchpilot` folder, run `git pull` and then `docker compose up -d`. Compose downloads the new image. If you set `PUNCHPILOT_IMAGE` in `.env`, change its version too. Read the upgrade notes in the [CHANGELOG](CHANGELOG.md) first. A punch or batch job that is running finishes first, which can take a few minutes.
-- **Back up** the `./data` folder, the keystore Docker volume (normally named `punchpilot_keystore`) and your `.env` together. Without the matching keystore, the saved freee credentials cannot be decrypted. The rest of `./data` (logs, schedule, company name) is not encrypted, so keep backups private.
-- **Settings:** the options most people use are `TZ` (the time zone your schedule follows), `PORT`, `PUID`/`PGID` (the user and group that own the data files; some NAS systems need different values), `PUNCHPILOT_PUBLIC_ORIGIN` and `TRUST_PROXY`. Other settings are explained in [`.env.example`](.env.example).
+You should see the Dashboard.
+
+### 4. Try it in Mock Mode
+
+On the Dashboard, use **Manual Trigger** to punch and watch the steps tick. You should see the **Mock Mode** tag in the sidebar.
+
+### 5. Connect freee
+
+First make sure this callback URL is registered in your freee app: `http://localhost:8681/api/config/oauth-callback`. If you change `PORT`, use that port; for your own HTTPS address use `https://<your address>/api/config/oauth-callback`.
+
+Then, in **Settings → API Configuration (OAuth2)**, paste your Client ID and Client Secret and click **Save App Credentials**. Click **Authorize with freee**, and choose your company if you have more than one.
+
+Next, in **Settings → Schedule Configuration**, set your times and holiday options.
+
+<p align="center">
+  <img src="docs/images/settings-schedule-en.png" alt="Schedule Configuration card with punch times and holiday options" width="520">
+  <br>
+  <sub>Set your times once. Mock Mode is on until you turn it off.</sub>
+</p>
+
+Optional: in **Settings → freee Web Login**, enter your freee email, password and the exact company name. PunchPilot checks them when you save.
+
+You should see your company connected in Settings.
+
+### 6. Go live
+
+Turn **Mock Mode** off in Settings. After your first real check-in time, confirm in freee that the punch arrived.
+
+You should see the **Mock Mode** tag gone from the sidebar and the next planned punch on the Dashboard.
+
+## Remote access (NAS or server)
+
+By default, sign-in works only from `localhost` pages. To use PunchPilot from another computer, serve it over HTTPS and set `PUNCHPILOT_PUBLIC_ORIGIN`. Set `TRUST_PROXY` only to your reverse proxy's address. Never expose it to the public internet. Full explanation: [docs/remote-access.md](docs/remote-access.md).
+
+## Keep it running
+
+- **Update:** in the `punchpilot` folder run `git pull`, then `docker compose up -d`. Read the [CHANGELOG](CHANGELOG.md) first.
+- **Back up** `./data`, the `punchpilot_keystore` volume and `.env` together. Without the matching keystore, saved freee credentials cannot be decrypted.
+- **Settings** (`TZ`, `PORT`, `PUID`/`PGID`, `PUNCHPILOT_IMAGE`): [docs/configuration.md](docs/configuration.md).
 
 ## FAQ
 
-**I forgot my PunchPilot password.** There is no password recovery. After three failed sign-ins, the sign-in page shows a factory-reset command. It erases all PunchPilot data and settings; your freee records are not affected. After running it, restart with `docker compose restart punchpilot` and repeat the quick start from step 2.
+<details>
+<summary><b>Can I try it without connecting to freee?</b></summary>
 
-**Is my freee password safe?** Saved credentials are encrypted on your own server. In the standard Docker Compose setup, the automated browser runs in Chromium's sandbox. See [SECURITY.md](SECURITY.md) for details and for how to report a vulnerability.
+Yes. Keep Mock Mode on; punches are only simulated. See Install, "Try it in Mock Mode".
+</details>
 
-**Can I try it without connecting to freee?** Yes. Keep Mock Mode on and leave steps 3 and 4 of the quick start empty; punches are only simulated. Mock Mode covers punches only: once freee is connected, corrections, leave requests, approvals and monthly closing are sent to freee for real.
+<details>
+<summary><b>I forgot my PunchPilot password.</b></summary>
 
-## Contributing
+There is no password recovery. After three failed sign-ins, the sign-in page shows a factory-reset command. It erases all PunchPilot data and settings; your freee records are not affected. After running it, restart with `docker compose restart punchpilot` (if your initial password comes from `.env`, use `docker compose up -d --force-recreate punchpilot` instead) and set up again from Install step 2.
+</details>
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for local development and tests.
+<details>
+<summary><b>Will it punch if my laptop sleeps?</b></summary>
 
-## Acknowledgments
+No. It needs a machine that stays on and awake during working hours.
+</details>
 
-PunchPilot started from [freee-checkin](https://github.com/newbdez33/freee-checkin) by [@newbdez33](https://github.com/newbdez33), which provided the original browser-based freee attendance automation.
+<details>
+<summary><b>Why did nothing happen today?</b></summary>
 
-## License
+Check the dashboard banner and the Logs page. Weekends, holidays and leave are skipped on purpose.
+</details>
 
-[MIT](LICENSE)
+<details>
+<summary><b>Which language is the app in?</b></summary>
+
+English, Japanese and Chinese. Switch on the sign-in page.
+</details>
+
+<details>
+<summary><b>Where do I report a problem?</b></summary>
+
+Open an [issue](https://github.com/sky-zhang01/punchpilot/issues). Include your version, what you expected, and the log line, without any credentials.
+</details>
+
+## Docs, contributing, acknowledgments, license
+
+- [Docs](docs/) · [SECURITY.md](SECURITY.md) · [CHANGELOG.md](CHANGELOG.md) · [CONTRIBUTING.md](CONTRIBUTING.md)
+- PunchPilot started from [freee-checkin](https://github.com/newbdez33/freee-checkin) by [@newbdez33](https://github.com/newbdez33).
+- [MIT](LICENSE).
+
+Unofficial; not affiliated with freee K.K.; freee is a trademark of its owner.
