@@ -53,7 +53,7 @@
     "fsevents": false
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^5.0.4",
+    "@vitest/coverage-v8": "^5.0.5",
     "eslint": "^10.12.0",
     "eslint-plugin-security": "^4.2.0",
     "supertest": "^7.3.1",
