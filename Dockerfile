@@ -1,7 +1,7 @@
 # =============================================================================
 # Stage 1: Shared npm CLI base
 # =============================================================================
-FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS npm-base
+FROM node:24.22.1-trixie-slim@sha256:89c5244bc22a9bc3287d89ebc7e49b9cb5bb84cd40e6175ac3421d5a9f68b95a AS npm-base
 
 WORKDIR /tmp
 ADD --checksum=sha256:6666b48816b39b86c3febac7b51a4ee4de6c5ca589c382ad8004b6b113f86677 \
@@ -50,7 +50,7 @@ RUN npm run build
 # =============================================================================
 # Stage 4: Runtime - slim image with only Chromium (no Firefox/WebKit)
 # =============================================================================
-FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS runtime
+FROM node:24.22.1-trixie-slim@sha256:89c5244bc22a9bc3287d89ebc7e49b9cb5bb84cd40e6175ac3421d5a9f68b95a AS runtime
 
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.title="PunchPilot" \
