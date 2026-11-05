@@ -1,6 +1,7 @@
 import { chromium } from "playwright";
 import { parseMilliseconds } from "../runtime-config.js";
 import { installFreeeWebNavigationGuard } from "./web-login.js";
+import { addPhase, setTimingTag, timingNow } from "../timing.js";
 
 export function parseChromiumSandbox(value) {
   if (value == null || String(value).trim() === "") return false;
@@ -122,8 +123,10 @@ export class AutomationRuntime {
   async getBrowser() {
     if (this.unrecoverable) throw this.unrecoverable;
     this.cancelIdleClose();
+    setTimingTag("browser_reused", this.browserPromise !== null);
     if (!this.browserPromise) {
       let browserPromise;
+      const launchStartedAt = timingNow();
       browserPromise = Promise.resolve()
         .then(() => this.launch({
           headless: true,
@@ -133,6 +136,7 @@ export class AutomationRuntime {
           env: chromiumProcessEnv(),
         }))
         .then((browser) => {
+          addPhase("browser_launch", timingNow() - launchStartedAt);
           browser.on?.("disconnected", () => {
             if (this.browserPromise === browserPromise) {
               this.browserPromise = null;
@@ -144,6 +148,7 @@ export class AutomationRuntime {
           if (this.browserPromise === browserPromise) {
             this.browserPromise = null;
           }
+          addPhase("browser_launch", timingNow() - launchStartedAt);
           throw error;
         });
       this.browserPromise = browserPromise;
@@ -172,13 +177,17 @@ export class AutomationRuntime {
     const storageState = useStoredSession ? this.validSessionState() : null;
     if (storageState) options.storageState = storageState;
     const contextSessionEpoch = this.sessionEpoch;
+    if (useStoredSession) setTimingTag("stored_session", storageState !== null);
 
     let context;
+    const contextStartedAt = timingNow();
     try {
       context = await browser.newContext(options);
     } catch (error) {
       this.scheduleIdleClose();
       throw error;
+    } finally {
+      addPhase("context_create", timingNow() - contextStartedAt);
     }
     try {
       signal?.throwIfAborted();

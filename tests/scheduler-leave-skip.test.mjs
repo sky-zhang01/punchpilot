@@ -139,6 +139,8 @@ beforeEach(() => {
   db.prepare('DELETE FROM execution_log').run();
   resetScheduleConfig();
   setSetting('auto_checkin_enabled', '1');
+  // The fixed 12:05-13:35 break below is a legacy 90 minute break.
+  setSetting('max_break_minutes', '90');
   setSetting('debug_mode', '0');
   setSetting('oauth_configured', '1');
   setSetting('connection_mode', 'api');

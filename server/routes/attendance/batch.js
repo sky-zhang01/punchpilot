@@ -36,6 +36,7 @@ import {
   acquireAccountOperation,
   releaseAccountOperation,
 } from "../../account-operation.js";
+import { runTimed, setTimingTag, startPhase, timePhase } from "../../timing.js";
 
 // Case-sensitive like the app router (app.js), so path variants cannot reach a handler.
 const router = Router({ caseSensitive: true });
@@ -310,7 +311,8 @@ router.post("/batch", async (req, res) => {
   const taskId = task.id;
 
   // Background processing (runs after response is sent)
-  const taskPromise = (async () => {
+  const taskPromise = runTimed("batch_punch", async () => {
+    setTimingTag("entries", entries.length);
     function checkpointResult(result) {
       checkpointTaskResult(task, result, {
         action_type: "batch_correction",
@@ -334,7 +336,9 @@ router.post("/batch", async (req, res) => {
         primaryRouteUserId,
         primaryRouteNeedsApprover,
         lookupVerified: approvalRouteLookupVerified,
-      } = await findAttendanceRouteIds(client, companyId);
+      } = await timePhase("route_probe", () =>
+        findAttendanceRouteIds(client, companyId),
+      );
       const primaryId = positiveInteger(primaryRouteId);
       const fallbackId = positiveInteger(fallbackRouteId);
       const routeId = primaryId || fallbackId;
@@ -519,9 +523,9 @@ router.post("/batch", async (req, res) => {
           }
         }
 
-        await acquireAccountOperation();
+        await timePhase("account_op_wait", () => acquireAccountOperation());
         try {
-        const precheck = await precheckEntry(entry);
+        const precheck = await timePhase("precheck", () => precheckEntry(entry));
         if (!precheck.confirmed) {
           checkpointResult({
             date: entry.date,
@@ -544,7 +548,9 @@ router.post("/batch", async (req, res) => {
 
         let pendingDatesForEntry;
         try {
-          pendingDatesForEntry = await pendingWorkTimeDates(entry.date);
+          pendingDatesForEntry = await timePhase("pending_check", () =>
+            pendingWorkTimeDates(entry.date),
+          );
         } catch (error) {
           checkpointResult({
             date: entry.date,
@@ -577,6 +583,7 @@ router.post("/batch", async (req, res) => {
           !directDisabled &&
           precheck.editable
         ) {
+          const endDirect = startPhase("strategy_direct");
           try {
             const body = {
               company_id: parseInt(companyId, 10),
@@ -649,6 +656,8 @@ router.post("/batch", async (req, res) => {
                 error: safeErrorMetadata(err),
               });
             }
+          } finally {
+            endDirect();
           }
         }
 
@@ -662,6 +671,7 @@ router.post("/batch", async (req, res) => {
           approvalRouteLookupVerified &&
           !approvalRouteBlocked
         ) {
+          const endApproval = startPhase("strategy_approval");
           try {
             beginTaskItem(task, { date: entry.date });
             const result = await submitApproval(entry);
@@ -721,6 +731,8 @@ router.post("/batch", async (req, res) => {
                 error: safeErrorMetadata(err),
               });
             }
+          } finally {
+            endApproval();
           }
         }
 
@@ -759,9 +771,9 @@ router.post("/batch", async (req, res) => {
       // === Strategy 4: Playwright Web fallback ===
       let webFallbackAttempted = false;
       for (const entry of webFallbackEntries) {
-        await acquireAccountOperation();
+        await timePhase("account_op_wait", () => acquireAccountOperation());
         try {
-          const precheck = await precheckEntry(entry);
+          const precheck = await timePhase("precheck", () => precheckEntry(entry));
           if (!precheck.confirmed) {
             checkpointResult({
               date: entry.date,
@@ -791,7 +803,9 @@ router.post("/batch", async (req, res) => {
           }
 
           try {
-            const pendingDates = await pendingWorkTimeDates(entry.date);
+            const pendingDates = await timePhase("pending_check", () =>
+              pendingWorkTimeDates(entry.date),
+            );
             if (pendingDates.has(entry.date)) {
               checkpointResult({
                 date: entry.date,
@@ -829,10 +843,12 @@ router.post("/batch", async (req, res) => {
           log.info(`[${entry.date}] Attempting correction via freee Web`);
           try {
             beginTaskItem(task, { date: entry.date });
-            const webResults = await submitWebCorrections(
-              [entry],
-              reason || "打刻漏れのため修正",
-              oauth,
+            const webResults = await timePhase("strategy_web", () =>
+              submitWebCorrections(
+                [entry],
+                reason || "打刻漏れのため修正",
+                oauth,
+              ),
             );
             const rows = Array.isArray(webResults) ? webResults : [];
             const confirmed = rows.length === 1 && rows[0]?.date === entry.date
@@ -900,6 +916,8 @@ router.post("/batch", async (req, res) => {
       }
 
       const { results, succeeded: succeededCount } = getTask(taskId, operationIdentity.identityKey);
+      setTimingTag("results", results.length);
+      setTimingTag("succeeded", succeededCount);
       const methods = {};
       for (const r of results) {
         methods[r.method] = (methods[r.method] || 0) + 1;
@@ -936,7 +954,7 @@ router.post("/batch", async (req, res) => {
         ),
       });
     }
-  })();
+  });
   void trackTaskPromise(task, taskPromise);
 });
 

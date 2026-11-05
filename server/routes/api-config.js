@@ -1,6 +1,17 @@
 import { Router } from 'express';
 import { isTimeString, timeToMinutes } from '../../shared/date-time.js';
-import { ACTION_TYPES, resolveBreakTimes } from '../../shared/schedule-policy.js';
+import {
+  ACTION_TYPES,
+  MAX_BREAK_MINUTES_LIMIT,
+  MAX_NET_WORK_MINUTES_LIMIT,
+  MIN_BREAK_MINUTES,
+  MIN_NET_WORK_MINUTES_LIMIT,
+  breakWindowsCompatible,
+  isValidMaxBreakMinutes,
+  isValidMinNetWorkMinutes,
+  normalizeWorkRules,
+  workRulesFeasible,
+} from '../../shared/schedule-policy.js';
 import { parseExternalId } from '../freee-values.js';
 import crypto from 'crypto';
 import {
@@ -337,6 +348,21 @@ async function runWebVerify() {
   });
 }
 
+function currentWorkRules() {
+  return normalizeWorkRules(getSetting('min_net_work_minutes'), getSetting('max_break_minutes'));
+}
+
+/** Why these rules cannot work with these schedules, or null when they can. */
+function workRulesError(configs, rules) {
+  if (!breakWindowsCompatible(configs, rules.maxBreakMinutes)) {
+    return `Break windows must allow at least ${MIN_BREAK_MINUTES} minutes and at most ${rules.maxBreakMinutes} minutes`;
+  }
+  if (!workRulesFeasible(configs, rules)) {
+    return `The schedule windows cannot guarantee ${rules.minNetWorkMinutes} minutes of net work; set the minimum to 0, shorten the break, or move the check-in or check-out window`;
+  }
+  return null;
+}
+
 /**
  * GET /api/config - Get all schedule configurations + system info
  */
@@ -351,6 +377,7 @@ router.get('/', (req, res) => {
   const oauthConfigured = isOAuthReady();
   const oauthCompanyId = oauthConfigured ? getSetting('oauth_company_id') || '' : '';
   const holidaySkipCountries = getSetting('holiday_skip_countries') || 'jp';
+  const workRules = currentWorkRules();
 
   res.json({
     auto_checkin_enabled: autoEnabled,
@@ -363,6 +390,8 @@ router.get('/', (req, res) => {
     oauth_configured: oauthConfigured,
     oauth_company_id: oauthCompanyId,
     holiday_skip_countries: holidaySkipCountries,
+    min_net_work_minutes: workRules.minNetWorkMinutes,
+    max_break_minutes: workRules.maxBreakMinutes,
     schedules: configs,
   });
 });
@@ -1222,6 +1251,31 @@ function callbackHtml(message, success) {
 }
 
 /**
+ * PUT /api/config/work-rules - Set the minimum net work and the break cap for automatic punches
+ */
+router.put('/work-rules', async (req, res) => {
+  const { min_net_work_minutes: minNet, max_break_minutes: maxBreak } = req.body || {};
+  if (!isValidMinNetWorkMinutes(minNet)) {
+    return res.status(400).json({
+      error: `min_net_work_minutes must be 0 (off) or an integer from ${MIN_NET_WORK_MINUTES_LIMIT} to ${MAX_NET_WORK_MINUTES_LIMIT}`,
+    });
+  }
+  if (!isValidMaxBreakMinutes(maxBreak)) {
+    return res.status(400).json({
+      error: `max_break_minutes must be an integer from ${MIN_BREAK_MINUTES} to ${MAX_BREAK_MINUTES_LIMIT}`,
+    });
+  }
+  const problem = workRulesError(getAllConfig(), { minNetWorkMinutes: minNet, maxBreakMinutes: maxBreak });
+  if (problem) return res.status(400).json({ error: problem });
+
+  await mutateAutomationConfiguration(() => setSettingsAtomically([
+    ['min_net_work_minutes', minNet],
+    ['max_break_minutes', maxBreak],
+  ]), { skipPastNewTimes: true });
+  res.json({ min_net_work_minutes: minNet, max_break_minutes: maxBreak });
+});
+
+/**
  * PUT /api/config/:actionType - Update a schedule configuration
  */
 router.put('/:actionType', async (req, res) => {
@@ -1264,14 +1318,25 @@ router.put('/:actionType', async (req, res) => {
     }
   }
 
-  if (actionType === 'break_end' || actionType === 'break_start') {
-    const effective = (action) => ({ ...getConfigByAction(action), ...(action === actionType
-      ? Object.fromEntries(Object.entries({ mode, fixed_time, window_start, window_end, enabled }).filter(([, value]) => value !== undefined)) : {}) });
-    const start = effective('break_start');
-    const end = effective('break_end');
-    if (start.enabled && end.enabled && !resolveBreakTimes(start, end, {}, () => 0)) {
-      return res.status(400).json({ error: 'Break windows must allow at least 60 minutes and at most 90 minutes' });
+  {
+    const overrides = Object.fromEntries(Object.entries({ mode, fixed_time, window_start, window_end, enabled })
+      .filter(([, value]) => value !== undefined));
+    const effectiveConfigs = getAllConfig().map((cfg) =>
+      (cfg.action_type === actionType ? { ...cfg, ...overrides } : cfg));
+    const rules = currentWorkRules();
+    const currentConfigs = getAllConfig();
+    const isBreakAction = actionType === 'break_start' || actionType === 'break_end';
+    // Do not block unrelated edits because of a problem that already existed.
+    const breaksWereOk = breakWindowsCompatible(currentConfigs, rules.maxBreakMinutes);
+    const wasFeasible = workRulesFeasible(currentConfigs, rules);
+    let problem = null;
+    if ((isBreakAction || breaksWereOk) && !breakWindowsCompatible(effectiveConfigs, rules.maxBreakMinutes)) {
+      problem = workRulesError(effectiveConfigs, rules);
+    } else if (wasFeasible && breakWindowsCompatible(effectiveConfigs, rules.maxBreakMinutes)
+      && !workRulesFeasible(effectiveConfigs, rules)) {
+      problem = workRulesError(effectiveConfigs, rules);
     }
+    if (problem) return res.status(400).json({ error: problem });
   }
 
   // Build update data

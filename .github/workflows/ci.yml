@@ -11,10 +11,10 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: 24.22.1
-  NPM_VERSION: 12.2.0
-  BUILDX_VERSION: v0.37.2
-  BUILDKIT_IMAGE: moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+  NODE_VERSION: 26.13.0
+  NPM_VERSION: 12.2.2
+  BUILDX_VERSION: v0.38.2
+  BUILDKIT_IMAGE: moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
 
 jobs:
   lint:

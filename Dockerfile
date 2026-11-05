@@ -1,15 +1,15 @@
 # =============================================================================
 # Stage 1: Shared npm CLI base
 # =============================================================================
-FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS npm-base
+FROM node:26.13.0-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS npm-base
 
 WORKDIR /tmp
-ADD --checksum=sha256:6666b48816b39b86c3febac7b51a4ee4de6c5ca589c382ad8004b6b113f86677 \
-    https://registry.npmjs.org/npm/-/npm-12.2.0.tgz /tmp/npm-12.2.0.tgz
-RUN npm_archive_sha512="$(sha512sum /tmp/npm-12.2.0.tgz)" \
+ADD --checksum=sha256:07fecbf753e2c3bc10ebeb3e9ed8738f6a0cc1292998b79e2e9f1dd2a5525e0c \
+    https://registry.npmjs.org/npm/-/npm-12.2.2.tgz /tmp/npm-12.2.2.tgz
+RUN npm_archive_sha512="$(sha512sum /tmp/npm-12.2.2.tgz)" \
     && test "${npm_archive_sha512%% *}" = \
-      '66c2632a94e796649738b2d7894d710c2cc2e1696893823066687f6b0d8a52e5f2b54eeaeaa32ffdc513ecca1e49ff794a5c2ec3f9515d879f1b3182b291cf35' \
-    && npm install --global /tmp/npm-12.2.0.tgz \
+      '2a09606d9c9a71fee31fe147b8d46a56e0b3422f15848d9aec9f3b231e3716c3d3b99a065a62175c6759b4150e03bf6fc0bf8825112a511573ba903b3ec41370' \
+    && npm install --global /tmp/npm-12.2.2.tgz \
       --ignore-scripts \
       --no-audit \
       --no-fund \
@@ -17,8 +17,8 @@ RUN npm_archive_sha512="$(sha512sum /tmp/npm-12.2.0.tgz)" \
       --allow-file=all \
       --allow-git=none \
       --allow-remote=none \
-    && rm -f /tmp/npm-12.2.0.tgz \
-    && test "$(npm --version)" = '12.2.0'
+    && rm -f /tmp/npm-12.2.2.tgz \
+    && test "$(npm --version)" = '12.2.2'
 
 # =============================================================================
 # Stage 2: Server dependencies and Chromium
@@ -50,12 +50,12 @@ RUN npm run build
 # =============================================================================
 # Stage 4: Runtime - slim image with only Chromium (no Firefox/WebKit)
 # =============================================================================
-FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS runtime
+FROM node:26.13.0-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS runtime
 
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.title="PunchPilot" \
       org.opencontainers.image.description="Smart attendance automation for freee HR" \
-      org.opencontainers.image.version="0.5.6" \
+      org.opencontainers.image.version="0.5.7" \
       org.opencontainers.image.revision="$VCS_REF" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.source="https://github.com/sky-zhang01/punchpilot"
@@ -64,13 +64,13 @@ WORKDIR /app
 
 # Debian drops superseded unstable packages from its pool, so fetch these exact
 # files from the permanent snapshot archive; the checksums pin the same bytes.
-ARG DEB_SNAPSHOT=20260801T143419Z
-ADD --checksum=sha256:bbf13c9326764d05e37e6590debdaa6f33af6bd822e3ca1204789d9d1dc23b11 \
-    https://snapshot.debian.org/archive/debian/${DEB_SNAPSHOT}/pool/main/s/sqlite3/libsqlite3-0_3.53.4-2_amd64.deb \
-    /tmp/libsqlite3-0_3.53.4-2_amd64.deb
-ADD --checksum=sha256:e417fb0642502c090d84a6f5fce1a2e5961dfe18644415ddce77a1a67cd2fc89 \
-    https://snapshot.debian.org/archive/debian/${DEB_SNAPSHOT}/pool/main/s/sqlite3/libsqlite3-0_3.53.4-2_arm64.deb \
-    /tmp/libsqlite3-0_3.53.4-2_arm64.deb
+ARG DEB_SNAPSHOT=20261105T022427Z
+ADD --checksum=sha256:7789bf0b2338b781de388d83d7c473f9386c9ef638af110b5c1b3d1debb36f00 \
+    https://snapshot.debian.org/archive/debian/${DEB_SNAPSHOT}/pool/main/s/sqlite3/libsqlite3-0_3.54.1-2_amd64.deb \
+    /tmp/libsqlite3-0_3.54.1-2_amd64.deb
+ADD --checksum=sha256:27416ae5fd9a8a491cacc2316cb08ebf31ac0d3d628da5576e04eeba365605a4 \
+    https://snapshot.debian.org/archive/debian/${DEB_SNAPSHOT}/pool/main/s/sqlite3/libsqlite3-0_3.54.1-2_arm64.deb \
+    /tmp/libsqlite3-0_3.54.1-2_arm64.deb
 
 ENV TZ=Asia/Tokyo
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
@@ -109,11 +109,11 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     libxkbcommon0 \
     libxrandr2 \
     && architecture="$(dpkg --print-architecture)" \
-    && dpkg --install "/tmp/libsqlite3-0_3.53.4-2_${architecture}.deb" \
-    && test "$(dpkg-query --show --showformat='${Version}' libsqlite3-0)" = '3.53.4-2' \
+    && dpkg --install "/tmp/libsqlite3-0_3.54.1-2_${architecture}.deb" \
+    && test "$(dpkg-query --show --showformat='${Version}' libsqlite3-0)" = '3.54.1-2' \
     && rm -f /usr/bin/perl* \
     && test -z "$(find /usr/bin -maxdepth 1 -name 'perl*' -print -quit)" \
-    && rm -f /tmp/libsqlite3-0_3.53.4-2_amd64.deb /tmp/libsqlite3-0_3.53.4-2_arm64.deb \
+    && rm -f /tmp/libsqlite3-0_3.54.1-2_amd64.deb /tmp/libsqlite3-0_3.54.1-2_arm64.deb \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy production node_modules (with native better-sqlite3) and Chromium.

@@ -1,5 +1,6 @@
 import { FREEE_ERROR_MESSAGES } from "../constants.js";
 import { APPROVAL_TYPE_MAP } from "./constants.js";
+import { timePhase } from "../timing.js";
 import {
   assertApprovalMutationRequest,
   assertApprovalWithdrawalMutationRequest,
@@ -1004,14 +1005,15 @@ export async function withdrawApprovalRequest(
   const detailUrl = `https://p.secure.freee.co.jp/approval_requests#requests/${normalizedRequestId}?type=${encodeURIComponent(freeeType)}`;
   console.log("[Bot] Navigating to approval request detail");
 
-  await bot.navigateToSpaForm(detailUrl, { useLocationHref: true });
+  await timePhase("navigation", () =>
+    bot.navigateToSpaForm(detailUrl, { useLocationHref: true }));
 
   const withdrawBtn = bot.page
     .locator("button, a")
     .filter({ hasText: /^\s*(?:取り下げ|取下げ|取り下げる|取下げる)\s*$/ });
 
   // A rendered status may be present even when withdrawal is no longer available.
-  await bot.waitForElement(
+  await timePhase("form_ready", () => bot.waitForElement(
     async () => {
       if ((await withdrawBtn.count()) > 0) return true;
       const bodyText = await bot.page
@@ -1026,7 +1028,7 @@ export async function withdrawApprovalRequest(
     },
     detailUrl,
     { debugPrefix: `withdraw-${type}-${requestId}` },
-  );
+  ));
 
   const preWithdrawTarget = await observeWithdrawalTarget(bot.page, withdrawBtn);
   if (preWithdrawTarget.actionCount > 0) {
@@ -1060,7 +1062,7 @@ export async function withdrawApprovalRequest(
     .locator('[role="dialog"] button, [aria-modal="true"] button')
     .filter({ hasText: /^(OK|はい|確認|取り下げ(する|る)?|取下げ)$/ });
   requireMutationDispatchGuard(bot);
-  await bot.dispatchGuardedMutation({
+  await timePhase("submit", () => bot.dispatchGuardedMutation({
     click: async () => {
       await withdrawBtn.first().click();
       await confirmBtn.first().waitFor({ state: "visible", timeout: 3_000 }).catch(() => {});
@@ -1084,16 +1086,17 @@ export async function withdrawApprovalRequest(
         companyId: expectedIntent.companyId ?? null,
       },
     ),
-  });
-  const submissionOutcome = await waitForSubmissionOutcome(bot, preWithdrawUrl, {
-    successIndicators: [
-      "取り下げました",
-      "取下げました",
-      "取り下げ済み",
-      "取下げ済み",
-    ],
-    includeDefaultSuccessIndicators: false,
-  });
+  }));
+  const submissionOutcome = await timePhase("result_confirm", () =>
+    waitForSubmissionOutcome(bot, preWithdrawUrl, {
+      successIndicators: [
+        "取り下げました",
+        "取下げました",
+        "取り下げ済み",
+        "取下げ済み",
+      ],
+      includeDefaultSuccessIndicators: false,
+    }));
 
   const afterPath = await screenshots.after();
 
@@ -1150,17 +1153,17 @@ export async function submitMonthlyClosingWeb(
   const formUrl = `https://p.secure.freee.co.jp/approval_requests#/requests/new?type=ApprovalRequest::MonthlyAttendance&target_year=${year}&target_month=${month}`;
   console.log("[Bot] Navigating to monthly closing form");
 
-  await bot.navigateToSpaForm(formUrl);
+  await timePhase("navigation", () => bot.navigateToSpaForm(formUrl));
 
   // Wait for the "申請" submit button to appear (form is pre-populated from URL params)
   const submitBtn = bot.page
     .locator("button.vb-button--appearancePrimary")
     .filter({ hasText: "申請" });
-  await bot.waitForElement(
+  await timePhase("form_ready", () => bot.waitForElement(
     async () => (await submitBtn.count()) > 0,
     formUrl,
     { debugPrefix: `monthly-closing-${year}-${month}` },
-  );
+  ));
   assertMonthlyClosingRoute(bot.page.url(), year, month);
   assertMonthlyClosingTarget(
     await observeMonthlyClosingTarget(bot.page),
@@ -1176,18 +1179,19 @@ export async function submitMonthlyClosingWeb(
   console.log("[Bot] Submitting monthly attendance closing");
   const preSubmitUrl = bot.page.url();
   requireMutationDispatchGuard(bot);
-  await bot.dispatchGuardedMutation(submitBtn, {
+  await timePhase("submit", () => bot.dispatchGuardedMutation(submitBtn, {
     validateRequest: (request) => assertMonthlyClosingMutationRequest(request, {
       year,
       month,
       employeeId: expectedIntent.employeeId ?? null,
       companyId: expectedIntent.companyId ?? null,
     }),
-  });
-  const submissionOutcome = await waitForSubmissionOutcome(bot, preSubmitUrl, {
-    acceptedIndicators: [FREEE_ERROR_MESSAGES.MONTHLY_CLOSING_ALREADY_SUBMITTED],
-    targetConfirmed: true,
-  });
+  }));
+  const submissionOutcome = await timePhase("result_confirm", () =>
+    waitForSubmissionOutcome(bot, preSubmitUrl, {
+      acceptedIndicators: [FREEE_ERROR_MESSAGES.MONTHLY_CLOSING_ALREADY_SUBMITTED],
+      targetConfirmed: true,
+    }));
 
   const afterPath = await screenshots.after();
 

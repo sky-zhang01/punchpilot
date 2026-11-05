@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly version='0.75.0'
+readonly version='0.76.2'
 readonly release_base="https://github.com/aquasecurity/trivy/releases/download/v${version}"
 
 if [[ $# -ne 0 ]]; then
@@ -20,11 +20,11 @@ fi
 case $(uname -m) in
   x86_64|amd64)
     asset="trivy_${version}_Linux-64bit.tar.gz"
-    archive_sha256='c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f'
+    archive_sha256='bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf'
     ;;
   aarch64|arm64)
     asset="trivy_${version}_Linux-ARM64.tar.gz"
-    archive_sha256='a1ee9f6ffb7d112b64ff726a2a0717c21175c1114361391f4a132956751a13b3'
+    archive_sha256='ab9d51f86e6a5fb936f605faff6b593ac51bc378fff4d3e8b9d58358b9c367c3'
     ;;
   *)
     echo 'The runner architecture is not supported by the pinned Trivy installer.' >&2

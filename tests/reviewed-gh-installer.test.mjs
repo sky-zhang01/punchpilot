@@ -9,8 +9,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const script = path.join(root, 'scripts/ci/install-reviewed-gh.sh');
 const temporaryDirectories = [];
 const checksums = {
-  amd64_sha256: '9bca2d1c16825f109907a23307628a2f0698fbf99662b73a5cf0b020293072b8',
-  arm64_sha256: 'b57e8063f18862647c9d22727c32e9da1b963f8bf9db648fe123a6975695640f',
+  amd64_sha256: '4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d',
+  arm64_sha256: 'ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63',
 };
 
 afterEach(() => {
@@ -27,14 +27,14 @@ function runInstaller(overrides = {}, args = []) {
   const githubPath = path.join(directory, 'github-path');
   const invocation = path.join(directory, 'invocation');
   const architecture = ['arm64', 'aarch64'].includes(overrides.TEST_ARCH) ? 'arm64' : 'amd64';
-  const packageName = `gh_2.101.0_linux_${architecture}`;
+  const packageName = `gh_2.103.3_linux_${architecture}`;
   const packageBin = path.join(directory, packageName, 'bin');
   fs.mkdirSync(bin);
   fs.mkdirSync(runnerTemp);
   fs.mkdirSync(packageBin, { recursive: true });
   fs.writeFileSync(githubPath, '');
   fs.writeFileSync(path.join(packageBin, 'gh'), `#!/usr/bin/env bash
-printf 'gh version %s (2026-09-15)\\n' "\${TEST_INSTALLED_VERSION:-2.101.0}"
+printf 'gh version %s (2026-10-26)\\n' "\${TEST_INSTALLED_VERSION:-2.103.3}"
 printf 'executed\\n' >> "$TEST_INVOCATION"
 `);
   fs.chmodSync(path.join(packageBin, 'gh'), 0o755);
@@ -69,7 +69,7 @@ read -r digest archive
     env: {
       ...process.env,
       PATH: `${bin}:${process.env.PATH}`,
-      GH_VERSION: '2.101.0',
+      GH_VERSION: '2.103.3',
       RUNNER_TEMP: runnerTemp,
       GITHUB_PATH: githubPath,
       TEST_OS: 'Linux',
@@ -94,11 +94,11 @@ describe('reviewed GitHub CLI installation boundary', () => {
   it.each(['x86_64', 'aarch64', 'arm64'])('installs the reviewed %s archive into the job directory', (architecture) => {
     const result = runInstaller({ TEST_ARCH: architecture });
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('reviewed_gh_version=2.101.0');
+    expect(result.stdout).toContain('reviewed_gh_version=2.103.3');
     expect(result.persistedPath).toMatch(/\/runner\/punchpilot-gh\.[^/]+\/bin$/);
     expect(fs.existsSync(path.join(result.persistedPath, 'gh'))).toBe(true);
     expect(result.curlArgs).toContain('--proto-redir\n=https\n');
-    expect(result.curlArgs).toContain(`gh_2.101.0_linux_${architecture === 'x86_64' ? 'amd64' : 'arm64'}.tar.gz`);
+    expect(result.curlArgs).toContain(`gh_2.103.3_linux_${architecture === 'x86_64' ? 'amd64' : 'arm64'}.tar.gz`);
   });
 
   it('rejects a mismatched archive before execution and removes its temporary installation', () => {

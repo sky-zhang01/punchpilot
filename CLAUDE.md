@@ -2,7 +2,7 @@
 
 ## Tech Stack
 
-- **Backend**: Node.js 24 (ES modules), Express 5, SQLite (better-sqlite3), Playwright
+- **Backend**: Node.js 26 (ES modules), Express 5, SQLite (better-sqlite3), Playwright
 - **Frontend**: React 19, Ant Design 6, Vite 8, TypeScript
 - **Auth**: bcryptjs password hashing, one-way hashed session tokens, AES-256-GCM credential encryption (scrypt KDF)
 - **Infra**: Docker (multi-arch amd64/arm64), PUID/PGID privilege dropping via gosu

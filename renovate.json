@@ -9,6 +9,7 @@
   "timezone": "Asia/Tokyo",
   "schedule": ["* 0-5 * * 1-5"],
   "prConcurrentLimit": 6,
+  "updateNotScheduled": false,
   "rangeStrategy": "bump",
   "minimumReleaseAge": "7 days",
   "internalChecksFilter": "strict",
@@ -29,9 +30,9 @@
   "postUpdateOptions": ["npmDedupe"],
   "packageRules": [
     {
-      "description": "Keep Node type declarations aligned with the Node 24 runtime",
+      "description": "Keep Node type declarations aligned with the Node 26 runtime",
       "matchPackageNames": ["@types/node"],
-      "allowedVersions": "24.x",
+      "allowedVersions": "26.x",
       "minimumReleaseAge": "7 days"
     },
     {

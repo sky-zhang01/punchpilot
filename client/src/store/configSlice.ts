@@ -1,10 +1,13 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import api from '../api';
 
-import type { ScheduleConfig, ScheduleUpdate } from '../contracts';
+import type { ScheduleConfig, ScheduleUpdate, WorkRulesUpdate } from '../contracts';
+import { DEFAULT_MAX_BREAK_MINUTES, DEFAULT_MIN_NET_WORK_MINUTES } from '../../../shared/schedule-policy.js';
 
 interface ConfigState {
   schedules: ScheduleConfig[];
+  minNetWorkMinutes: number;
+  maxBreakMinutes: number;
   autoEnabled: boolean;
   debugMode: boolean;
   freeeConfigured: boolean;
@@ -21,6 +24,8 @@ interface ConfigState {
 
 const initialState: ConfigState = {
   schedules: [],
+  minNetWorkMinutes: DEFAULT_MIN_NET_WORK_MINUTES,
+  maxBreakMinutes: DEFAULT_MAX_BREAK_MINUTES,
   autoEnabled: true,
   debugMode: true,
   freeeConfigured: false,
@@ -44,6 +49,15 @@ export const updateSchedule = createAsyncThunk(
   'config/updateSchedule',
   async ({ actionType, data }: { actionType: string; data: ScheduleUpdate }, { dispatch }) => {
     const res = await api.updateConfig(actionType, data);
+    await dispatch(fetchConfig()).unwrap();
+    return res.data;
+  }
+);
+
+export const updateWorkRules = createAsyncThunk(
+  'config/updateWorkRules',
+  async (data: WorkRulesUpdate, { dispatch }) => {
+    const res = await api.setWorkRules(data);
     await dispatch(fetchConfig()).unwrap();
     return res.data;
   }
@@ -96,6 +110,10 @@ const configSlice = createSlice({
       if (state.requestId !== action.meta.requestId) return;
       state.requestId = null;
       state.schedules = action.payload.schedules;
+      state.minNetWorkMinutes = Number.isInteger(action.payload.min_net_work_minutes)
+        ? action.payload.min_net_work_minutes : DEFAULT_MIN_NET_WORK_MINUTES;
+      state.maxBreakMinutes = Number.isInteger(action.payload.max_break_minutes)
+        ? action.payload.max_break_minutes : DEFAULT_MAX_BREAK_MINUTES;
       state.autoEnabled = action.payload.auto_checkin_enabled;
       state.debugMode = action.payload.debug_mode;
       state.freeeConfigured = action.payload.freee_configured;

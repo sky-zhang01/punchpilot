@@ -34,7 +34,7 @@ If your company records attendance in freee HR, you must clock in, start and end
   <sub><b>Four punches at the times you set.</b> Each is a fixed time or a random minute inside a window. Demo data.</sub>
 </p>
 
-Shortly after midnight it plans check-in, break start, break end and check-out. The defaults are check-in 09:50–10:00, break start 12:00–12:30, break end 13:00–13:30 and check-out 19:00–20:00.
+Shortly after midnight it plans check-in, break start, break end and check-out. The defaults are check-in 09:50–10:00, break start 12:00–12:30, break end 13:00–13:30 and check-out 19:00–20:00. Automatic punches also keep at least 8 hours of net work (check-out minus check-in minus break) by default, and plan breaks of 60 to 75 minutes. Both limits are editable in **Settings → Schedule Configuration**.
 
 ### It punches, and you stay in control
 

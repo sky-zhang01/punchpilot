@@ -7,6 +7,7 @@ import {
   Button,
   Switch,
   Select,
+  InputNumber,
   Typography,
   Alert,
   Tag,
@@ -17,12 +18,20 @@ import {
 import { ClockCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { updateSchedule, fetchConfig, toggleMaster } from '../../store/configSlice';
+import { updateSchedule, updateWorkRules, fetchConfig, toggleMaster } from '../../store/configSlice';
 import { notifySuccess, notifyError } from '../../utils/notify';
 import api from '../../api';
 import { isTimeString, timeToMinutes } from '../../../../shared/date-time.js';
 import type { ScheduleConfig, ScheduleUpdate } from '../../contracts';
-import { resolveBreakTimes } from '../../../../shared/schedule-policy.js';
+import {
+  DEFAULT_MAX_BREAK_MINUTES,
+  DEFAULT_MIN_NET_WORK_MINUTES,
+  breakWindowsCompatible,
+  isValidMaxBreakMinutes,
+  isValidMinNetWorkMinutes,
+  resolveBreakTimes,
+  workRulesFeasible,
+} from '../../../../shared/schedule-policy.js';
 
 const { Title, Text } = Typography;
 
@@ -35,13 +44,34 @@ const ACTION_LABELS: Record<string, string> = {
 
 const TIME_FORMAT = 'HH:mm';
 
+// The shared policy functions need complete time strings; null means "not set yet".
+const hasCompleteTimes = (config: ReturnType<typeof toPolicyConfig>) => (config.mode === 'fixed'
+  ? isTimeString(config.fixed_time)
+  : isTimeString(config.window_start) && isTimeString(config.window_end));
+
+const toPolicyConfig = (config: Pick<ScheduleConfig, 'action_type' | 'mode' | 'fixed_time' | 'window_start' | 'window_end'> & { enabled: number | boolean }) => ({
+  ...config,
+  fixed_time: config.fixed_time || '',
+  window_start: config.window_start || '',
+  window_end: config.window_end || '',
+});
+
 const ScheduleConfigCard: React.FC = () => {
   const { t } = useTranslation();
   const dispatch = useAppDispatch();
-  const { schedules, autoEnabled, holidaySkipCountries } = useAppSelector((state) => state.config);
+  const { schedules, autoEnabled, holidaySkipCountries, minNetWorkMinutes: storedMinNet, maxBreakMinutes: storedMaxBreak } =
+    useAppSelector((state) => state.config);
+  const minNetWorkMinutes = storedMinNet ?? DEFAULT_MIN_NET_WORK_MINUTES;
+  const maxBreakMinutes = storedMaxBreak ?? DEFAULT_MAX_BREAK_MINUTES;
 
   // Local state for editing
   const [editState, setEditState] = useState<Record<string, string>>({});
+
+  // Unsaved work-rule edits; null means the field was cleared.
+  const [minNetEdit, setMinNetEdit] = useState<number | null | undefined>(undefined);
+  const [maxBreakEdit, setMaxBreakEdit] = useState<number | null | undefined>(undefined);
+  const minNetValue = minNetEdit === undefined ? minNetWorkMinutes : minNetEdit;
+  const maxBreakValue = maxBreakEdit === undefined ? maxBreakMinutes : maxBreakEdit;
 
   const getEditValue = (actionType: string, field: string, fallback: string | null) => {
     return editState[`${actionType}.${field}`] ?? fallback;
@@ -85,14 +115,52 @@ const ScheduleConfigCard: React.FC = () => {
         notifyError(t('scheduleCard.invalidTime'));
         return;
       }
-      if (!resolveBreakTimes(range(start), range(end), {}, () => 0)) {
-        notifyError(t('scheduleCard.breakMinDuration'));
+      if (!resolveBreakTimes(range(start), range(end), {}, () => 0, maxBreakMinutes)) {
+        notifyError(t('scheduleCard.breakMinDuration', { max: maxBreakMinutes }));
         return;
       }
+    }
+    // The saved rules must stay satisfiable with this change (the server enforces the same).
+    const merged = schedules.map((config) => toPolicyConfig(config.action_type === actionType ? edited : config));
+    if (merged.every(hasCompleteTimes)
+      && !workRulesFeasible(merged, { minNetWorkMinutes, maxBreakMinutes })) {
+      notifyError(t('scheduleCard.workRulesInfeasible', { minNet: minNetWorkMinutes }));
+      return;
     }
 
     try {
       await dispatch(updateSchedule({ actionType, data })).unwrap();
+      notifySuccess(t('scheduleCard.saved'));
+    } catch {
+      notifyError(t('scheduleCard.saveFailed'));
+    }
+  };
+
+  const handleSaveWorkRules = async () => {
+    if (!isValidMinNetWorkMinutes(minNetValue)) {
+      notifyError(t('scheduleCard.invalidMinNetWork'));
+      return;
+    }
+    if (!isValidMaxBreakMinutes(maxBreakValue)) {
+      notifyError(t('scheduleCard.invalidMaxBreak'));
+      return;
+    }
+    const configs = schedules.map(toPolicyConfig);
+    if (!breakWindowsCompatible(configs, maxBreakValue as number)) {
+      notifyError(t('scheduleCard.breakMinDuration', { max: maxBreakValue }));
+      return;
+    }
+    if (!workRulesFeasible(configs, { minNetWorkMinutes: minNetValue as number, maxBreakMinutes: maxBreakValue as number })) {
+      notifyError(t('scheduleCard.workRulesInfeasible', { minNet: minNetValue }));
+      return;
+    }
+    try {
+      await dispatch(updateWorkRules({
+        min_net_work_minutes: minNetValue as number,
+        max_break_minutes: maxBreakValue as number,
+      })).unwrap();
+      setMinNetEdit(undefined);
+      setMaxBreakEdit(undefined);
       notifySuccess(t('scheduleCard.saved'));
     } catch {
       notifyError(t('scheduleCard.saveFailed'));
@@ -179,8 +247,50 @@ const ScheduleConfigCard: React.FC = () => {
         <Alert
           type="info"
           showIcon
-          message={`${t('settings.lunchBreak')}: ${t('settings.lunchBreakNote')}`}
+          message={`${t('settings.lunchBreak')}: ${t('settings.lunchBreakNote', { max: maxBreakMinutes })}`}
         />
+
+        {/* Work rules for automatic punches */}
+        <Card size="small" style={{ border: '1px solid #e2e8f0' }}>
+          <Space direction="vertical" size="small" style={{ width: '100%' }}>
+            <Text strong style={{ fontSize: 15 }}>{t('scheduleCard.workRulesTitle')}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('scheduleCard.workRulesHint')}</Text>
+            <Space align="center" wrap>
+              <Text type="secondary">{t('scheduleCard.minNetWorkLabel')}:</Text>
+              <InputNumber
+                aria-label="min-net-work-minutes"
+                min={0}
+                max={960}
+                precision={0}
+                value={minNetValue}
+                onChange={(value: number | null) => setMinNetEdit(value)}
+                style={{ width: 120 }}
+              />
+            </Space>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t('scheduleCard.minNetWorkHint', {
+                hours: Math.floor((minNetValue ?? 0) / 60),
+                minutes: (minNetValue ?? 0) % 60,
+              })}
+            </Text>
+            <Space align="center" wrap>
+              <Text type="secondary">{t('scheduleCard.maxBreakLabel')}:</Text>
+              <InputNumber
+                aria-label="max-break-minutes"
+                min={60}
+                max={180}
+                precision={0}
+                value={maxBreakValue}
+                onChange={(value: number | null) => setMaxBreakEdit(value)}
+                style={{ width: 120 }}
+              />
+            </Space>
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('scheduleCard.maxBreakHint')}</Text>
+            <Button type="primary" size="small" onClick={handleSaveWorkRules}>
+              {t('scheduleCard.workRulesSave')}
+            </Button>
+          </Space>
+        </Card>
 
         {/* Schedule cards */}
         {schedules.map((schedule) => {

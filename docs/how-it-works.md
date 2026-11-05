@@ -17,6 +17,21 @@ Default windows:
 
 Change them in **Settings → Schedule Configuration**.
 
+### Work rules for automatic punches
+
+Two more settings sit in the same card. They apply only to the scheduled automatic punches. Manual punches, batch punches, corrections, leave requests and approvals are not affected.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Minimum net work (minutes) | 480 | Net work is check-out minus check-in minus breaks. `0` turns the rule off; otherwise 60-960. |
+| Maximum break (minutes) | 75 | Planned breaks last from 60 minutes up to this value (60-180). |
+
+Each day PunchPilot picks the check-in first, then the break, and then plans the check-out so that net work reaches the minimum. The check-out stays inside its window whenever the windows allow it, so the end of the check-out window is your latest check-out time. If the windows cannot satisfy the minimum, net work wins: the check-out is planned after the window end, but never later than 23:59.
+
+When the scheduled check-out fires, PunchPilot also reads today's real punches from freee. If you checked in later than planned, or took a longer break, and net work is still below the minimum, it does not punch. It moves the check-out to the first minute that reaches the minimum, shows the new time on the dashboard and punches then. It only ever postpones, never advances. If freee's punch history cannot be read, it punches as planned.
+
+PunchPilot refuses to save a setting that the current windows cannot satisfy. Upgrading keeps a 90 minute cap if your break windows need it, and leaves the minimum off if your windows could never meet 8 hours. A break already planned for today keeps its length when you lower the cap; the new cap applies from the next day's plan.
+
 ## Days that are skipped
 
 PunchPilot skips the whole day on:
@@ -42,7 +57,7 @@ Just before each punch, PunchPilot checks freee again.
 
 ## Breaks
 
-A 60-90 minute break is added only when the workday is longer than six hours, following Japan's Labor Standards Act (Article 34).
+A break of 60 minutes up to your **Maximum break** setting (75 by default) is added only when the workday is longer than six hours, following Japan's Labor Standards Act (Article 34). A break that runs longer than the maximum is ended right away.
 
 ## If PunchPilot was not running
 

@@ -4,7 +4,7 @@ Thanks for your interest in contributing! Here's how to get started.
 
 ## Development Setup
 
-Local development requires Node.js 24.15 or newer in the Node 24 line and npm 12.2.0. The included `.nvmrc`, the package engine checks and the container build enforce the same toolchain. Dependency install scripts are disabled on purpose.
+Local development requires Node.js 26.13 or newer in the Node 26 line and npm 12.2.2. The included `.nvmrc`, the package engine checks and the container build enforce the same toolchain. Dependency install scripts are disabled on purpose.
 
 ```bash
 # Clone the repository
@@ -12,7 +12,7 @@ git clone https://github.com/sky-zhang01/punchpilot.git
 cd punchpilot
 
 # Use the expected npm version
-npm install --global npm@12.2.0 --ignore-scripts --no-audit --no-fund
+npm install --global npm@12.2.2 --ignore-scripts --no-audit --no-fund
 
 # Install dependencies
 npm ci --ignore-scripts

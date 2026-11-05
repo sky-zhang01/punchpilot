@@ -1,5 +1,6 @@
 import { FREEE_STATE } from "../constants.js";
 import { nowInTz } from "../timezone.js";
+import { DEFAULT_MAX_BREAK_MINUTES } from "../../shared/schedule-policy.js";
 
 /** Check if an action is valid for the current state */
 export function isActionValidForState(actionType, state) {
@@ -61,6 +62,7 @@ export function isActionValidForState(actionType, state) {
  * @param {Object} schedule - { checkin: 'HH:MM', break_start: 'HH:MM', break_end: 'HH:MM', checkout: 'HH:MM' }
  * @param {Array} todayPunchTimes - [{ type: 'checkin'|'checkout'|'break_start'|'break_end', time: 'HH:MM' }]
  * @param {string|null} currentTime - 'HH:MM' for testing (null = use real time via nowInTz)
+ * @param {number} maxBreakMinutes - configured break cap; a longer break is ended immediately
  * @returns {{ execute: string[], skip: string[], immediateActions: string[], reason: string }}
  */
 export function determineActionsForToday(
@@ -68,6 +70,7 @@ export function determineActionsForToday(
   schedule,
   todayPunchTimes = [],
   currentTime = null,
+  maxBreakMinutes = DEFAULT_MAX_BREAK_MINUTES,
 ) {
   const toMin = (t) => {
     const [h, m] = t.split(":").map(Number);
@@ -190,7 +193,7 @@ export function determineActionsForToday(
     // No break_start planned or completed → no break_end needed
     result.skip.push("break_end");
   } else if (currentState === FREEE_STATE.ON_BREAK) {
-    // Currently on break — check if overdue (>60min from actual break_start)
+    // Currently on break — check if overdue (past the configured break cap from actual break_start)
     const breakStartRecord = punchRecords
       .filter((p) => p.type === "break_start")
       .pop();
@@ -202,10 +205,10 @@ export function determineActionsForToday(
       schedule.break_end &&
       curMin >= toMin(schedule.break_end);
     if (
-      (actualBreakStartMin != null && curMin - actualBreakStartMin > 90) ||
+      (actualBreakStartMin != null && curMin - actualBreakStartMin > maxBreakMinutes) ||
       scheduledBreakEndPassed
     ) {
-      // Break exceeded 90 minutes → end immediately
+      // Break exceeded the configured cap → end immediately
       result.immediateActions.push("break_end");
     } else {
       result.execute.push("break_end");

@@ -760,12 +760,15 @@ describe('export-public-tree committed seed allowlist (real repo)', () => {
     // closed publisher caller. Enumerate HEAD before and after their commit,
     // while rejecting any unreviewed file under the excluded directory.
     const approvedSourceOnlyPaths = [
+      '.gitea/scripts/ci-metrics.mjs',
+      '.gitea/scripts/dependency-review.mjs',
       '.gitea/scripts/runner-protocol-check.mjs',
       '.gitea/workflows/branch-housekeeping.yml',
       '.gitea/workflows/ci.yml',
       '.gitea/workflows/internal-release-check.yml',
       '.gitea/workflows/public-release.yml',
       '.gitea/workflows/public-governance-check.yml',
+      '.gitea/workflows/scheduled-audit.yml',
     ];
     const sourceOnlyPaths = execFileSync('git', ['ls-tree', '-r', '--name-only', 'HEAD', '.gitea'], {
       cwd: projectRoot, encoding: 'utf8',

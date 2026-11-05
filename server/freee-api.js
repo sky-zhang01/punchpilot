@@ -17,6 +17,7 @@ import { todayStringInTz, getTimezone } from './timezone.js';
 import { parseExternalId } from './freee-values.js';
 import { isDateString, partsInTimezone, minutesToTime } from '../shared/date-time.js';
 import { getOAuthIdentityGeneration } from './automation/identity.js';
+import { recordFreeeCall, recordTokenRefresh, timingNow } from './timing.js';
 
 const API_BASE = 'https://api.freee.co.jp/hr/api/v1';
 const TOKEN_URL = 'https://accounts.secure.freee.co.jp/public_api/token';
@@ -561,6 +562,7 @@ export class FreeeApiClient {
         tokenRefreshFlight = flight;
       }
 
+      const refreshStartedAt = timingNow();
       try {
         await flight.promise;
         if (this.identityBinding) assertOAuthIdentityBinding(this.identityBinding);
@@ -569,6 +571,7 @@ export class FreeeApiClient {
         if (latestState.refreshTokenEncrypted !== flight.generation) continue;
         throw error;
       } finally {
+        recordTokenRefresh(timingNow() - refreshStartedAt);
         if (tokenRefreshFlight === flight) tokenRefreshFlight = null;
       }
     }
@@ -628,15 +631,23 @@ export class FreeeApiClient {
     console.log(`[API] ${method} ${logPath}`);
 
     let response;
+    const requestStartedAt = timingNow();
     try {
       response = await fetchWithTimeout(url, options);
     } catch (cause) {
+      recordFreeeCall({ method, path: logPath, status: 0, ms: timingNow() - requestStartedAt });
       throw createFreeeError(
         'freee API request failed due to a network or timeout error.',
         FREEE_API_ERROR_CODES.API_TRANSIENT,
         cause,
       );
     }
+    recordFreeeCall({
+      method,
+      path: logPath,
+      status: response.status,
+      ms: timingNow() - requestStartedAt,
+    });
 
     if (this.identityBinding) {
       assertOAuthIdentityBinding(this.identityBinding);

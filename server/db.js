@@ -5,8 +5,16 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { decrypt, deriveKeyedDigest, migrateEncryptionIfNeeded } from './crypto.js';
 import { DB_PATH, INITIAL_ADMIN_PASSWORD_FILE } from './paths.js';
-import { dateInTimezone, resolveTimezone } from '../shared/date-time.js';
+import { dateInTimezone, isTimeString, resolveTimezone, timeToMinutes } from '../shared/date-time.js';
 import { resolveWebAccount } from './web-account.js';
+import {
+  DEFAULT_MAX_BREAK_MINUTES,
+  DEFAULT_MIN_NET_WORK_MINUTES,
+  LEGACY_MAX_BREAK_MINUTES,
+  breakWindowsCompatible,
+  normalizeWorkRules,
+  workRulesFeasible,
+} from '../shared/schedule-policy.js';
 import {
   normalizeAutomationErrorCode,
   normalizeAutomationFailureStage,
@@ -481,6 +489,9 @@ export function initDatabase() {
   insertSetting.run('oauth_state_issued_at', '0');
   insertSetting.run('oauth_state_generation', '');
 
+  seedWorkRuleSettings(db);
+  clearLegacyBreakPlaceholders(db);
+
   // Seed default admin user if no users exist
   const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
   if (userCount === 0) {
@@ -500,6 +511,62 @@ export function initDatabase() {
   migrateEncryptionIfNeeded(getSetting, setSetting, setSettingsAtomically);
 
   console.log('[PunchPilot] Database initialized');
+}
+
+/**
+ * Seeds the break cap and the minimum net work for installs that lack them.
+ * An upgrade keeps the old 90 minute cap when its break windows need it and
+ * leaves the net work rule off when its windows could never satisfy it.
+ * Stored values are never overwritten.
+ */
+function seedWorkRuleSettings(db) {
+  const read = db.prepare('SELECT value FROM settings WHERE key = ?');
+  const write = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
+  const configs = db.prepare('SELECT * FROM config').all();
+  if (!read.get('max_break_minutes')) {
+    write.run('max_break_minutes', String(
+      breakWindowsCompatible(configs, DEFAULT_MAX_BREAK_MINUTES)
+        ? DEFAULT_MAX_BREAK_MINUTES : LEGACY_MAX_BREAK_MINUTES,
+    ));
+  }
+  if (!read.get('min_net_work_minutes')) {
+    const { maxBreakMinutes } = normalizeWorkRules(null, read.get('max_break_minutes')?.value);
+    write.run('min_net_work_minutes', String(
+      workRulesFeasible(configs, { minNetWorkMinutes: DEFAULT_MIN_NET_WORK_MINUTES, maxBreakMinutes })
+        ? DEFAULT_MIN_NET_WORK_MINUTES : 0,
+    ));
+  }
+}
+
+/**
+ * Versions before the configurable cap planned breaks of 60 to 90 minutes.
+ * When the break windows could not form one they stored placeholder times
+ * and paused them, and an unknown-state skip could overwrite that pause.
+ * The first time this version starts, unstarted stored pairs longer than
+ * 90 minutes are removed so the scheduler draws and checks them again.
+ * It runs once: pairs planned afterwards under a higher cap are kept.
+ */
+function clearLegacyBreakPlaceholders(db) {
+  const marker = 'legacy_break_placeholders_cleared';
+  if (db.prepare('SELECT value FROM settings WHERE key = ?').get(marker)) return;
+  const rows = db.prepare(`SELECT date, identity_key, action_type, resolved_time FROM daily_schedule
+    WHERE action_type IN ('break_start', 'break_end') AND executed = 0 AND attempts = 0`).all();
+  const pairs = new Map();
+  for (const row of rows) {
+    const key = JSON.stringify([row.date, row.identity_key]);
+    pairs.set(key, { ...pairs.get(key), date: row.date, identityKey: row.identity_key, [row.action_type]: row.resolved_time });
+  }
+  const remove = db.prepare(`DELETE FROM daily_schedule WHERE date = ? AND identity_key = ?
+    AND action_type IN ('break_start', 'break_end') AND executed = 0 AND attempts = 0`);
+  db.transaction(() => {
+    for (const pair of pairs.values()) {
+      if (!isTimeString(pair.break_start) || !isTimeString(pair.break_end)) continue;
+      if (timeToMinutes(pair.break_end) - timeToMinutes(pair.break_start) > LEGACY_MAX_BREAK_MINUTES) {
+        remove.run(pair.date, pair.identityKey);
+      }
+    }
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(marker, '1');
+  })();
 }
 
 // --- Config helpers ---

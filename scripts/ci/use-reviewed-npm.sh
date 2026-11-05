@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly expected_version='12.2.0'
-readonly archive_url='https://registry.npmjs.org/npm/-/npm-12.2.0.tgz'
-readonly archive_sha256='6666b48816b39b86c3febac7b51a4ee4de6c5ca589c382ad8004b6b113f86677'
-readonly archive_sha512='66c2632a94e796649738b2d7894d710c2cc2e1696893823066687f6b0d8a52e5f2b54eeaeaa32ffdc513ecca1e49ff794a5c2ec3f9515d879f1b3182b291cf35'
+readonly expected_version='12.2.2'
+readonly archive_url='https://registry.npmjs.org/npm/-/npm-12.2.2.tgz'
+readonly archive_sha256='07fecbf753e2c3bc10ebeb3e9ed8738f6a0cc1292998b79e2e9f1dd2a5525e0c'
+readonly archive_sha512='2a09606d9c9a71fee31fe147b8d46a56e0b3422f15848d9aec9f3b231e3716c3d3b99a065a62175c6759b4150e03bf6fc0bf8825112a511573ba903b3ec41370'
 
 archive_root=''
 cleanup() {
@@ -35,7 +35,7 @@ if [[ -n ${PUNCHPILOT_NPM_BIN:-} ]]; then
 else
   install_root=$(mktemp -d "$RUNNER_TEMP/punchpilot-npm.XXXXXX")
   archive_root=$(mktemp -d "$RUNNER_TEMP/punchpilot-npm-archive.XXXXXX")
-  archive="$archive_root/npm-12.2.0.tgz"
+  archive="$archive_root/npm-12.2.2.tgz"
   curl \
     --proto '=https' \
     --tlsv1.2 \

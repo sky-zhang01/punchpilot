@@ -31,6 +31,7 @@ import {
   sanitizeError,
 } from "./utils.js";
 import { withAccountOperation } from "../../account-operation.js";
+import { runTimed, timePhase } from "../../timing.js";
 
 // Case-sensitive like the app router (app.js), so path variants cannot reach a handler.
 const router = Router({ caseSensitive: true });
@@ -119,10 +120,11 @@ router.get("/employee-info", async (req, res) => {
   if (!oauth) return;
   const { companyId, employeeId } = oauth;
 
+  return runTimed("employee_info", async () => {
   try {
     const client = new FreeeApiClient({ identityBinding: oauth });
-    await client.ensureValidToken();
-    const userInfo = await client.apiRequest("GET", "/users/me");
+    await timePhase("token", () => client.ensureValidToken());
+    const userInfo = await timePhase("users_me", () => client.apiRequest("GET", "/users/me"));
     const company = (userInfo?.companies || []).find(
       (item) => String(item?.id) === companyId,
     );
@@ -144,10 +146,10 @@ router.get("/employee-info", async (req, res) => {
 
     try {
       const now = nowInTz();
-      const employee = await client.apiRequest(
+      const employee = await timePhase("employee_detail", () => client.apiRequest(
         "GET",
         `/employees/${employeeId}?company_id=${companyId}&year=${now.year}&month=${now.month}`,
-      );
+      ));
       result.num = employee?.num || null;
       result.entry_date = employee?.entry_date || null;
       result.employment_type = employee?.profile_rule?.employment_type || null;
@@ -164,6 +166,7 @@ router.get("/employee-info", async (req, res) => {
       error: sanitizeError(error, "Employee information could not be loaded"),
     });
   }
+  }, { res });
 });
 
 router.post("/batch-withdraw", async (req, res) => {

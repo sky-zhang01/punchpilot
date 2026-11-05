@@ -81,6 +81,7 @@ const DashboardPage: React.FC = () => {
     connectionMode,
     oauthConfigured,
     oauthCompanyId,
+    maxBreakMinutes,
   } =
     useAppSelector((state) => state.config);
 
@@ -143,7 +144,7 @@ const DashboardPage: React.FC = () => {
     SCHEDULE_WINDOW_PAST: 'dashboard.scheduleWindowPast',
     SCHEDULE_TIME_NONEXISTENT: 'dashboard.scheduleTimeNonexistent',
     BREAK_WINDOW_INCOMPATIBLE: 'dashboard.breakWindowIncompatible',
-  }[code || ''] || 'dashboard.schedulePausedHint');
+  }[code || ''] || 'dashboard.schedulePausedHint', { max: maxBreakMinutes });
 
   // Derive actual state: prefer freee time_clocks data, fall back to startup_analysis
   const punchTimesRaw: PunchTime[] = statusData?.today_punch_times || [];

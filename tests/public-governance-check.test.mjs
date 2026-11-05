@@ -211,7 +211,7 @@ describe('actual source and public entry consumers', () => {
   const git = (directory, args) => execFileSync('git', args, { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   const actionRevisions = {
     checkout: { commit_sha: '3d3c42e5aac5ba805825da76410c181273ba90b1' },
-    uploadArtifact: { commit_sha: '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a' },
+    uploadArtifact: { commit_sha: 'cf430e030ddbb5b0abf93d22962f4752f3646cd9' },
     attest: { commit_sha: '1e69f48acb82d1966a394da916b4c1698aa569d6' },
   };
   const checkoutPin = 'actions/checkout@' + actionRevisions.checkout.commit_sha;

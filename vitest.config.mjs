@@ -19,6 +19,13 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 30000,
     fileParallelism: true,
+    // Write console output straight to the worker's stdout and stderr. Vitest's
+    // default interception buffers each line and sends it to the main thread
+    // over RPC in a microtask; a line still in flight when a worker closes fails
+    // the whole run with "EnvironmentTeardownError: Closing rpc while
+    // onUserConsoleLog was pending" even when every test passed (Node 26 CI
+    // runs 17117 and 17130, and 17381 after the per-file console stubs).
+    disableConsoleIntercept: true,
     globalSetup: ['./tests/setup/vitest-global.mjs'],
     setupFiles: ['./tests/setup/vitest-file.mjs'],
     env: {

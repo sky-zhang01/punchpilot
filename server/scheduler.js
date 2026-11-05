@@ -1,6 +1,12 @@
 import cron from 'node-cron';
-import { timeToMinutes, minutesToTime } from '../shared/date-time.js';
-import { resolveBreakTimes } from '../shared/schedule-policy.js';
+import { minutesToTime, timeToMinutes } from '../shared/date-time.js';
+import {
+  earliestCompliantCheckoutMinute,
+  MAX_BREAK_MINUTES_LIMIT,
+  MIN_BREAK_MINUTES,
+  normalizeWorkRules,
+  resolveDailyTimes,
+} from '../shared/schedule-policy.js';
 import {
   getAllConfig,
   getSetting,
@@ -53,14 +59,6 @@ const SCHEDULE_CANCELLATION_CODES = new Set([
   'SCHEDULE_MASTER_DISABLED',
   'SCHEDULE_ACTION_DISABLED',
 ]);
-
-function randomInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function randomTimeBetween(start, end) {
-  return minutesToTime(randomInt(timeToMinutes(start), timeToMinutes(end)));
-}
 
 function resultErrorCode(result) {
   return result?.errorCode || result?.error_code || null;
@@ -225,15 +223,57 @@ export class Scheduler {
       identityKey,
       expectedGeneration,
     );
-    const existingSchedule = getDailySchedule(today, identityKey);
+    const storedSchedule = getDailySchedule(today, identityKey);
+    const rules = this.getWorkRules();
+    const storedBreakStart = storedSchedule.find((row) => row.action_type === 'break_start');
+    const storedBreakEnd = storedSchedule.find((row) => row.action_type === 'break_end');
+    // A break row paused because its windows could not form a break holds
+    // placeholder times, not a plan: it is drawn and checked again on every
+    // resolution, next to a partner that already ran as well. No writer
+    // replaces that pause, and placeholders an older version left with an
+    // overwritten pause are cleared once at upgrade.
+    const isPlaceholderBreakRow = (row) =>
+      ['break_start', 'break_end'].includes(row.action_type) &&
+      !row.executed && row.attempts === 0 &&
+      row.last_status === 'paused_configuration' && row.last_error === 'BREAK_WINDOW_INCOMPATIBLE';
+    // Once either break punch ran, the stored pair is the day's committed plan.
+    // A pair that never ran is also drawn again when no cap could have produced
+    // it. Any other stored pair is a plan drawn under a cap of up to 180 minutes
+    // and keeps its length after the cap is lowered.
+    let redrawStoredBreakPair = false;
+    if (storedBreakStart && storedBreakEnd &&
+      !storedBreakStart.executed && !storedBreakEnd.executed &&
+      storedBreakStart.attempts === 0 && storedBreakEnd.attempts === 0) {
+      const pairLength = timeToMinutes(storedBreakEnd.resolved_time) - timeToMinutes(storedBreakStart.resolved_time);
+      redrawStoredBreakPair = isPlaceholderBreakRow(storedBreakStart) || isPlaceholderBreakRow(storedBreakEnd) ||
+        pairLength < MIN_BREAK_MINUTES || pairLength > MAX_BREAK_MINUTES_LIMIT;
+    }
+    const existingSchedule = storedSchedule.filter((row) => !isPlaceholderBreakRow(row) && !(
+      redrawStoredBreakPair && ['break_start', 'break_end'].includes(row.action_type)
+    ));
     const configs = getAllConfig();
 
-    const startConfig = configs.find(cfg => cfg.action_type === 'break_start' && cfg.enabled);
-    const endConfig = configs.find(cfg => cfg.action_type === 'break_end' && cfg.enabled);
-    const breakPair = startConfig && endConfig ? resolveBreakTimes(startConfig, endConfig, {
-      start: existingSchedule.find(row => row.action_type === 'break_start')?.resolved_time,
-      end: existingSchedule.find(row => row.action_type === 'break_end')?.resolved_time,
-    }) : undefined;
+    const existingTimes = Object.fromEntries(
+      existingSchedule.map((row) => [row.action_type, row.resolved_time]),
+    );
+    const { times: plannedTimes, breakPair } = resolveDailyTimes(
+      configs,
+      existingTimes,
+      rules,
+    );
+
+    // Every resolution keeps an unexecuted, unattempted stored check-out at or
+    // after the planned check-in plus the planned break plus the minimum: a
+    // break planned since the check-out was stored (re-drawn, or a placeholder
+    // that became a plan), a minimum raised today, or a check-out an older
+    // version drew on its own all move it later. It never moves earlier and
+    // never past 23:59; a check-out that already meets it stays put.
+    let checkoutFloor = null;
+    if (rules.minNetWorkMinutes > 0 && plannedTimes.checkin) {
+      const plannedBreak = breakPair ? timeToMinutes(breakPair.end) - timeToMinutes(breakPair.start) : 0;
+      const needed = timeToMinutes(plannedTimes.checkin) + plannedBreak + rules.minNetWorkMinutes;
+      checkoutFloor = minutesToTime(Math.min(needed, 23 * 60 + 59));
+    }
 
     // Resolve times for all actions
     for (const cfg of configs) {
@@ -247,15 +287,15 @@ export class Scheduler {
         if (existing.executed) {
           this.terminalActions.add(cfg.action_type);
           this.skippedActions.add(cfg.action_type);
+        } else if (
+          cfg.action_type === 'checkout' && checkoutFloor !== null && existing.attempts === 0 &&
+          timeToMinutes(resolvedTime) < timeToMinutes(checkoutFloor)
+        ) {
+          resolvedTime = checkoutFloor;
+          setDailySchedule(today, cfg.action_type, resolvedTime, identityKey);
         }
       } else {
-        resolvedTime = cfg.mode === 'random'
-          ? randomTimeBetween(cfg.window_start, cfg.window_end)
-          : cfg.fixed_time;
-
-        if (cfg.action_type === 'break_start' && breakPair) resolvedTime = breakPair.start;
-        if (cfg.action_type === 'break_end' && breakPair) resolvedTime = breakPair.end;
-
+        resolvedTime = plannedTimes[cfg.action_type];
         setDailySchedule(today, cfg.action_type, resolvedTime, identityKey);
       }
 
@@ -412,7 +452,7 @@ export class Scheduler {
       context.date,
     );
     const plan = this.preserveTerminalActions(
-      determineActionsForToday(currentState, this.todaySchedule, punchTimes),
+      determineActionsForToday(currentState, this.todaySchedule, punchTimes, null, this.getWorkRules().maxBreakMinutes),
     );
 
     this.startupAnalysis = {
@@ -865,6 +905,11 @@ export class Scheduler {
       return;
     }
 
+    if (actionType === 'checkout') {
+      const postponed = await this.postponeCheckoutBelowMinNetWork(context);
+      if (postponed || !this.actionContextIsCurrent(context, actionType)) return;
+    }
+
     console.log(`[Scheduler] Executing ${actionType} (scheduled: ${scheduledTime})`);
     const result = await executeAction(actionType, {
       expectedIdentityKey: context.identityKey,
@@ -1004,6 +1049,55 @@ export class Scheduler {
     }
 
     console.log(`[Scheduler] ${actionType} -> ${result.status}`);
+  }
+
+  /** Break cap and minimum net work as currently stored. */
+  getWorkRules() {
+    return normalizeWorkRules(getSetting('min_net_work_minutes'), getSetting('max_break_minutes'));
+  }
+
+  /**
+   * Scheduled check-out only: when today's real punches show net work still
+   * below the configured minimum, move the check-out to the earliest minute
+   * that reaches it and re-arm its timer instead of punching. Net work wins
+   * over the window end. Only ever postpones; unreadable or empty history
+   * leaves the punch as it was.
+   */
+  async postponeCheckoutBelowMinNetWork(context) {
+    const { minNetWorkMinutes } = this.getWorkRules();
+    if (minNetWorkMinutes <= 0) return false;
+    // A retry of an unresolved write must reach the punch-history anchor check.
+    if (this.apiTransientRetries.has(
+      this.apiTransientRetryKey(context.date, 'checkout', context.identityKey),
+    )) return false;
+
+    const punchTimes = await this._fetchTodayPunchTimes();
+    // The caller re-checks the action context (with its side effects) after this await.
+    if (!this.scheduleContextIsCurrent(context)) return false;
+    if (!Array.isArray(punchTimes) || punchTimes.length === 0) return false;
+    const earliest = earliestCompliantCheckoutMinute(punchTimes, minNetWorkMinutes);
+    if (earliest === null) return false;
+
+    const postponedTime = minutesToTime(earliest);
+    let ms;
+    try {
+      ms = msUntilTimeInTz(postponedTime);
+    } catch {
+      return false;
+    }
+    if (ms <= 0) return false;
+
+    console.log(`[Scheduler] Net work is below ${minNetWorkMinutes} minutes; postponing checkout to ${postponedTime}`);
+    setDailySchedule(context.date, 'checkout', postponedTime, context.identityKey);
+    this.todaySchedule.checkout = postponedTime;
+    this.replaceTimer('checkout', setTimeout(() => {
+      this.removeTimer('checkout');
+      if (!this.scheduleContextIsCurrent(context)) return;
+      void this.runAction('checkout', postponedTime, context).catch((error) => {
+        console.error('[Scheduler] Scheduled action failed', safeErrorMetadata(error));
+      });
+    }, ms));
+    return true;
   }
 
   scheduleAuthTransientRetry(
@@ -1302,6 +1396,10 @@ export class Scheduler {
 
     const status = apiAuthBroken ? 'auth_required' : 'skipped_unknown';
     for (const act of plan.skip || []) {
+      // An action the configuration pauses today was not skipped for this
+      // reason; overwriting its pause would let a later re-resolution mistake
+      // placeholder times for the day's plan.
+      if (this.configurationPausedActions.has(act)) continue;
       updateDailyScheduleStatus(today, act, status, reason, false, context.identityKey);
     }
   }
@@ -1556,7 +1654,7 @@ export class Scheduler {
       const punchTimes = await this._fetchTodayPunchTimes();
       this.reconcileRepeatableTerminalActions(updatedState, punchTimes);
       const plan = this.preserveTerminalActions(
-        determineActionsForToday(updatedState, this.todaySchedule, punchTimes),
+        determineActionsForToday(updatedState, this.todaySchedule, punchTimes, null, this.getWorkRules().maxBreakMinutes),
       );
 
       this.startupAnalysis = {

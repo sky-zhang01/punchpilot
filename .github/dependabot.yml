@@ -14,7 +14,7 @@ updates:
       semver-minor-days: 7
       semver-patch-days: 7
     ignore:
-      # Keep Node type definitions aligned with the Node 24 runtime used by CI and Docker.
+      # Keep Node type definitions aligned with the Node 26 runtime used by CI and Docker.
       - dependency-name: "@types/node"
         update-types:
           - version-update:semver-major
@@ -90,7 +90,7 @@ updates:
       semver-minor-days: 7
       semver-patch-days: 7
     ignore:
-      # Keep Node type definitions aligned with the Node 24 runtime used by CI and Docker.
+      # Keep Node type definitions aligned with the Node 26 runtime used by CI and Docker.
       - dependency-name: "@types/node"
         update-types:
           - version-update:semver-major

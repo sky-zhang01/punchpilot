@@ -1,4 +1,5 @@
 import { ACTION_SELECTORS } from "./constants.js";
+import { setTimingTag, timePhase } from "../timing.js";
 
 const LOGIN_INPUT_SELECTOR = "input[name='loginId']";
 const LOGIN_ERROR_SELECTOR =
@@ -169,7 +170,15 @@ function throwForLoginState(state) {
   );
 }
 
-export async function authenticateFreeeWeb(page, { username, password }) {
+export async function authenticateFreeeWeb(page, credentials) {
+  return timePhase("login_auth", async () => {
+    const result = await authenticateFreeeWebSteps(page, credentials);
+    setTimingTag("session_restored", result.restored);
+    return result;
+  });
+}
+
+async function authenticateFreeeWebSteps(page, { username, password }) {
   await page.goto("https://p.secure.freee.co.jp/", {
     waitUntil: "domcontentloaded",
     timeout: 20_000,

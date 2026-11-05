@@ -23,6 +23,7 @@ import {
 import { ACTION_LABELS, acquireLock, releaseLock } from "./constants.js";
 import { getCredentials, getConnectionMode, getWebCompanyName, hasApiCredentials, hasCredentials, isDebugMode, hasWebCredentials } from "./utils.js";
 import { PunchBot } from "./punch-bot.js";
+import { startPhase, timePhase } from "../timing.js";
 import { AUTOMATION_OPERATION_TIMEOUT_MS, withDeadline } from "./runtime.js";
 import {
   readWebWorkRecord,
@@ -257,7 +258,7 @@ async function withPunchBot(
 ) {
   let stage = 'queue';
   try {
-    await acquireLock();
+    await timePhase('lock_wait', () => acquireLock());
   } catch (error) {
     throw annotateAutomationFailureStage(error, stage);
   }
@@ -283,11 +284,11 @@ async function withPunchBot(
       try {
         markStage('browser_init');
         signal.throwIfAborted();
-        await bot.init(signal);
+        await timePhase('browser_init', () => bot.init(signal));
         markStage('login');
         signal.throwIfAborted();
         try {
-          await bot.login(companyBinding.companyName);
+          await timePhase('login', () => bot.login(companyBinding.companyName));
         } catch (loginErr) {
           if (
             loginErr.code === "WEB_LOGIN_FAILED" ||
@@ -307,22 +308,27 @@ async function withPunchBot(
         markStage('employee_identity');
         signal.throwIfAborted();
         assertWebAccountBinding(companyBinding.webBinding);
-        if (companyBinding.kind === 'api-web' || companyBinding.kind === 'web') {
-          try {
-            const webIdentity = await readWebEmployeeIdentity(bot.page);
-            if (companyBinding.kind === 'api-web') {
-              assertApiWebCompanyBindingCurrent(companyBinding, webIdentity.employeeId);
-            } else if (webIdentity.employeeId !== companyBinding.webBinding.employeeId) {
-              throw webCompanyIdentityError();
+        const endIdentityPhase = startPhase('identity_check');
+        try {
+          if (companyBinding.kind === 'api-web' || companyBinding.kind === 'web') {
+            try {
+              const webIdentity = await readWebEmployeeIdentity(bot.page);
+              if (companyBinding.kind === 'api-web') {
+                assertApiWebCompanyBindingCurrent(companyBinding, webIdentity.employeeId);
+              } else if (webIdentity.employeeId !== companyBinding.webBinding.employeeId) {
+                throw webCompanyIdentityError();
+              }
+            } catch (error) {
+              if (error?.code === 'WEB_COMPANY_IDENTITY_UNCONFIRMED') throw error;
+              throw webCompanyIdentityError(error);
             }
-          } catch (error) {
-            if (error?.code === 'WEB_COMPANY_IDENTITY_UNCONFIRMED') throw error;
-            throw webCompanyIdentityError(error);
+            await returnToWebTimeClockPage(bot.page);
           }
-          await returnToWebTimeClockPage(bot.page);
+          markStage('company_binding');
+          await bot.ensureCompany(companyBinding.companyName);
+        } finally {
+          endIdentityPhase();
         }
-        markStage('company_binding');
-        await bot.ensureCompany(companyBinding.companyName);
         bot.setPreMutationGuard(async () => {
           assertWebAccountBinding(companyBinding.webBinding);
           if (companyBinding.kind === 'api-web') {
@@ -332,7 +338,8 @@ async function withPunchBot(
         }, mutationAuthorizationGuard);
         markStage('operation');
         signal.throwIfAborted();
-        return await actionFn(bot, signal, companyBinding, markStage);
+        return await timePhase('operation', () =>
+          actionFn(bot, signal, companyBinding, markStage));
       } finally {
         signal.removeEventListener('abort', abortCleanup);
       }
@@ -345,7 +352,7 @@ async function withPunchBot(
   } finally {
     if (bot) {
       try {
-        await bot.cleanup();
+        await timePhase('cleanup', () => bot.cleanup());
       } catch (error) {
         cleanupError = annotateAutomationFailureStage(error, 'cleanup');
       }

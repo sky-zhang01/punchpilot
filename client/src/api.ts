@@ -1,7 +1,7 @@
 import api, { invalidateIdentity, type QueryParams, type ApiResponse } from './http';
 import { asyncBatchRequest, clearTaskReferences, getTask, resumeTask, type TaskDTO } from './tasks';
 
-import type { StatusDTO, ScheduleUpdate } from './contracts';
+import type { StatusDTO, ScheduleUpdate, WorkRulesUpdate } from './contracts';
 
 type ApiCall<T = any> = Promise<ApiResponse<T>>;
 
@@ -39,6 +39,7 @@ const apiClient = {
   // Config
   getConfig: (): ApiCall => api.get('/config'),
   updateConfig: (actionType: string, data: ScheduleUpdate): ApiCall => api.put(`/config/${actionType}`, data),
+  setWorkRules: (data: WorkRulesUpdate): ApiCall => api.put('/config/work-rules', data),
   toggleMaster: (): ApiCall => api.put('/config/toggle'),
 
   // Debug mode

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly version='2.101.0'
+readonly version='2.103.3'
 readonly release_base="https://github.com/cli/cli/releases/download/v${version}"
 
 if [[ $# -ne 0 ]]; then
@@ -21,11 +21,11 @@ fi
 case "$(uname -s)/$(uname -m)" in
   Linux/x86_64)
     archive_arch='amd64'
-    archive_sha256='9bca2d1c16825f109907a23307628a2f0698fbf99662b73a5cf0b020293072b8'
+    archive_sha256='4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d'
     ;;
   Linux/aarch64|Linux/arm64)
     archive_arch='arm64'
-    archive_sha256='b57e8063f18862647c9d22727c32e9da1b963f8bf9db648fe123a6975695640f'
+    archive_sha256='ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63'
     ;;
   *)
     echo 'Reviewed GitHub CLI installation supports Linux x64 and arm64 runners only.' >&2

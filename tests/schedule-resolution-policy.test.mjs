@@ -5,6 +5,12 @@ import configRouter from '../server/routes/api-config.js';
 import { currentAutomationIdentityKey } from '../server/automation/identity.js';
 import { todayStringInTz } from '../server/timezone.js';
 
+// These tests drive the scheduler, which logs every planning step, and they assert on the
+// stored plans, never on log text. On CI the last of those lines could still be in flight to
+// the Vitest main thread when the worker closed, failing the run with EnvironmentTeardownError
+// although every test passed. Keep the output off that channel for the whole file.
+for (const method of ['log', 'warn', 'error']) vi.spyOn(console, method).mockImplementation(() => {});
+
 let scheduler;
 beforeEach(() => {
   vi.useFakeTimers();

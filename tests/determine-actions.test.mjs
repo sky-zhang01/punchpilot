@@ -180,6 +180,15 @@ describe('determineActionsForToday - Smart Action Planning', () => {
     expect(result.skip).toEqual(['checkin', 'break_start']);
   });
 
+  it('UC8b: ends an overdue break by the configured break cap', () => {
+    const punches = [{ type: 'checkin', time: '09:00' }, { type: 'break_start', time: '11:00' }];
+    // 70 minutes into the break: within the default 75, over a 60 minute cap, within a 90 minute cap.
+    expect(determineActionsForToday('on_break', FULL_SCHEDULE, punches, '12:10').immediateActions).toEqual([]);
+    expect(determineActionsForToday('on_break', FULL_SCHEDULE, punches, '12:10', 60).immediateActions).toEqual(['break_end']);
+    expect(determineActionsForToday('on_break', FULL_SCHEDULE, punches, '12:10', 90).immediateActions).toEqual([]);
+    expect(determineActionsForToday('on_break', FULL_SCHEDULE, punches, '12:31', 90).immediateActions).toEqual(['break_end']);
+  });
+
   // UC9: User manually started break, auto break_end + checkout
   it('UC9: skips break_start (already done), schedules break_end and checkout', () => {
     const result = determineActionsForToday(

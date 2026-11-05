@@ -21,7 +21,7 @@ import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import { batchSubmit, clearBatchResults } from '../../store/attendanceSlice';
 import { notifySuccess, notifyError } from '../../utils/notify';
 import { TaskResultSummary } from './TaskRecoveryPanel';
-import { resolveBreakTimes } from '../../../../shared/schedule-policy.js';
+import { LEGACY_MAX_BREAK_MINUTES, resolveBreakTimes } from '../../../../shared/schedule-policy.js';
 import { isTimeString } from '../../../../shared/date-time.js';
 
 const { Text } = Typography;
@@ -160,14 +160,14 @@ const BatchPunchModal: React.FC<BatchPunchModalProps> = ({ open, onClose }) => {
       notifyError(t('scheduleCard.windowStartBeforeEnd'));
       return;
     }
-    if (includeBreak && !resolveBreakTimes(startConfig, endConfig, {}, () => 0)) {
-      notifyError(t('scheduleCard.breakMinDuration'));
+    if (includeBreak && !resolveBreakTimes(startConfig, endConfig, {}, () => 0, LEGACY_MAX_BREAK_MINUTES)) {
+      notifyError(t('scheduleCard.breakMinDuration', { max: LEGACY_MAX_BREAK_MINUTES }));
       return;
     }
     const entries = [...selectedDates].sort().map((date) => {
       const checkinTime = timeMode === 'fixed' ? fixedCheckin : randomTimeBetween(checkinWinStart, checkinWinEnd);
       const checkoutTime = timeMode === 'fixed' ? fixedCheckout : randomTimeBetween(checkoutWinStart, checkoutWinEnd);
-      const breaks = includeBreak ? resolveBreakTimes(startConfig, endConfig) : null;
+      const breaks = includeBreak ? resolveBreakTimes(startConfig, endConfig, {}, Math.random, LEGACY_MAX_BREAK_MINUTES) : null;
       return {
         date,
         clock_in_at: checkinTime.format(TIME_FORMAT),

@@ -8,6 +8,10 @@ export interface ScheduleConfig {
   enabled: number;
   resolved_time?: string;
 }
+export interface WorkRulesUpdate {
+  min_net_work_minutes: number;
+  max_break_minutes: number;
+}
 export type ScheduleUpdate = Partial<{
   [Key in 'mode' | 'fixed_time' | 'window_start' | 'window_end']: NonNullable<ScheduleConfig[Key]>;
 }> & { enabled?: boolean };

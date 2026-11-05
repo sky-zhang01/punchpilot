@@ -35,10 +35,14 @@ Copy [`.env.example`](../.env.example) to `.env` and edit it. The options most p
 | `TZ` | The time zone your schedule follows (default `Asia/Tokyo`). |
 | `PORT` | The port PunchPilot listens on (default `8681`). If you change it, register the matching callback URL in your freee app. |
 | `PUID` / `PGID` | The user and group that own the data files (default `1000`). Some NAS systems need different values. |
-| `PUNCHPILOT_IMAGE` | Optional. Pins the published image to a specific version, for example `ghcr.io/sky-zhang01/punchpilot:0.5.6`. Change it when you update. |
+| `PUNCHPILOT_IMAGE` | Optional. Pins the published image to a specific version, for example `ghcr.io/sky-zhang01/punchpilot:0.5.7`. Change it when you update. |
 | `PUNCHPILOT_PUBLIC_ORIGIN`, `TRUST_PROXY` | For access from other devices. See [Remote access](remote-access.md). |
 
 Other settings are explained in comments in `.env.example`.
+
+## Timing lines in the log
+
+The application log in `./data/logs` has one `[Timing]` line for each slow-prone operation: the approval list, monthly closing, withdrawing a request, batch punches, the employee information and Web browser steps. A line shows the total time, the time of each phase in milliseconds, and how many freee API calls were made, with their total and slowest time. For example: `approval_list total=3120ms phases=users_me:410,list:2650 freee_calls=16 freee_total=2980ms freee_max=520ms`. Lines contain only operation and phase names, durations, counts, status classes and generic API paths such as `/users/me`. They never contain names, IDs, dates, comments, form values or tokens, and they do not change how PunchPilot behaves.
 
 ## Initial admin password
 

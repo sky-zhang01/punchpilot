@@ -11,6 +11,7 @@ const sourceWorkflowAvailability = [
   'internal-release-check.yml',
   'ci.yml',
   'branch-housekeeping.yml',
+  'scheduled-audit.yml',
 ].map((name) => fs.existsSync(path.join(root, '.gitea', 'workflows', name)));
 const sourceWorkflowsAvailable = sourceWorkflowAvailability.every(Boolean);
 const anySourceWorkflowAvailable = sourceWorkflowAvailability.some(Boolean);
@@ -40,6 +41,12 @@ function jobSection(source, name) {
     ? source.slice(start)
     : source.slice(start, start + marker.length + nextJob);
 }
+
+const sourceCiJobs = [
+  'public-export-drift', 'runner-protocol-produce', 'runner-protocol-consume', 'lint',
+  'test', 'dependency-audit', 'client-build', 'e2e-smoke', 'docker-build',
+  'docker-build-arm64', 'security-scan',
+];
 
 function stepRun(source, name) {
   const offset = stepOffset(source, name);
@@ -377,9 +384,9 @@ describe('release workflow security contracts', () => {
     expect(stepOffset(buildJob, 'Recover signed immutable candidates before rebuilding'))
       .toBeLessThan(stepOffset(buildJob, 'Build amd64 release candidate once'));
     expect(publicWorkflow.match(/docker\/build-push-action@/g)).toHaveLength(2);
-    expect(buildJob.match(/actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/g))
+    expect(buildJob.match(/actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9/g))
       .toHaveLength(2);
-    expect(publishJob.match(/actions\/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c/g))
+    expect(publishJob.match(/actions\/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333/g))
       .toHaveLength(2);
     expect(stepOffset(buildJob, 'Scan arm64 candidate and generate SBOM'))
       .toBeLessThan(stepOffset(buildJob, 'Package scanned release candidates'));
@@ -489,7 +496,13 @@ describe('release workflow security contracts', () => {
     if (sourceWorkflowsAvailable) {
       const sourceAmd64Job = jobSection(sourceCiWorkflow, 'docker-build');
       const sourceArm64Job = jobSection(sourceCiWorkflow, 'docker-build-arm64');
-      expect(sourceCiWorkflow).not.toContain('timeout-minutes:');
+      // Each source CI job carries its own bound so a hung install or build
+      // releases the shared runner; the release check keeps its single
+      // unbounded job because its log is the release attestation.
+      for (const job of sourceCiJobs) {
+        expect(jobSection(sourceCiWorkflow, job), job).toMatch(/\n    timeout-minutes: \d+\n/);
+      }
+      expect(sourceCiWorkflow.match(/^    timeout-minutes: \d+$/gm)).toHaveLength(sourceCiJobs.length);
       expect(internalWorkflow).not.toContain('timeout-minutes:');
       expect(sourceAmd64Job).not.toContain('Set up QEMU');
       expect(sourceAmd64Job).not.toContain('linux/arm64');
@@ -504,6 +517,33 @@ describe('release workflow security contracts', () => {
         'cache-from: type=gha,scope=release-check-amd64',
       );
     }
+  });
+
+  it('cancels superseded pull request runs but never main or dispatch runs', () => {
+    if (!sourceWorkflowsAvailable) return;
+    const header = sourceCiWorkflow.slice(0, sourceCiWorkflow.indexOf('\njobs:\n'));
+    expect(header).toContain(
+      "group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}",
+    );
+    expect(header).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
+    expect(internalWorkflow).not.toContain('cancel-in-progress: true');
+  });
+
+  sourceIt('re-checks main dependencies daily outside the release evidence workflow', () => {
+    const scheduled = workflow('.gitea', 'scheduled-audit.yml');
+    expect(scheduled).toMatch(/\non:\n  schedule:\n    - cron: "[0-9 *]+"\n  workflow_dispatch:\n\n/);
+    expect(scheduled).not.toMatch(/^  (push|pull_request|pull_request_target):/m);
+    expect(scheduled).toContain('permissions:\n  contents: read\n');
+    expect(scheduled).not.toContain('secrets.');
+    for (const check of [
+      'node scripts/ci/dependency-release-age-check.mjs',
+      'npm audit --audit-level=moderate',
+      'npm audit signatures',
+      'bash scripts/ci/filesystem-security-gate.sh',
+    ]) {
+      expect(scheduled).toContain(check);
+    }
+    expect(scheduled.match(/^    timeout-minutes: \d+$/gm)).toHaveLength(1);
   });
 
   it('limits write permissions and pins the attestation action', () => {
@@ -814,12 +854,12 @@ describe('release workflow security contracts', () => {
       expect(sourceCiWorkflow.match(/bash scripts\/ci\/install-trivy\.sh/g)).toHaveLength(2);
       expect(internalWorkflow.match(/bash scripts\/ci\/install-trivy\.sh/g)).toHaveLength(1);
     }
-    expect(installer).toContain("readonly version='0.75.0'");
+    expect(installer).toContain("readonly version='0.76.2'");
     expect(installer).toContain(
-      'c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f',
+      'bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf',
     );
     expect(installer).toContain(
-      'a1ee9f6ffb7d112b64ff726a2a0717c21175c1114361391f4a132956751a13b3',
+      'ab9d51f86e6a5fb936f605faff6b593ac51bc378fff4d3e8b9d58358b9c367c3',
     );
     expect(installer).toContain("--proto '=https'");
     expect(installer).toContain('sha256sum --check --status');

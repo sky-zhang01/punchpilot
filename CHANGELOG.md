@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7] - 2026-11-06
+
+### Upgrade notes
+- Upgrading from a version before 0.5.0? Read the 0.5.0 upgrade notes in CHANGELOG.md first.
+- Check the two new settings under Settings → Schedule Configuration after updating. Each is set on its own when it is first missing: the maximum break becomes 75 minutes, or stays 90 if your break windows need it; the minimum net work becomes 480 minutes, or 0 (off) if your windows can never reach 480. Values already saved are kept.
+
+### Security
+- The Docker image now carries SQLite 3.54.1 (Debian libsqlite3-0 3.54.1-2) instead of 3.53.4. It fixes ten SQLite vulnerabilities, including a heap buffer overflow in full-text search. PunchPilot's own database access goes through better-sqlite3, which still bundles SQLite 3.53.4 until better-sqlite3 publishes an update.
+- The Docker image is rebuilt on the current node:26.13.0-trixie-slim image, which carries the latest Debian security updates.
+- body-parser 2.4.0 fixes a denial of service through trailing bytes after a compressed request body, and qs 6.17.1 includes the 6.16.1 fix for a denial of service in `qs.stringify`.
+- The test-only undici dependency of the web app moves to 8.12.3 to clear its advisories. The Docker image is not affected.
+- The minimatch development dependency used by the linter moves to 11.0.4, which includes the 11.0.1 fix for a denial of service through glob pattern amplification. The Docker image is not affected.
+- The release workflow verifies image provenance with GitHub CLI 2.103.3, which fixes four advisories, two of them in `gh attestation verify`. Image builds use BuildKit 0.34.2, which fixes two BuildKit advisories.
+
+### Fixed
+- Automatic punches could plan less than 8 hours of net work. The four times were drawn independently, so a late check-in with a long break and an early check-out could land under 8 hours. Check-out is now planned from the check-in and the break. A check-out already planned for the day of the upgrade, or one a later change of the day's break or minimum leaves too early, is moved later before it fires.
+
+### Added
+- The application log has `[Timing]` lines that show where time goes in the approval list, monthly closing, withdrawing a request, batch punches, employee information and Web browser steps (launch, session reuse, login). They hold only durations, counts and generic names, never personal data, and change no behaviour.
+- Settings → Schedule Configuration has two new settings for automatic punches: minimum net work (default 480 minutes, 0 turns it off) and maximum break (default 75 minutes, 60-180). When the scheduled check-out fires and your real punches in freee still show less than the minimum, the check-out waits until the minimum is reached. Manual punches, batch punches and requests are not affected.
+
+### Changed
+- The Docker image, CI and local development move to Node.js 26.13.0, the current Active LTS line (supported until April 2029). Node.js 24 entered maintenance on 2026-10-20.
+- The default maximum break is 75 minutes instead of 90. Existing installs keep 90 when their break windows need it, and keep the minimum net work off when their windows could never reach it. A break already planned for the day keeps its length when the cap is lowered; the new cap applies from the next plan.
+- Dependencies move to their latest releases. In the web app: Ant Design 6.7.0, React Router 8.5.1, Redux Toolkit 2.14.0, React Redux 9.3.1, i18next 26.7.1 and react-i18next 17.1.12. In the toolchain: npm 12.2.2, Vite 8.3.5, Vitest 5.1.0, ESLint 10.14.0, Buildx 0.38.2 and Trivy 0.76.2.
+- This release takes each dependency's newest version that is at least one day old instead of waiting seven days after publication. The seven-day wait returns after the release.
+- Docker Compose now installs 0.5.7 by default.
+
 ## [0.5.6] - 2026-10-23
 
 ### Upgrade notes

@@ -26,7 +26,18 @@ import {
   fetchApprovalRequestPages,
   parseApprovalMonth,
 } from "./approval-list-service.js";
-import { withAccountOperation } from "../../account-operation.js";
+import { acquireAccountOperation, releaseAccountOperation } from "../../account-operation.js";
+import { runTimed, setTimingTag, startPhase, timePhase } from "../../timing.js";
+
+// Same as withAccountOperation, but the lock wait shows up as its own phase.
+async function withTimedAccountOperation(operation) {
+  await timePhase("account_op_wait", () => acquireAccountOperation());
+  try {
+    return await operation();
+  } finally {
+    releaseAccountOperation();
+  }
+}
 
 // Case-sensitive like the app router (app.js), so path variants cannot reach a handler.
 const router = Router({ caseSensitive: true });
@@ -91,8 +102,11 @@ function requiresMonthlyClosingWebFallback(err) {
 
 async function submitMonthlyClosingViaWeb(res, year, month, expectedCompany) {
   let webResult;
+  setTimingTag("via", "web");
   try {
-    webResult = await submitMonthlyAttendanceClosingWeb(year, month, expectedCompany);
+    webResult = await timePhase("web_fallback", () =>
+      submitMonthlyAttendanceClosingWeb(year, month, expectedCompany),
+    );
   } catch {
     webResult = { success: false, error: "web_automation_failed" };
   }
@@ -161,7 +175,7 @@ router.post("/approval/monthly", async (req, res) => {
   }
   const { year, month } = target;
 
-  return withAccountOperation(async () => {
+  return runTimed("monthly_closing", () => withTimedAccountOperation(async () => {
 
   if (getSetting("oauth_configured") !== "1") {
     if (!hasWebCredentials()) {
@@ -177,11 +191,14 @@ router.post("/approval/monthly", async (req, res) => {
   if (!oauth) return;
   const { companyId } = oauth;
 
+  const endApiAttempt = startPhase("api_attempt");
   try {
     const client = new FreeeApiClient({ identityBinding: oauth });
     await client.ensureValidToken();
 
-    const routeInfo = await findAttendanceRouteIds(client, companyId);
+    const routeInfo = await timePhase("api_route_lookup", () =>
+      findAttendanceRouteIds(client, companyId),
+    );
     const routeId = positiveInteger(
       routeInfo.primaryRouteId || routeInfo.fallbackRouteId,
     );
@@ -191,6 +208,7 @@ router.post("/approval/monthly", async (req, res) => {
     const approverId = positiveInteger(routeInfo.primaryRouteUserId);
 
     if (!routeInfo.lookupVerified || !routeId || (routeNeedsApprover && !approverId)) {
+      endApiAttempt();
       if (!hasWebCredentials()) {
         recordMonthlyClosing(
           year,
@@ -224,6 +242,8 @@ router.post("/approval/monthly", async (req, res) => {
       "/approval_requests/monthly_attendances",
       body,
     );
+    endApiAttempt();
+    setTimingTag("via", "api");
 
     const requestId = positiveInteger(
       result?.monthly_attendance?.id || result?.id,
@@ -248,6 +268,7 @@ router.post("/approval/monthly", async (req, res) => {
 
     res.json({ success: true, via: "api", id: requestId });
   } catch (err) {
+    endApiAttempt();
     log.error(
       `Monthly closing API failed: ${err?.code || "UNCLASSIFIED_API_ERROR"}`,
     );
@@ -284,6 +305,7 @@ router.post("/approval/monthly", async (req, res) => {
       log.info(
         "Monthly closing: API rejected (dept/role routing required), falling back to Playwright web form",
       );
+      setTimingTag("api_fallback", true);
       return submitMonthlyClosingViaWeb(res, year, month, oauth);
     }
 
@@ -302,7 +324,7 @@ router.post("/approval/monthly", async (req, res) => {
         : 500;
     res.status(status).json({ error: sanitizeError(err) });
   }
-  });
+  }), { res });
 });
 
 // ===================================================================
@@ -330,10 +352,11 @@ router.get("/approval-requests", async (req, res) => {
   if (!oauth) return;
   const { companyId } = oauth;
 
+  return runTimed("approval_list", async () => {
   try {
     const client = new FreeeApiClient({ identityBinding: oauth });
-    await client.ensureValidToken();
-    const me = await client.apiRequest("GET", "/users/me");
+    await timePhase("token", () => client.ensureValidToken());
+    const me = await timePhase("users_me", () => client.apiRequest("GET", "/users/me"));
     const currentUserId = positiveInteger(me?.id);
     if (!currentUserId) {
       return res.status(503).json({ error: "The OAuth user could not be confirmed." });
@@ -346,14 +369,14 @@ router.get("/approval-requests", async (req, res) => {
     for (const type of Object.keys(TYPE_TO_ENDPOINT)) {
       for (const status of statuses) {
         try {
-          const pageResult = await fetchApprovalRequestPages({
+          const pageResult = await timePhase("list", () => fetchApprovalRequestPages({
             client,
             companyId,
             type,
             status,
             range,
             applicantId: currentUserId,
-          });
+          }));
           if (!pageResult.complete) unavailableQueries.push(`${type}:${status}`);
           for (const item of pageResult.items) {
             const id = positiveInteger(item?.id);
@@ -433,6 +456,7 @@ router.get("/approval-requests", async (req, res) => {
     });
     res.status(500).json({ error: sanitizeError(err) });
   }
+  }, { res });
 });
 
 /**
@@ -463,10 +487,11 @@ router.delete("/approval-requests/:id", async (req, res) => {
   if (!oauth) return;
   const { companyId } = oauth;
 
+  return runTimed("approval_withdraw", async () => {
   try {
     const client = new FreeeApiClient({ identityBinding: oauth });
-    await client.ensureValidToken();
-    const me = await client.apiRequest("GET", "/users/me");
+    await timePhase("token", () => client.ensureValidToken());
+    const me = await timePhase("users_me", () => client.apiRequest("GET", "/users/me"));
     const currentUserId = positiveInteger(me?.id);
     if (!currentUserId) {
       return res.status(503).json({
@@ -474,16 +499,22 @@ router.delete("/approval-requests/:id", async (req, res) => {
         code: "OAUTH_USER_UNCONFIRMED",
       });
     }
-    const result = await withAccountOperation(() => withdrawApprovalOperation({
+    setTimingTag("path", "api");
+    const result = await withTimedAccountOperation(() => timePhase("withdraw", () => withdrawApprovalOperation({
       client,
       companyId,
       currentUserId,
       id: Number(id),
       type: requestType,
       webCredentialsAvailable: hasWebCredentials(),
-      withdrawWeb: (type, requestId) =>
-        withdrawApprovalRequestWeb(type, requestId, oauth),
-    }));
+      withdrawWeb: (type, requestId) => {
+        setTimingTag("path", "web");
+        return timePhase("web_withdraw", () =>
+          withdrawApprovalRequestWeb(type, requestId, oauth),
+        );
+      },
+    })));
+    setTimingTag("method", result.method);
     if (result.success) return res.json(result);
     const status = result.error === "mutation_outcome_unconfirmed" ? 502 : 409;
     return res.status(status).json({
@@ -502,6 +533,7 @@ router.delete("/approval-requests/:id", async (req, res) => {
       error: "Failed to withdraw approval request. Please try again.",
     });
   }
+  }, { res });
 });
 
 export default router;
