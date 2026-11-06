@@ -3,124 +3,16 @@ name: CI
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
   NODE_VERSION: 26.13.0
-  NPM_VERSION: 12.2.2
   BUILDX_VERSION: v0.38.2
   BUILDKIT_IMAGE: moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
 
 jobs:
-  lint:
-    name: Lint
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Install reviewed Node.js
-        run: bash scripts/ci/install-reviewed-node.sh
-      - name: Use reviewed npm CLI
-        run: bash scripts/ci/use-reviewed-npm.sh
-      - run: npm ci --ignore-scripts
-      - name: Security lint
-        run: npm run lint:security
-
-  test:
-    name: Test
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Install reviewed Node.js
-        run: bash scripts/ci/install-reviewed-node.sh
-      - name: Use reviewed npm CLI
-        run: bash scripts/ci/use-reviewed-npm.sh
-      - run: npm ci --ignore-scripts
-      - name: Run tests with coverage
-        run: npm run test:coverage
-
-  dependency-audit:
-    name: Dependency Audit
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Install reviewed Node.js
-        run: bash scripts/ci/install-reviewed-node.sh
-      - name: Use reviewed npm CLI
-        run: bash scripts/ci/use-reviewed-npm.sh
-      - name: Enforce dependency release-age policy
-        run: node scripts/ci/dependency-release-age-check.mjs
-      - run: npm ci --ignore-scripts
-      - name: Audit server dependencies
-        run: npm audit --audit-level=moderate
-      - name: Verify server registry signatures
-        run: npm audit signatures
-      - working-directory: client
-        run: npm ci --ignore-scripts
-      - name: Audit client dependencies
-        working-directory: client
-        run: npm audit --audit-level=moderate
-      - name: Verify client registry signatures
-        working-directory: client
-        run: npm audit signatures
-
-  client-build:
-    name: Client Build
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Install reviewed Node.js
-        run: bash scripts/ci/install-reviewed-node.sh
-      - name: Use reviewed npm CLI
-        run: bash scripts/ci/use-reviewed-npm.sh
-      - name: Install client dependencies
-        working-directory: client
-        run: npm ci --ignore-scripts
-      - name: Typecheck client
-        working-directory: client
-        run: npm run typecheck
-      - name: Run client tests with coverage
-        working-directory: client
-        run: npm run test:coverage
-      - name: Build client
-        working-directory: client
-        run: npm run build
-
-  e2e-smoke:
-    name: E2E Smoke
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Install reviewed Node.js
-        run: bash scripts/ci/install-reviewed-node.sh
-      - name: Use reviewed npm CLI
-        run: bash scripts/ci/use-reviewed-npm.sh
-      - run: npm ci --ignore-scripts
-      - name: Install client dependencies
-        working-directory: client
-        run: npm ci --ignore-scripts
-      - name: Build client
-        working-directory: client
-        run: npm run build
-      - name: Install Chromium for Playwright
-        run: npx --no-install playwright install --with-deps --only-shell chromium
-      - name: Run E2E smoke test
-        run: npm run test:e2e
-
   docker-build:
     name: Docker Build Check (amd64)
     runs-on: ubuntu-26.04
@@ -146,9 +38,7 @@ jobs:
           load: true
           tags: punchpilot-ci:amd64
           cache-from: type=gha,scope=ci-amd64
-          # Only serialized main pushes write the shared cache; PR dry-runs are
-          # read-only so concurrent runs cannot corrupt the cache.
-          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=ci-amd64' || '' }}
+          cache-to: type=gha,mode=max,scope=ci-amd64
           pull: true
           no-cache-filters: runtime
       - name: Verify container privilege drop
@@ -164,40 +54,6 @@ jobs:
       - name: Scan built amd64 image
         run: bash scripts/ci/container-image-security-gate.sh punchpilot-ci:amd64 trivy-image-amd64.json linux/amd64
 
-  docker-build-arm64:
-    name: Docker Build Check (arm64 native)
-    if: github.event_name == 'workflow_dispatch'
-    needs: docker-build
-    runs-on: ubuntu-26.04-arm
-    timeout-minutes: 30
-    env:
-      DOCKER_BUILD_RECORD_UPLOAD: "false"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          version: ${{ env.BUILDX_VERSION }}
-          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
-      - name: Build arm64 image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          platforms: linux/arm64
-          push: false
-          load: true
-          tags: punchpilot-ci:arm64
-          cache-from: type=gha,scope=ci-arm64
-          cache-to: type=gha,mode=max,scope=ci-arm64
-          pull: true
-          no-cache-filters: runtime
-      - name: Install pinned Trivy
-        run: bash scripts/ci/install-trivy.sh
-      - name: Scan built arm64 image and verify Chromium natively
-        run: bash scripts/ci/container-image-security-gate.sh punchpilot-ci:arm64 trivy-image-arm64.json linux/arm64 --require-native-browser
-
   security-scan:
     name: Security Scan
     runs-on: ubuntu-26.04
@@ -212,7 +68,6 @@ jobs:
         run: bash scripts/ci/install-reviewed-node.sh
       - name: Public content baseline scan
         env:
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PUBLIC_RELEASE_FORBIDDEN_HOSTS: ${{ secrets.PUBLIC_RELEASE_FORBIDDEN_HOSTS }}
           PUSH_BASE_SHA: ${{ github.event.before }}
         run: |
@@ -223,17 +78,9 @@ jobs:
             --ref HEAD \
             --require-forbidden-hosts
           case "$GITHUB_EVENT_NAME" in
-            pull_request)
-              history_base=$PR_BASE_SHA
-              history_label=pull-request
-              ;;
             push)
               history_base=$PUSH_BASE_SHA
               history_label=main-push
-              ;;
-            workflow_dispatch)
-              history_base=$(git rev-parse 'HEAD^')
-              history_label=workflow-dispatch
               ;;
             *)
               echo "Unsupported CI event for publication scan." >&2

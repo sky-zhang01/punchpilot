@@ -47,7 +47,7 @@ command -v jq >/dev/null
 
 # Runtime precondition evidence (schema_version 1, platform, facts.runtime_uid):
 # either measured by running the collector inside the image below, or provided
-# by the caller (rootless cross-arch release runner: the engine cannot execute
+# by the caller (cross-architecture builds: the engine cannot execute
 # the built image, so BuildKit produced the evidence under the target platform
 # instead). Fail closed for missing, malformed, or platform-mismatched evidence
 # before touching Docker.

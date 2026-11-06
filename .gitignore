@@ -34,9 +34,6 @@ coverage/
 .idea/
 
 # Tool caches
-.claude/
-.scannerwork/
-zap.yaml
 __pycache__/
 *.py[cod]
 

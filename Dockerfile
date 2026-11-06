@@ -55,22 +55,48 @@ FROM node:26.13.0-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.title="PunchPilot" \
       org.opencontainers.image.description="Smart attendance automation for freee HR" \
-      org.opencontainers.image.version="0.5.7" \
+      org.opencontainers.image.version="0.5.8" \
       org.opencontainers.image.revision="$VCS_REF" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.source="https://github.com/sky-zhang01/punchpilot"
 
 WORKDIR /app
 
-# Debian drops superseded unstable packages from its pool, so fetch these exact
-# files from the permanent snapshot archive; the checksums pin the same bytes.
+# Debian drops superseded unstable packages from its pool, so fetch this exact
+# file from the permanent snapshot archive first. Snapshot transfers to hosted
+# CI runners are often cut short, so try it three times and then fall back to
+# the Debian pool, which serves the same file while 3.54.1-2 is current. A file
+# is written only when its sha256 equals the pin for this architecture.
 ARG DEB_SNAPSHOT=20261105T022427Z
-ADD --checksum=sha256:7789bf0b2338b781de388d83d7c473f9386c9ef638af110b5c1b3d1debb36f00 \
-    https://snapshot.debian.org/archive/debian/${DEB_SNAPSHOT}/pool/main/s/sqlite3/libsqlite3-0_3.54.1-2_amd64.deb \
-    /tmp/libsqlite3-0_3.54.1-2_amd64.deb
-ADD --checksum=sha256:27416ae5fd9a8a491cacc2316cb08ebf31ac0d3d628da5576e04eeba365605a4 \
-    https://snapshot.debian.org/archive/debian/${DEB_SNAPSHOT}/pool/main/s/sqlite3/libsqlite3-0_3.54.1-2_arm64.deb \
-    /tmp/libsqlite3-0_3.54.1-2_arm64.deb
+# The script is single-quoted on purpose: node, not the shell, expands it.
+# hadolint ignore=SC2016
+RUN node --input-type=module -e ' \
+      import { createHash } from "node:crypto"; \
+      import { writeFileSync } from "node:fs"; \
+      const amd64_sha256 = "7789bf0b2338b781de388d83d7c473f9386c9ef638af110b5c1b3d1debb36f00"; \
+      const arm64_sha256 = "27416ae5fd9a8a491cacc2316cb08ebf31ac0d3d628da5576e04eeba365605a4"; \
+      const arch = { x64: "amd64", arm64: "arm64" }[process.arch]; \
+      const pinned = { amd64: amd64_sha256, arm64: arm64_sha256 }[arch]; \
+      if (!pinned) throw new Error(`no pinned libsqlite3-0 for ${process.arch}`); \
+      const file = `libsqlite3-0_3.54.1-2_${arch}.deb`; \
+      const snapshot = `https://snapshot.debian.org/archive/debian/${process.env.DEB_SNAPSHOT}/pool/main/s/sqlite3/${file}`; \
+      const pool = `https://deb.debian.org/debian/pool/main/s/sqlite3/${file}`; \
+      for (const url of [snapshot, snapshot, snapshot, pool]) { \
+        const host = new URL(url).host; \
+        try { \
+          const response = await fetch(url); \
+          if (!response.ok) { console.error(`HTTP ${response.status} from ${host}`); continue; } \
+          const bytes = Buffer.from(await response.arrayBuffer()); \
+          if (createHash("sha256").update(bytes).digest("hex") === pinned) { \
+            writeFileSync(`/tmp/${file}`, bytes, { flag: "wx" }); \
+            console.log(`${file} from ${host}`); \
+            process.exit(0); \
+          } \
+          console.error(`checksum mismatch from ${host} (${bytes.length} bytes)`); \
+        } catch (error) { console.error(`${error.message} from ${host}`); } \
+      } \
+      throw new Error(`no source served the pinned ${file}`); \
+    '
 
 ENV TZ=Asia/Tokyo
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
@@ -148,9 +174,9 @@ ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["node", "server/server.js"]
 
 # =============================================================================
-# Stage 5: arm64 precondition evidence (rootless release verification only)
+# Stage 5: arm64 precondition evidence (cross-architecture verification only)
 # =============================================================================
-# The rootless source release runner's Docker engine cannot execute the
+# The build host Docker engine may be unable to execute the
 # cross-built arm64 image ("exec format error"), so a plain `docker run` cannot
 # collect runtime precondition evidence. This sidecar stage is only reached via
 # --target arm64-precondition-evidence: BuildKit runs the exact runtime content
@@ -172,5 +198,5 @@ COPY --from=arm64-precondition-collector /evidence/container-preconditions.json 
 
 # Keep the default build target on the immutable runtime image so ordinary
 # source, public, amd64, and arm64 builds (and --no-cache-filter runtime) are
-# unaffected by the rootless-evidence sidecar stage.
+# unaffected by the evidence sidecar stage.
 FROM runtime AS release

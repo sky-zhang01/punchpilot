@@ -52,9 +52,9 @@ freee にすでにある打刻を上書きすることはありません。
 
 freee 上で全日休暇になっている日もスキップします。中国の祝日をスキップするかどうかは任意で選べます。
 
-出勤時刻に PunchPilot が動いていなかった場合は、5 分以内の遅れならすぐに出勤を打刻します。それ以上遅れたときは、freee でご自身で打刻してください。再試行などの細かい動作は [docs/how-it-works.md](docs/how-it-works.md) をご覧ください。
+出勤時刻に PunchPilot が動いていなかった場合は、5 分以内の遅れならすぐに出勤を打刻します。それ以上遅れたときは、freee でご自身で打刻してください。PunchPilot が動いていても、freee が一時的に使えない、または利用制限がかかっている場合は、約 1 時間再試行します。再試行の前には毎回 freee の打刻履歴を読み取るので、二重に打刻されることはありません。再試行中は、ダッシュボードにその手順が失敗として表示されることがあります。最終的に打刻できなかったときは **ログ** ページに理由が記録されますので、freee でご自身で打刻してください。
 
-freee アカウントを接続すると、同じ Web 画面から、打刻漏れの補正、休暇申請や勤務に関する申請、月次締め、申請の承認もできます。詳しくは [docs/daily-use.md](docs/daily-use.md) をご覧ください。実際の freee アカウントが必要なため、ここでは画面を掲載していません。
+freee アカウントを接続すると、同じ Web 画面から、打刻漏れの補正、休暇・残業・休日出勤の申請、承認前の申請の取り下げ、部下の申請の承認、月次締めもできます。実際の freee アカウントが必要なため、ここでは画面を掲載していません。
 
 ## ほかにできること
 
@@ -65,7 +65,17 @@ freee アカウントを接続すると、同じ Web 画面から、打刻漏れ
 - **月を締める。**
 - **今すぐ打刻する。** ダッシュボードの **手動トリガー** から行います。
 
-モックモードでは、今すぐ打刻するは freee なしで使えます。本番の打刻とほかの項目には、インストールの手順 5 で設定する freee への接続が必要です（freee API、または一部の項目は freee Webログイン）。どの項目がどちらを使うかは、[docs/daily-use.md](docs/daily-use.md) の「やりたいこと別」の操作ガイドにあります。
+モックモードでは、今すぐ打刻するは freee なしで使えます。本番の打刻とほかの項目には、インストールの手順 5 で設定する freee への接続が必要です。ほとんどの項目は API 接続だけで使えますが、一部は freee Webログインも必要です。
+
+| 項目 | 必要なもの |
+| --- | --- |
+| 予定の打刻と手動の打刻 | API 接続 |
+| 打刻補正、休暇・残業の申請、申請の取り下げ | API 接続 |
+| 休日出勤の申請 | 常に freee Webログイン |
+| 受信した申請と承認 | API 接続。会社で freee の承認ルートを使っている場合に表示されます |
+| 月次締め | 会社で承認ルートを使っているか、freee Webログインを保存している場合に表示されます |
+
+Webログインを設定しなくても、API でできることはすべて使えます。会社の承認ルートを API で扱えない場合にも、PunchPilot は Webログインを使います。
 
 ## 安全ですか？
 
@@ -77,7 +87,7 @@ freee アカウントを接続すると、同じ Web 画面から、打刻漏れ
 
 **まずは安全に試せます：** 新しくインストールした直後はモックモードで、打刻を模擬するだけです。モックモードをオフにするまで、打刻は freee に届きません。ただし freee に接続したあとは、打刻修正や各種申請はモックモード中でも実際に freee へ送信されます。
 
-詳しくは [SECURITY.md](SECURITY.md) と [docs/security-threat-model.md](docs/security-threat-model.md) をご覧ください。
+セキュリティ上の脆弱性は、GitHub の[非公開の脆弱性報告](https://github.com/sky-zhang01/punchpilot/security/advisories/new)から報告してください。公開の issue には書かないでください。
 
 ## インストール
 
@@ -85,8 +95,20 @@ freee アカウントを接続すると、同じ Web 画面から、打刻漏れ
 
 - 勤務時間中に電源が入っていて、スリープしないパソコン、NAS、サーバー。Docker と Docker Compose が動作し、`linux/amd64` または 64 ビットの `linux/arm64` であること。スリープするノートパソコンでは打刻が漏れます。
 - freee人事労務の従業員アカウント。
-- freee の開発者アプリ（Client ID と Client Secret）。設定手順は [docs/freee-app-setup.md](docs/freee-app-setup.md) をご覧ください。
+- freee の開発者アプリ（Client ID と Client Secret）。次の節をご覧ください。
 - Docker に慣れていない場合は、手順 1 と 2 を同僚に頼んでください。
+
+### freee の開発者アプリを登録します
+
+アプリは、freee 開発者サイト <https://developer.freee.co.jp/> の公式ガイドに沿って作成してください。コンソールのメニューは変わることがあるため、ここでは説明しません。PunchPilot 側から指定が必要なのはコールバック URL だけで、アプリに次のように登録します。
+
+| PunchPilot へのアクセス方法 | 登録するコールバック URL |
+| --- | --- |
+| 同じパソコンから | `http://localhost:8681/api/config/oauth-callback` |
+| 同じパソコンで `PORT` を変更した場合 | `http://localhost:<ポート番号>/api/config/oauth-callback` |
+| 独自の HTTPS アドレス（[リモートアクセス](#リモートアクセス)をご覧ください） | `https://<あなたのアドレス>/api/config/oauth-callback` |
+
+あとでアドレスやポートを変更したときは、新しいコールバック URL も登録してください。
 
 ### 1. 取得して起動します
 
@@ -97,7 +119,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-初期値は一般的なパソコン向けです。NAS では `PUID`/`PGID` に別の値が必要な場合があります。詳しくは [docs/configuration.md](docs/configuration.md) をご覧ください。
+初期値は一般的なパソコン向けです。NAS では `PUID`/`PGID` に別の値が必要な場合があります。この 2 つは `./data` 内のファイルを所有するユーザーとグループです。`.env` で変更してください。各設定の説明は [`.env.example`](.env.example) のコメントにあります。
 
 `punchpilot` コンテナが動いていれば成功です。
 
@@ -130,9 +152,9 @@ docker compose exec punchpilot cat /app/keystore/initial-admin-password
 
 ### 5. freee に接続します
 
-まず、freee のアプリに次のコールバック URL が登録されていることを確認します：`http://localhost:8681/api/config/oauth-callback`。`PORT` を変更した場合はそのポート番号に置き換えます。独自の HTTPS アドレスで使う場合は `https://<あなたのアドレス>/api/config/oauth-callback` を登録します。
+まず、上の表の該当するコールバック URL が freee のアプリに登録されていることを確認します。
 
-そのうえで、**設定 → API設定（OAuth2）** に Client ID と Client Secret を入力し、**アプリ認証情報を保存** をクリックします。続けて **freeeで認可** をクリックし、事業所が複数ある場合は使う事業所を選びます。
+そのうえで、**設定 → API設定（OAuth2）** に Client ID と Client Secret を入力し、**アプリ認証情報を保存** をクリックします。続けて **freeeで認可** をクリックし、freee 側でアクセスを許可します。freee アカウントに複数の事業所が紐づいている場合は「複数の事業所が検出されました」と表示されるので、**事業所を選択** で勤怠に使う事業所を選んでください。あとから変更もできます。Client Secret とトークンは暗号化して保存されます。
 
 次に **設定 → スケジュール設定** で、打刻時刻と祝日の扱いを設定します。
 
@@ -142,7 +164,7 @@ docker compose exec punchpilot cat /app/keystore/initial-admin-password
   <sub>時刻は一度設定すれば十分です。モックモードはオフにするまでオンのままです。</sub>
 </p>
 
-任意：**設定 → freee Webログイン** に freee のメールアドレス、パスワード、正確な事業所名を入力します。保存すると自動で確認されます。
+任意：**設定 → freee Webログイン** に freee のメールアドレス、パスワード、正確な事業所名を入力します。保存すると自動で確認されます。どの項目に必要かは、「ほかにできること」の表をご覧ください。
 
 設定画面で、事業所が接続済みと表示されます。
 
@@ -154,13 +176,33 @@ docker compose exec punchpilot cat /app/keystore/initial-admin-password
 
 ## リモートアクセス
 
-初期設定では、ログインできるのは `localhost` の画面からだけです。別の端末から使うには、PunchPilot を HTTPS で公開し、`PUNCHPILOT_PUBLIC_ORIGIN` を設定します。`TRUST_PROXY` には、リバースプロキシのアドレスだけを指定してください。インターネットに直接公開してはいけません。詳しい説明は [docs/remote-access.md](docs/remote-access.md) をご覧ください。
+初期設定では、ログインできるのは `localhost` の画面からだけです。別の端末からは通常の `http://` で画面が開くことがありますが、ログインは意図的に拒否されます。スマートフォンや別のパソコンから使うには、次のように設定します。
+
+1. PunchPilot を HTTPS のリバースプロキシの背後に置きます。
+2. `.env` に 2 つの値を設定します。
+   - `PUNCHPILOT_PUBLIC_ORIGIN`：HTTPS のアドレス（例：`https://punchpilot.example.com`）。
+   - `TRUST_PROXY`：リバースプロキシが PunchPilot に接続するときのアドレス。
+3. freee のアプリに、コールバック URL `https://<あなたのアドレス>/api/config/oauth-callback` を登録します。
+4. `docker compose up -d` を実行します。
+
+以後は HTTPS のアドレスでログインします。`localhost` からはログインできなくなります。Secure Cookie と HSTS は `PUNCHPILOT_PUBLIC_ORIGIN` に従うため、ブラウザでも同じアドレスを使ってください。
+
+`TRUST_PROXY` はオンオフの切り替えではなく、アドレスの一覧です。PunchPilot は、ここに挙げたアドレスからの転送ヘッダーだけを信頼します。一覧はできるだけ狭くしてください。
+
+| 値 | 指定できるか |
+| --- | --- |
+| プロキシの正確な IP アドレス、または CIDR 範囲 | はい（推奨） |
+| `loopback`、`linklocal`、`uniquelocal`（名前付きの範囲。コンテナのネットワークで便利です） | はい |
+| `true` のようなオンオフの値 | いいえ（PunchPilot は起動を拒否します） |
+
+PunchPilot をインターネットに直接公開してはいけません。HTTPS のリバースプロキシ経由でだけアクセスし、プロキシ側のアクセス制御も維持してください。
 
 ## 動かし続けるために
 
-- **更新：** `punchpilot` フォルダで `git pull` を実行してから、`docker compose up -d` を実行します。事前に [CHANGELOG](CHANGELOG.md) を確認してください。
-- **バックアップ：** `./data` フォルダ、`punchpilot_keystore` ボリューム、`.env` をまとめて保存してください。対応する keystore がないと、保存した freee の認証情報は復号できません。
-- **設定**（`TZ`、`PORT`、`PUID`/`PGID`、`PUNCHPILOT_IMAGE`）：[docs/configuration.md](docs/configuration.md) をご覧ください。
+- **更新：** `punchpilot` フォルダで `git pull` を実行してから、`docker compose up -d` を実行します。Compose が新しいイメージをダウンロードします。`.env` で `PUNCHPILOT_IMAGE` を指定している場合は、そのバージョンも変更してください。実行中の打刻やバッチ処理は先に完了するため、数分かかることがあります。事前に [CHANGELOG](CHANGELOG.md) を確認してください。
+- **バックアップ：** `./data` フォルダ、`punchpilot_keystore` ボリューム、`.env` をまとめて保存してください。保存した freee の認証情報は keystore の秘密鍵で暗号化されているため、対応する keystore がないと復号できません。`./data` のそれ以外の内容（ログ、スケジュール、事業所名）は暗号化されていないので、バックアップは非公開の場所に置いてください。
+- **`.env` の設定：** `TZ`（スケジュールが従うタイムゾーン。初期値 `Asia/Tokyo`）、`PORT`（初期値 `8681`。変更したら対応するコールバック URL も登録します）、`PUID`/`PGID`（データファイルの所有者。初期値 `1000`）、`PUNCHPILOT_IMAGE`（公開イメージを特定のバージョンに固定します）。そのほかは [`.env.example`](.env.example) のコメントをご覧ください。
+- **初期管理者パスワード：** 自動生成ではなく自分で決めるときは、`PUNCHPILOT_INITIAL_ADMIN_PASSWORD` か `PUNCHPILOT_INITIAL_ADMIN_PASSWORD_FILE` のどちらか一方だけを設定します（コンテナの環境変数は参照できるため、後者を推奨します）。16 バイト以上で、ソース管理には含めないでください。
 
 ## よくある質問
 
@@ -174,6 +216,18 @@ docker compose exec punchpilot cat /app/keystore/initial-admin-password
 <summary><b>PunchPilot のパスワードを忘れました。</b></summary>
 
 パスワードを再発行する機能はありません。ログインに 3 回失敗すると、ログイン画面に初期化コマンドが表示されます。このコマンドは PunchPilot のデータと設定をすべて消去しますが、freee 上の記録には影響しません。実行したあと、`docker compose restart punchpilot` で起動し直し（初期パスワードを `.env` で指定している場合は `docker compose up -d --force-recreate punchpilot`）、インストールの手順 2 からやり直してください。
+</details>
+
+<details>
+<summary><b>早退や残業、freee にまだ表示されない休暇があります。</b></summary>
+
+ご自身で退勤を打刻すれば、PunchPilot がそれを検知して自動の退勤をスキップします。残業する場合や、freee にまだ表示されていない休暇・出張がある場合は、**設定 → スケジュール設定** で **自動打刻** をオフにし、帰るときに **手動トリガー** の **退勤** を押して、次の勤務日の前に **自動打刻** をオンに戻してください。PunchPilot がスキップするのは、freee にすでに表示されている休暇だけです。
+</details>
+
+<details>
+<summary><b>ダッシュボードに「再認可する」のバナーが出ています。</b></summary>
+
+freee から再ログインを求められています。**設定 → API設定（OAuth2）** で **freeeで認可** をクリックするまで、自動打刻は一時停止したままです。
 </details>
 
 <details>
@@ -200,10 +254,11 @@ docker compose exec punchpilot cat /app/keystore/initial-admin-password
 [issue](https://github.com/sky-zhang01/punchpilot/issues) を作成してください。バージョン、期待した動作、該当するログの行を書いてください。認証情報は含めないでください。
 </details>
 
-## ドキュメント・開発・謝辞・ライセンス
+## 変更履歴とライセンス
 
-- [ドキュメント](docs/) · [SECURITY.md](SECURITY.md) · [CHANGELOG.md](CHANGELOG.md) · [CONTRIBUTING.md](CONTRIBUTING.md)
-- PunchPilot は [@newbdez33](https://github.com/newbdez33) さんの [freee-checkin](https://github.com/newbdez33/freee-checkin) をもとに始まりました。
-- [MIT](LICENSE)
+- [CHANGELOG.md](CHANGELOG.md)
+- [MIT ライセンス](LICENSE)
+
+PunchPilot は [@newbdez33](https://github.com/newbdez33) さんの [freee-checkin](https://github.com/newbdez33/freee-checkin) をもとに始まりました。
 
 非公式のツールで、freee株式会社とは提携関係がありません。freee は各権利者の商標です。

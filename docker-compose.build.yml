@@ -1,6 +1,0 @@
-services:
-  punchpilot:
-    image: punchpilot:local
-    build:
-      context: .
-    pull_policy: build

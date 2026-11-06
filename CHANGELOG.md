@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8] - 2026-11-07
+
+### Fixed
+- The Docker build now retries the libsqlite3 download and falls back to the Debian pool when the snapshot archive serves bad bytes, so a flaky archive no longer breaks the image build.
+
+### Changed
+- The public repository now contains only what is needed to build, run and publish PunchPilot. The user guides are folded into the README, and maintainer documents, tests and internal tooling are no longer published.
+
+### Removed
+- `docker-compose.build.yml` is no longer included in the public repository.
+
 ## [0.5.7] - 2026-11-06
 
 ### Upgrade notes
