@@ -1,0 +1,202 @@
+# =============================================================================
+# Stage 1: Shared npm CLI base
+# =============================================================================
+FROM node:26.13.0-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS npm-base
+
+WORKDIR /tmp
+ADD --checksum=sha256:07fecbf753e2c3bc10ebeb3e9ed8738f6a0cc1292998b79e2e9f1dd2a5525e0c \
+    https://registry.npmjs.org/npm/-/npm-12.2.2.tgz /tmp/npm-12.2.2.tgz
+RUN npm_archive_sha512="$(sha512sum /tmp/npm-12.2.2.tgz)" \
+    && test "${npm_archive_sha512%% *}" = \
+      '2a09606d9c9a71fee31fe147b8d46a56e0b3422f15848d9aec9f3b231e3716c3d3b99a065a62175c6759b4150e03bf6fc0bf8825112a511573ba903b3ec41370' \
+    && npm install --global /tmp/npm-12.2.2.tgz \
+      --ignore-scripts \
+      --no-audit \
+      --no-fund \
+      --allow-directory=none \
+      --allow-file=all \
+      --allow-git=none \
+      --allow-remote=none \
+    && rm -f /tmp/npm-12.2.2.tgz \
+    && test "$(npm --version)" = '12.2.2'
+
+# =============================================================================
+# Stage 2: Server dependencies and Chromium
+# =============================================================================
+FROM npm-base AS server-builder
+
+WORKDIR /app
+
+# Server dependencies (native addons include reviewed platform prebuilds)
+COPY package*.json .npmrc ./
+RUN npm ci --ignore-scripts \
+    && npm prune --omit=dev --ignore-scripts
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN ./node_modules/.bin/playwright install --only-shell chromium
+
+# =============================================================================
+# Stage 3: Client build
+# =============================================================================
+FROM npm-base AS client-builder
+
+WORKDIR /app/client
+COPY client/package*.json client/.npmrc ./
+RUN npm ci --ignore-scripts
+COPY client/ ./
+COPY shared/ ../shared/
+RUN npm run build
+
+# =============================================================================
+# Stage 4: Runtime - slim image with only Chromium (no Firefox/WebKit)
+# =============================================================================
+FROM node:26.13.0-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS runtime
+
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.title="PunchPilot" \
+      org.opencontainers.image.description="Smart attendance automation for freee HR" \
+      org.opencontainers.image.version="0.5.8" \
+      org.opencontainers.image.revision="$VCS_REF" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.source="https://github.com/sky-zhang01/punchpilot"
+
+WORKDIR /app
+
+# Debian drops superseded unstable packages from its pool, so fetch this exact
+# file from the permanent snapshot archive first. Snapshot transfers to hosted
+# CI runners are often cut short, so try it three times and then fall back to
+# the Debian pool, which serves the same file while 3.54.1-2 is current. A file
+# is written only when its sha256 equals the pin for this architecture.
+ARG DEB_SNAPSHOT=20261105T022427Z
+# The script is single-quoted on purpose: node, not the shell, expands it.
+# hadolint ignore=SC2016
+RUN node --input-type=module -e ' \
+      import { createHash } from "node:crypto"; \
+      import { writeFileSync } from "node:fs"; \
+      const amd64_sha256 = "7789bf0b2338b781de388d83d7c473f9386c9ef638af110b5c1b3d1debb36f00"; \
+      const arm64_sha256 = "27416ae5fd9a8a491cacc2316cb08ebf31ac0d3d628da5576e04eeba365605a4"; \
+      const arch = { x64: "amd64", arm64: "arm64" }[process.arch]; \
+      const pinned = { amd64: amd64_sha256, arm64: arm64_sha256 }[arch]; \
+      if (!pinned) throw new Error(`no pinned libsqlite3-0 for ${process.arch}`); \
+      const file = `libsqlite3-0_3.54.1-2_${arch}.deb`; \
+      const snapshot = `https://snapshot.debian.org/archive/debian/${process.env.DEB_SNAPSHOT}/pool/main/s/sqlite3/${file}`; \
+      const pool = `https://deb.debian.org/debian/pool/main/s/sqlite3/${file}`; \
+      for (const url of [snapshot, snapshot, snapshot, pool]) { \
+        const host = new URL(url).host; \
+        try { \
+          const response = await fetch(url); \
+          if (!response.ok) { console.error(`HTTP ${response.status} from ${host}`); continue; } \
+          const bytes = Buffer.from(await response.arrayBuffer()); \
+          if (createHash("sha256").update(bytes).digest("hex") === pinned) { \
+            writeFileSync(`/tmp/${file}`, bytes, { flag: "wx" }); \
+            console.log(`${file} from ${host}`); \
+            process.exit(0); \
+          } \
+          console.error(`checksum mismatch from ${host} (${bytes.length} bytes)`); \
+        } catch (error) { console.error(`${error.message} from ${host}`); } \
+      } \
+      throw new Error(`no source served the pinned ${file}`); \
+    '
+
+ENV TZ=Asia/Tokyo
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Install current security updates and only the Debian 13 libraries required by
+# Playwright's headless Chromium build. Xvfb and headed-browser tooling are
+# intentionally omitted.
+# perl-base remains in Debian package metadata for future security upgrades, but
+# its interpreter entrypoints are removed after package operations because the
+# immutable PunchPilot runtime never executes Perl.
+# hadolint ignore=DL3005,DL3008
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    fonts-liberation \
+    fonts-noto-cjk \
+    fonts-noto-color-emoji \
+    gosu \
+    libasound2t64 \
+    libatk-bridge2.0-0t64 \
+    libatk1.0-0t64 \
+    libatspi2.0-0t64 \
+    libcairo2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libgbm1 \
+    libglib2.0-0t64 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libx11-6 \
+    libxcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxkbcommon0 \
+    libxrandr2 \
+    && architecture="$(dpkg --print-architecture)" \
+    && dpkg --install "/tmp/libsqlite3-0_3.54.1-2_${architecture}.deb" \
+    && test "$(dpkg-query --show --showformat='${Version}' libsqlite3-0)" = '3.54.1-2' \
+    && rm -f /usr/bin/perl* \
+    && test -z "$(find /usr/bin -maxdepth 1 -name 'perl*' -print -quit)" \
+    && rm -f /tmp/libsqlite3-0_3.54.1-2_amd64.deb /tmp/libsqlite3-0_3.54.1-2_arm64.deb \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy production node_modules (with native better-sqlite3) and Chromium.
+COPY --from=server-builder /app/node_modules ./node_modules
+COPY --from=server-builder /app/package*.json ./
+COPY --from=server-builder /ms-playwright /ms-playwright
+
+# Copy built client (only the dist output, not node_modules)
+COPY --from=client-builder /app/client/dist ./client/dist
+
+# Copy server source files
+COPY server/ ./server/
+COPY shared/ ./shared/
+COPY scripts/ci/inspect-javascript-modules.mjs ./scripts/ci/
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN chmod +x /docker-entrypoint.sh \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+    && install -d -m 0700 /app/data /app/logs /app/screenshots /app/keystore
+
+EXPOSE 8681
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD ["node", "-e", "fetch(`http://127.0.0.1:${process.env.PORT || 8681}/api/auth/status`).then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1))"]
+
+# Root is limited to mounted-volume ownership initialization. The entrypoint
+# validates non-zero IDs and always execs the application through gosu.
+# nosemgrep: dockerfile.security.missing-user-entrypoint.missing-user-entrypoint
+ENTRYPOINT ["/docker-entrypoint.sh"]
+# nosemgrep: dockerfile.security.missing-user.missing-user
+CMD ["node", "server/server.js"]
+
+# =============================================================================
+# Stage 5: arm64 precondition evidence (cross-architecture verification only)
+# =============================================================================
+# The build host Docker engine may be unable to execute the
+# cross-built arm64 image ("exec format error"), so a plain `docker run` cannot
+# collect runtime precondition evidence. This sidecar stage is only reached via
+# --target arm64-precondition-evidence: BuildKit runs the exact runtime content
+# under linux/arm64 (QEMU, identical to the runtime build) as a numeric
+# non-root user, and only the evidence JSON is exported through a scratch
+# target. It invokes the final image's own entrypoint so the target-architecture
+# gosu privilege-drop path is exercised before evidence is collected. No
+# verification files are added to the final runtime image.
+FROM runtime AS arm64-precondition-collector
+WORKDIR /app
+COPY scripts/ci/collect-container-preconditions.mjs /app/scripts/ci/collect-container-preconditions.mjs
+RUN install -d -m 0700 /evidence \
+    && /docker-entrypoint.sh node /app/scripts/ci/collect-container-preconditions.mjs \
+      > /evidence/container-preconditions.json \
+    && test -s /evidence/container-preconditions.json
+
+FROM scratch AS arm64-precondition-evidence
+COPY --from=arm64-precondition-collector /evidence/container-preconditions.json /container-preconditions.json
+
+# Keep the default build target on the immutable runtime image so ordinary
+# source, public, amd64, and arm64 builds (and --no-cache-filter runtime) are
+# unaffected by the evidence sidecar stage.
+FROM runtime AS release

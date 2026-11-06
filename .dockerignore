@@ -1,0 +1,14 @@
+*
+!package.json
+!package-lock.json
+!.npmrc
+!client/
+!shared/
+!server/
+!docker-entrypoint.sh
+!scripts/ci/inspect-javascript-modules.mjs
+!scripts/ci/collect-container-preconditions.mjs
+client/node_modules
+client/dist
+client/coverage
+client/.env*

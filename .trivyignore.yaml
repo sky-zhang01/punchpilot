@@ -1,0 +1,14 @@
+misconfigurations:
+  - id: AVD-DS-0002
+    paths:
+      - Dockerfile
+    expired_at: 2027-01-10
+    statement: >-
+      The image intentionally starts as root so the entrypoint can create the
+      runtime user/group and fix ownership of mounted state, then drops
+      privileges before exec. The gosu privilege drop is docker-entrypoint.sh:39
+      (`exec gosu "${PUID}:${PGID}" "$@"`); non-zero PUID/PGID validation is
+      docker-entrypoint.sh:8. CI proves the runtime is non-root and rejects
+      PUID=0 (docker-build "Verify container privilege drop" step, plus the
+      runtime_uid precondition evidence required by
+      scripts/ci/container-image-security-gate.sh).

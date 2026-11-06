@@ -1,0 +1,426 @@
+import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import {
+  Card,
+  TimePicker,
+  Radio,
+  Button,
+  Switch,
+  Select,
+  InputNumber,
+  Typography,
+  Alert,
+  Tag,
+  Space,
+  Row,
+  Col,
+} from 'antd';
+import { ClockCircleOutlined } from '@ant-design/icons';
+import dayjs from 'dayjs';
+import { useAppDispatch, useAppSelector } from '../../store/hooks';
+import { updateSchedule, updateWorkRules, fetchConfig, toggleMaster } from '../../store/configSlice';
+import { notifySuccess, notifyError } from '../../utils/notify';
+import api from '../../api';
+import { isTimeString, timeToMinutes } from '../../../../shared/date-time.js';
+import type { ScheduleConfig, ScheduleUpdate } from '../../contracts';
+import {
+  DEFAULT_MAX_BREAK_MINUTES,
+  DEFAULT_MIN_NET_WORK_MINUTES,
+  breakWindowsCompatible,
+  isValidMaxBreakMinutes,
+  isValidMinNetWorkMinutes,
+  resolveBreakTimes,
+  workRulesFeasible,
+} from '../../../../shared/schedule-policy.js';
+
+const { Title, Text } = Typography;
+
+const ACTION_LABELS: Record<string, string> = {
+  checkin: 'scheduleCard.checkin',
+  checkout: 'scheduleCard.checkout',
+  break_start: 'scheduleCard.breakStart',
+  break_end: 'scheduleCard.breakEnd',
+};
+
+const TIME_FORMAT = 'HH:mm';
+
+// The shared policy functions need complete time strings; null means "not set yet".
+const hasCompleteTimes = (config: ReturnType<typeof toPolicyConfig>) => (config.mode === 'fixed'
+  ? isTimeString(config.fixed_time)
+  : isTimeString(config.window_start) && isTimeString(config.window_end));
+
+const toPolicyConfig = (config: Pick<ScheduleConfig, 'action_type' | 'mode' | 'fixed_time' | 'window_start' | 'window_end'> & { enabled: number | boolean }) => ({
+  ...config,
+  fixed_time: config.fixed_time || '',
+  window_start: config.window_start || '',
+  window_end: config.window_end || '',
+});
+
+const ScheduleConfigCard: React.FC = () => {
+  const { t } = useTranslation();
+  const dispatch = useAppDispatch();
+  const { schedules, autoEnabled, holidaySkipCountries, minNetWorkMinutes: storedMinNet, maxBreakMinutes: storedMaxBreak } =
+    useAppSelector((state) => state.config);
+  const minNetWorkMinutes = storedMinNet ?? DEFAULT_MIN_NET_WORK_MINUTES;
+  const maxBreakMinutes = storedMaxBreak ?? DEFAULT_MAX_BREAK_MINUTES;
+
+  // Local state for editing
+  const [editState, setEditState] = useState<Record<string, string>>({});
+
+  // Unsaved work-rule edits; null means the field was cleared.
+  const [minNetEdit, setMinNetEdit] = useState<number | null | undefined>(undefined);
+  const [maxBreakEdit, setMaxBreakEdit] = useState<number | null | undefined>(undefined);
+  const minNetValue = minNetEdit === undefined ? minNetWorkMinutes : minNetEdit;
+  const maxBreakValue = maxBreakEdit === undefined ? maxBreakMinutes : maxBreakEdit;
+
+  const getEditValue = (actionType: string, field: string, fallback: string | null) => {
+    return editState[`${actionType}.${field}`] ?? fallback;
+  };
+
+  const setEditValue = (actionType: string, field: string, value: string) => {
+    setEditState((prev) => ({ ...prev, [`${actionType}.${field}`]: value }));
+  };
+
+  const handleSave = async (actionType: string) => {
+    const schedule = schedules.find((s) => s.action_type === actionType);
+    if (!schedule) return;
+
+    const mode = getEditValue(actionType, 'mode', schedule.mode);
+    if (mode !== 'fixed' && mode !== 'random') return;
+    const data: ScheduleUpdate = { mode };
+
+    if (mode === 'fixed') {
+      data.fixed_time = getEditValue(actionType, 'fixed_time', schedule.fixed_time) || '';
+    } else {
+      data.window_start = getEditValue(actionType, 'window_start', schedule.window_start) || '';
+      data.window_end = getEditValue(actionType, 'window_end', schedule.window_end) || '';
+    }
+
+    const edited = { ...schedule, ...data };
+    const times = mode === 'fixed' ? [edited.fixed_time] : [edited.window_start, edited.window_end];
+    if (times.some(value => !isTimeString(value))) {
+      notifyError(t('scheduleCard.invalidTime'));
+      return;
+    }
+    if (mode === 'random' && timeToMinutes(edited.window_start!) >= timeToMinutes(edited.window_end!)) {
+      notifyError(t('scheduleCard.windowStartBeforeEnd'));
+      return;
+    }
+    if (actionType === 'break_start' || actionType === 'break_end') {
+      const start = actionType === 'break_start' ? edited : schedules.find(value => value.action_type === 'break_start');
+      const end = actionType === 'break_end' ? edited : schedules.find(value => value.action_type === 'break_end');
+      const range = (config: Pick<ScheduleConfig, 'mode' | 'fixed_time' | 'window_start' | 'window_end'>) => ({ ...config, fixed_time: config.fixed_time || '', window_start: config.window_start || '', window_end: config.window_end || '' });
+      if (!start || !end || [start, end].some(config => (config.mode === 'fixed'
+        ? [config.fixed_time] : [config.window_start, config.window_end]).some(value => !isTimeString(value)))) {
+        notifyError(t('scheduleCard.invalidTime'));
+        return;
+      }
+      if (!resolveBreakTimes(range(start), range(end), {}, () => 0, maxBreakMinutes)) {
+        notifyError(t('scheduleCard.breakMinDuration', { max: maxBreakMinutes }));
+        return;
+      }
+    }
+    // The saved rules must stay satisfiable with this change (the server enforces the same).
+    const merged = schedules.map((config) => toPolicyConfig(config.action_type === actionType ? edited : config));
+    if (merged.every(hasCompleteTimes)
+      && !workRulesFeasible(merged, { minNetWorkMinutes, maxBreakMinutes })) {
+      notifyError(t('scheduleCard.workRulesInfeasible', { minNet: minNetWorkMinutes }));
+      return;
+    }
+
+    try {
+      await dispatch(updateSchedule({ actionType, data })).unwrap();
+      notifySuccess(t('scheduleCard.saved'));
+    } catch {
+      notifyError(t('scheduleCard.saveFailed'));
+    }
+  };
+
+  const handleSaveWorkRules = async () => {
+    if (!isValidMinNetWorkMinutes(minNetValue)) {
+      notifyError(t('scheduleCard.invalidMinNetWork'));
+      return;
+    }
+    if (!isValidMaxBreakMinutes(maxBreakValue)) {
+      notifyError(t('scheduleCard.invalidMaxBreak'));
+      return;
+    }
+    const configs = schedules.map(toPolicyConfig);
+    if (!breakWindowsCompatible(configs, maxBreakValue as number)) {
+      notifyError(t('scheduleCard.breakMinDuration', { max: maxBreakValue }));
+      return;
+    }
+    if (!workRulesFeasible(configs, { minNetWorkMinutes: minNetValue as number, maxBreakMinutes: maxBreakValue as number })) {
+      notifyError(t('scheduleCard.workRulesInfeasible', { minNet: minNetValue }));
+      return;
+    }
+    try {
+      await dispatch(updateWorkRules({
+        min_net_work_minutes: minNetValue as number,
+        max_break_minutes: maxBreakValue as number,
+      })).unwrap();
+      setMinNetEdit(undefined);
+      setMaxBreakEdit(undefined);
+      notifySuccess(t('scheduleCard.saved'));
+    } catch {
+      notifyError(t('scheduleCard.saveFailed'));
+    }
+  };
+
+  // Convert "HH:mm" string to dayjs for TimePicker value
+  const toDayjs = (timeStr: string | null | undefined) => {
+    if (!isTimeString(timeStr)) return undefined;
+    return dayjs(`2000-01-01T${timeStr}:00`);
+  };
+
+  // Convert dayjs to "HH:mm" string for storage
+  const fromDayjs = (d: dayjs.Dayjs | null) => {
+    if (!d) return '';
+    return d.format(TIME_FORMAT);
+  };
+
+  // Holiday skip country options
+  const COUNTRY_OPTIONS = [
+    { label: `\u{1F1EF}\u{1F1F5} ${t('holidays.countryJp')}`, value: 'jp' },
+    { label: `\u{1F1E8}\u{1F1F3} ${t('holidays.countryCn')}`, value: 'cn' },
+  ];
+
+  const handleHolidaySkipChange = async (values: string[]) => {
+    const countries = values.join(',') || 'jp';
+    try {
+      await api.setHolidaySkipCountries(countries);
+      await dispatch(fetchConfig()).unwrap();
+      notifySuccess(t('scheduleCard.saved'));
+    } catch {
+      notifyError(t('scheduleCard.saveFailed'));
+    }
+  };
+
+  const currentSkipValues = (holidaySkipCountries || 'jp').split(',').map(c => c.trim());
+
+  return (
+    <Card>
+      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        {/* Header with auto-scheduling master toggle */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Space align="center">
+            <ClockCircleOutlined />
+            <Title level={5} style={{ margin: 0 }}>
+              {t('settings.scheduleTitle')}
+            </Title>
+          </Space>
+          <Space align="center">
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              {t('settings.autoScheduling')}
+            </Text>
+            <Switch
+              checked={autoEnabled}
+              onChange={() => dispatch(toggleMaster()).unwrap().catch(() => notifyError(t('scheduleCard.saveFailed')))}
+            />
+          </Space>
+        </div>
+
+        {/* Auto-scheduling status */}
+        {!autoEnabled && (
+          <Alert type="warning" showIcon message={t('settings.autoDisabledHint')} />
+        )}
+
+        {/* Holiday skip country selector */}
+        <Card size="small">
+          <Space direction="vertical" size="small" style={{ width: '100%' }}>
+            <Text strong>{t('settings.holidaySkipTitle')}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t('settings.holidaySkipHint')}
+            </Text>
+            <Select
+              mode="multiple"
+              value={currentSkipValues}
+              onChange={handleHolidaySkipChange}
+              options={COUNTRY_OPTIONS}
+              style={{ width: '100%' }}
+              placeholder={t('settings.holidaySkipPlaceholder')}
+            />
+          </Space>
+        </Card>
+
+        {/* Lunch break constraint note */}
+        <Alert
+          type="info"
+          showIcon
+          message={`${t('settings.lunchBreak')}: ${t('settings.lunchBreakNote', { max: maxBreakMinutes })}`}
+        />
+
+        {/* Work rules for automatic punches */}
+        <Card size="small" style={{ border: '1px solid #e2e8f0' }}>
+          <Space direction="vertical" size="small" style={{ width: '100%' }}>
+            <Text strong style={{ fontSize: 15 }}>{t('scheduleCard.workRulesTitle')}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('scheduleCard.workRulesHint')}</Text>
+            <Space align="center" wrap>
+              <Text type="secondary">{t('scheduleCard.minNetWorkLabel')}:</Text>
+              <InputNumber
+                aria-label="min-net-work-minutes"
+                min={0}
+                max={960}
+                precision={0}
+                value={minNetValue}
+                onChange={(value: number | null) => setMinNetEdit(value)}
+                style={{ width: 120 }}
+              />
+            </Space>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t('scheduleCard.minNetWorkHint', {
+                hours: Math.floor((minNetValue ?? 0) / 60),
+                minutes: (minNetValue ?? 0) % 60,
+              })}
+            </Text>
+            <Space align="center" wrap>
+              <Text type="secondary">{t('scheduleCard.maxBreakLabel')}:</Text>
+              <InputNumber
+                aria-label="max-break-minutes"
+                min={60}
+                max={180}
+                precision={0}
+                value={maxBreakValue}
+                onChange={(value: number | null) => setMaxBreakEdit(value)}
+                style={{ width: 120 }}
+              />
+            </Space>
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('scheduleCard.maxBreakHint')}</Text>
+            <Button type="primary" size="small" onClick={handleSaveWorkRules}>
+              {t('scheduleCard.workRulesSave')}
+            </Button>
+          </Space>
+        </Card>
+
+        {/* Schedule cards */}
+        {schedules.map((schedule) => {
+          const mode = getEditValue(schedule.action_type, 'mode', schedule.mode);
+
+          return (
+            <Card
+              key={schedule.action_type}
+              size="small"
+              style={{ border: '1px solid #e2e8f0' }}
+            >
+              <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                {/* Action header with resolved time */}
+                <Row justify="space-between" align="middle">
+                  <Col>
+                    <Text strong style={{ fontSize: 15 }}>
+                      {t(ACTION_LABELS[schedule.action_type] || schedule.action_type)}
+                    </Text>
+                  </Col>
+                  <Col>
+                    {schedule.resolved_time && (
+                      <Tag color="blue">
+                        {t('scheduleCard.resolvedTime')}: {schedule.resolved_time}
+                      </Tag>
+                    )}
+                  </Col>
+                </Row>
+
+                {/* Mode toggle */}
+                <Space align="center">
+                  <Text type="secondary">{t('scheduleCard.mode')}:</Text>
+                  <Radio.Group
+                    value={mode}
+                    size="small"
+                    onChange={(e) =>
+                      setEditValue(schedule.action_type, 'mode', e.target.value)
+                    }
+                  >
+                    <Radio.Button value="fixed">{t('scheduleCard.fixed')}</Radio.Button>
+                    <Radio.Button value="random">{t('scheduleCard.random')}</Radio.Button>
+                  </Radio.Group>
+                </Space>
+
+                {/* Time inputs */}
+                {mode === 'fixed' ? (
+                  <Space align="center">
+                    <Text type="secondary">{t('scheduleCard.time')}:</Text>
+                    <TimePicker
+                      format={TIME_FORMAT}
+                      value={toDayjs(
+                        getEditValue(
+                          schedule.action_type,
+                          'fixed_time',
+                          schedule.fixed_time
+                        )
+                      )}
+                      onChange={(val) =>
+                        setEditValue(
+                          schedule.action_type,
+                          'fixed_time',
+                          fromDayjs(val)
+                        )
+                      }
+                      minuteStep={1}
+                      needConfirm={false}
+                      style={{ width: 120 }}
+                    />
+                  </Space>
+                ) : (
+                  <Space align="center" wrap>
+                    <Text type="secondary">{t('scheduleCard.start')}:</Text>
+                    <TimePicker
+                      format={TIME_FORMAT}
+                      value={toDayjs(
+                        getEditValue(
+                          schedule.action_type,
+                          'window_start',
+                          schedule.window_start
+                        )
+                      )}
+                      onChange={(val) =>
+                        setEditValue(
+                          schedule.action_type,
+                          'window_start',
+                          fromDayjs(val)
+                        )
+                      }
+                      minuteStep={1}
+                      needConfirm={false}
+                      style={{ width: 120 }}
+                    />
+                    <Text type="secondary">{t('scheduleCard.end')}:</Text>
+                    <TimePicker
+                      format={TIME_FORMAT}
+                      value={toDayjs(
+                        getEditValue(
+                          schedule.action_type,
+                          'window_end',
+                          schedule.window_end
+                        )
+                      )}
+                      onChange={(val) =>
+                        setEditValue(
+                          schedule.action_type,
+                          'window_end',
+                          fromDayjs(val)
+                        )
+                      }
+                      minuteStep={1}
+                      needConfirm={false}
+                      style={{ width: 120 }}
+                    />
+                  </Space>
+                )}
+
+                {/* Save button */}
+                <Button
+                  type="primary"
+                  size="small"
+                  onClick={() => handleSave(schedule.action_type)}
+                >
+                  {t('common.save')}
+                </Button>
+              </Space>
+            </Card>
+          );
+        })}
+      </Space>
+    </Card>
+  );
+};
+
+export default ScheduleConfigCard;
