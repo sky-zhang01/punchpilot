@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.9] - 2026-11-10
+
+### Changed
+- Release commits and tags in the public repository now contain only the version.
+- The public CI and image publishing workflows now only build, scan, publish and attest the image; release checks run before anything is published.
+
+### Removed
+- Release preparation scripts are no longer included in the public repository.
+
 ## [0.5.8] - 2026-11-07
 
 ### Fixed

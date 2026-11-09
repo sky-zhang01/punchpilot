@@ -1,7 +1,7 @@
 {
   "name": "punchpilot-client",
   "private": true,
-  "version": "0.5.8",
+  "version": "0.5.9",
   "type": "module",
   "packageManager": "npm@12.2.2",
   "engines": {
