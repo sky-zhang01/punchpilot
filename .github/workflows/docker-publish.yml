@@ -109,7 +109,9 @@ jobs:
         run: |
           set -euo pipefail
           ready=false
-          for ((attempt=1; attempt<=120; attempt++)); do
+          # Wait at least as long as the slowest public CI job may run (30 minutes), so a slow
+          # but healthy CI run does not fail this workflow: 400 polls x 5 seconds = 33 minutes.
+          for ((attempt=1; attempt<=400; attempt++)); do
             runs=$(gh api \
               "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?branch=main&event=push&head_sha=${RELEASE_COMMIT}&per_page=100")
             latest_run=$(jq -c --arg commit "$RELEASE_COMMIT" '
@@ -226,7 +228,7 @@ jobs:
           tags: punchpilot-release-scan:amd64
           build-args: VCS_REF=${{ steps.candidate.outputs.commit }}
           cache-from: type=gha,scope=release-amd64
-          cache-to: type=gha,mode=max,scope=release-amd64
+          cache-to: type=gha,mode=max,scope=release-amd64,ignore-error=true
           pull: true
           no-cache-filters: runtime
 
@@ -246,7 +248,7 @@ jobs:
           tags: punchpilot-release-scan:arm64
           build-args: VCS_REF=${{ steps.candidate.outputs.commit }}
           cache-from: type=gha,scope=release-arm64
-          cache-to: type=gha,mode=max,scope=release-arm64
+          cache-to: type=gha,mode=max,scope=release-arm64,ignore-error=true
           pull: true
           no-cache-filters: runtime
 

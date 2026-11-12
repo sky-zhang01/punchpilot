@@ -55,7 +55,7 @@ FROM node:26.13.0-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.title="PunchPilot" \
       org.opencontainers.image.description="Smart attendance automation for freee HR" \
-      org.opencontainers.image.version="0.5.9" \
+      org.opencontainers.image.version="0.5.10" \
       org.opencontainers.image.revision="$VCS_REF" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.source="https://github.com/sky-zhang01/punchpilot"
