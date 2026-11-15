@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly version='26.13.0'
+readonly version='26.13.1'
 readonly base_url="https://nodejs.org/dist/v${version}"
 
 if [[ ${NODE_VERSION:-} != "$version" ]]; then
@@ -16,11 +16,11 @@ fi
 case "$(uname -s)/$(uname -m)" in
   Linux/x86_64)
     archive_arch='x64'
-    archive_sha256='5848553868b402d3fabb5b09270649977780a390f832155721025a08b5104455'
+    archive_sha256='518674de2b621728a5e4486f5fb3b7d2900bb3cc4aa97969edaa463db99f9778'
     ;;
   Linux/aarch64|Linux/arm64)
     archive_arch='arm64'
-    archive_sha256='439e9c438acdf6a6ffe47418da709153d66c4bed812e30a473faacb107dd2791'
+    archive_sha256='80a330b35415382878df18d41afbd106ea89bfb3be0087d6608e289a14c5cc7d'
     ;;
   *)
     echo 'Reviewed Node.js installation supports Linux x64 and arm64 runners only.' >&2

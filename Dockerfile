@@ -1,7 +1,7 @@
 # =============================================================================
 # Stage 1: Shared npm CLI base
 # =============================================================================
-FROM node:26.13.0-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS npm-base
+FROM node:26.13.1-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS npm-base
 
 WORKDIR /tmp
 ADD --checksum=sha256:07fecbf753e2c3bc10ebeb3e9ed8738f6a0cc1292998b79e2e9f1dd2a5525e0c \
@@ -50,12 +50,12 @@ RUN npm run build
 # =============================================================================
 # Stage 4: Runtime - slim image with only Chromium (no Firefox/WebKit)
 # =============================================================================
-FROM node:26.13.0-trixie-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS runtime
+FROM node:26.13.1-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS runtime
 
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.title="PunchPilot" \
       org.opencontainers.image.description="Smart attendance automation for freee HR" \
-      org.opencontainers.image.version="0.5.10" \
+      org.opencontainers.image.version="0.5.11" \
       org.opencontainers.image.revision="$VCS_REF" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.source="https://github.com/sky-zhang01/punchpilot"
